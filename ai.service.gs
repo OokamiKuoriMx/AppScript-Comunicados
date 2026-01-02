@@ -183,45 +183,110 @@ function _callGeminiWithPdf(base64Content, filename, errorFeedback = null, catal
 
         ## REGLAS CRÍTICAS DE TRANSFORMACIÓN:
 
-        1. **IDENTIFICACIÓN DE LINAJE (ComunicadoId y TipoRegistro)**:
+        1. **IDENTIFICACIÓN DEL CONSECUTIVO (comunicadoId)**:
         
-        - **comunicadoId**: El identificador del comunicado (formato: L + número + letra opcional).
-            - Extrae del texto "Comunicado: REFERENCIA-ID" la parte después del guión.
-            - Si el PDF dice "Comunicado: GL061410-L05A" → comunicadoId = **"L05A"** (NO "GL061410").
-            - Si el PDF dice "Comunicado: GL070059-L30" → comunicadoId = **"L30"**.
-            - Si el PDF dice "Comunicado L04B" → comunicadoId = **"L04B"**.
-            - **REGLA**: El comunicadoId SIEMPRE empieza con "L" + número. NUNCA es "GL..." (eso es refCta).
+        ⚠️ **PROCESO DE EXTRACCIÓN - SIGUE ESTOS PASOS EXACTOS**:
+        
+        **PASO 1**: Encuentra "Ref. CTA:" o similar en el documento.
+           - Ejemplo: "Ref. CTA: GL061410" → Esta es la REFERENCIA DEL AJUSTADOR (refCta)
+           - También puede ser: "AM...", "CT...", u otros prefijos
+        
+        **PASO 2**: Encuentra la línea "Comunicado:" que contiene la referencia + guión + consecutivo.
+           - Ejemplo: "Comunicado: GL061410-L05 (Chiapas, Villa Comaltitlán)"
+        
+        **PASO 3**: ELIMINA la referencia y el guión, CONSERVA SOLO el consecutivo.
+           - Del ejemplo "GL061410-L05":
+             - ❌ ELIMINAR: "GL061410-" (la referencia con guión)
+             - ✅ CONSERVAR: "L05" (el CONSECUTIVO)
+        
+        **RESULTADO**:
+        - refCta = "GL061410" (la referencia del ajustador, sin el guión)
+        - comunicadoId = "L05" (SOLO el consecutivo, empieza con "L")
+        
+        **MÁS EJEMPLOS**:
+        | Comunicado en PDF | refCta | comunicadoId (CONSECUTIVO) |
+        |-------------------|--------|---------------------------|
+        | GL061410-L05      | GL061410 | L05 |
+        | GL061410-L05A     | GL061410 | L05A |
+        | AM090123-L30B     | AM090123 | L30B |
+        | CT070059-L02      | CT070059 | L02 |
+        
+        **VALIDACIÓN FINAL**:
+        - ❌ Si comunicadoId contiene "GL", "AM", "CT" u otro prefijo de referencia, ESTÁS EQUIVOCADO
+        - ✅ comunicadoId SIEMPRE empieza con "L" seguido de número(s) y letra opcional
 
-        - **tipoRegistro (VERSIÓN)**: **REGLA CRÍTICA** - Determina si es ORIGEN o ACTUALIZACION:
-            - **PASO 1**: Busca palabras clave de actualización: **"Actualización"**, **"Adicional"**, **"sustituye al"**, **"modifica el"**.
-            - **PASO 2**: 
-                - Si APARECEN palabras clave de actualización → tipoRegistro = comunicadoId completo (ej: "L05A", "L30B").
-                - Si NO aparecen palabras clave → tipoRegistro = **"ORIGEN"**.
-            - **NOTA IMPORTANTE**: El sufijo (A, B, C...) es OPCIONAL y NO determina por sí solo si es actualización. Un comunicado "L05A" puede ser ORIGEN si no hay palabras clave de actualización en el documento.
-            - **EJEMPLOS**:
-                - "Comunicado GL061410-L05" sin mención de "Actualización" → tipoRegistro: **"ORIGEN"**
-                - "Comunicado GL061410-L05A" sin mención de "Actualización" → tipoRegistro: **"ORIGEN"** (el sufijo NO implica actualización)
-                - "Comunicado GL061410-L05A (Actualización)" → tipoRegistro: **"L05A"** (porque dice "Actualización")
-                - "Comunicado GL070059-L30B" con texto "sustituye al L30A" → tipoRegistro: **"L30B"** (porque dice "sustituye")
+        2. **tipoRegistro (VERSIÓN)**: **DETECTAR SI ES ACTUALIZACIÓN**:
+        
+        ⚠️ **BUSCA EN TODO EL DOCUMENTO, NO SOLO EN EL ENCABEZADO**:
+        
+        **SEÑAL 1**: En la línea de "Comunicado:" aparece **(Actualización)** entre paréntesis.
+           - Ejemplo: "Comunicado: GL061410-L05A **(Actualización)** (Chiapas, Villa Comaltitlán)"
+           - → tipoRegistro = "L05A" (el consecutivo)
+        
+        **SEÑAL 2**: En el CUERPO del documento hay texto como "sustituyen" o "sustituye":
+           - ⚠️ **IMPORTANTE**: La línea de Comunicado puede NO decir "(Actualización)" pero el texto del documento SÍ lo indica.
+           
+           - **EJEMPLO REAL**:
+             - Encabezado: "Comunicado: GL069426-L19A (Chiapas, Tapachula)" ← NO dice Actualización
+             - Pero en el cuerpo dice: "Es importante mencionar que los montos antes citados **sustituyen** a los presentados en nuestro comunicado GL069426-L19"
+             - → tipoRegistro = "L19A" (porque dice "sustituyen" en el texto)
+             - → versionAnterior = "L19" (extraído de "sustituyen a... GL069426-L19")
+           
+           - Otro ejemplo: "...presupuestos revisados, mismos que **sustituyen** a los presentados en nuestro comunicado GL061410-L05"
+           - → tipoRegistro = "L05A"
+           - → versionAnterior = "L05"
+        
+        **SI NO HAY NINGUNA SEÑAL** (ni en encabezado NI en el cuerpo):
+           - No dice "(Actualización)" en ningún lado
+           - No hay frases con "sustituye" o "sustituyen" en TODO el documento
+           - → tipoRegistro = **"ORIGEN"**
+        
+        **RESUMEN**:
+        | Qué buscar | Dónde buscar | tipoRegistro |
+        |------------|--------------|--------------|
+        | "(Actualización)" | Línea Comunicado | = comunicadoId |
+        | "sustituyen a" / "sustituye al" | Cuerpo del documento | = comunicadoId |
+        | Ninguna señal | - | = "ORIGEN" |
 
-        - **versionAnterior (VERSIÓN SUSTITUIDA)**: Si el documento menciona explícitamente a cuál sustituye.
-            - Busca frases como: "sustituye al presentado en nuestro comunicado GL070059-**L30A**"
-            - Extrae la versión mencionada (Ej: "L30A").
-            - Si no menciona, deja vacío.
+        3. **versionAnterior** (Solo si es ACTUALIZACIÓN):
+           - Busca el comunicado anterior que es "sustituido" o "reemplazado".
+           - Ejemplo: "sustituyen a los presentados en nuestro comunicado **GL061410-L05**"
+             - Extraer SOLO el consecutivo: **"L05"** (NO "GL061410-L05")
+           - Si no menciona explícitamente, deja vacío.
 
         - **ubicacionEspecifica**: Si el documento menciona que solo afecta una ubicación/tramo específico.
             - Busca frases como: "área hidráulica del río **Marabasco** en el tramo **El Rincón**"
             - Esta ubicación DEBE incluirse en el concepto de TODAS las líneas.
             - Formato: "Río {Nombre}, Tramo {Tramo} - {Concepto Original}"
 
-        - **tipoAccion (TIPO DE SUSTITUCIÓN)**:
-            - Analiza el contexto del documento para determinar el alcance:
+        - **tipoAccion (TIPO DE DOCUMENTO)**:
+            - Analiza el contexto del documento para determinar el tipo:
+            
+            ⚠️ **REGLA PRIORITARIA**: Si hay CUALQUIER tabla con columnas de montos/importes → **NO es INFORMATIVO**
+            
+            - **"INFORMATIVO"**: Comunicado SIN NINGUNA tabla de presupuesto/montos.
+                - **SOLO usar cuando**:
+                  - ❌ NO hay NINGUNA tabla con columnas de "Importe", "daño físico MX$", "desazolves MX$", "Importe MX$"
+                  - ❌ NO hay NINGÚN monto total en el documento (ej: "$10,107,333.30", "MX$12,034,248.34")
+                  - ✅ SOLO hay texto narrativo SIN números de presupuesto
+                  - ✅ Hay tabla con columnas "Ubicación" y "Comentario" (sin montos)
+                  - ✅ El documento menciona "actas de entrega", "estado de avance" SIN dar montos nuevos
+                - **RESULTADO**: 
+                  - tipoAccion = "INFORMATIVO"
+                  - lineas = [] (array vacío)
+                  - totalPdf = 0
+                  
+            - **SI HAY TABLA DE PRESUPUESTO O MONTOS → usar REEMPLAZO_TOTAL o SUSTITUCION_PARCIAL**
+            
             - **"REEMPLAZO_TOTAL"**: El documento reemplaza COMPLETAMENTE al anterior.
                 - Indicadores: "revisión integral", "sustituye en su totalidad", múltiples ubicaciones/tramos.
+                - Se mantienen las ubicaciones/tramos especificos del origen, pero se cambian los montos de las ubicaciones o en su caso se adicionan ubicaciones nuevas.
                 - Extrae TODAS las líneas del presupuesto nuevo.
+                
             - **"SUSTITUCION_PARCIAL"**: SOLO reemplaza UNA ubicación/tramo específico.
                 - Indicadores: "para esta ubicación en particular", "solo el tramo X".
-                
+                - Se mantiene la ubicación/tramo especifico del origen, pero se cambia el monto de la ubicación o en su caso se adiciona una nueva ubicación.
+
                 **REGLA CRÍTICA PARA SUSTITUCION_PARCIAL**:
                 
                 1. **BUSCA LA UBICACIÓN EN EL TEXTO CONTEXTUAL** (NO en la tabla):
@@ -241,7 +306,7 @@ function _callGeminiWithPdf(base64Content, filename, errorFeedback = null, catal
                    - categoria = "DAÑO FISICO"
 
         - **descripcion (HISTORIAL)**: Construye la cadena de trazabilidad.
-            - Si es Nuevo Origen (Ej L04): "GL097117-L04"
+            - Si es Nuevo Origen (Ej L04): "GL097117-L04"   
             - Si es Nuevo Origen con sufijo (Ej L04C): "GL097117-L04C"
             - Si es Actualización (Ej L04C): "GL097117-L04, L04C".
             - Formato: "{REF_CTA}-{RAIZ}, {VERSION_ANTERIOR}, {VERSION_ACTUAL}"
@@ -311,9 +376,9 @@ function _callGeminiWithPdf(base64Content, filename, errorFeedback = null, catal
         ## FORMATO JSON ESPERADO (Alineado a CSV):
         {
         "header": {
-            "refCta": "string (Ej: GL070059)",
+            "refCta": "string (SIEMPRE empieza con 'GL'. Ej: GL070059, GL061410)",
             "ajustadorNombre": "string (CHARLES TAYLOR ADJUSTING)",
-            "comunicadoId": "string (RAIZ: L30)", 
+            "comunicadoId": "string (SIEMPRE empieza con 'L', NUNCA con 'GL'. Ej: L05, L05A, L30B. ❌NUNCA: GL06, GL070059)", 
             "tipoRegistro": "string (CRÍTICO: 'ORIGEN' si NO hay palabras Actualización/Adicional, o 'L30A'/'L30B' si SÍ las hay)",
             "versionAnterior": "string (Versión que sustituye, Ej: L30A. Vacío si es ORIGEN)",
             "ubicacionEspecifica": "string (Río Marabasco, Tramo El Rincón. Vacío si aplica a todo)",

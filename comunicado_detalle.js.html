@@ -1010,15 +1010,60 @@
         function _renderModalLines() {
             const tbody = document.getElementById('modal-presupuesto-lines-body');
             tbody.innerHTML = '';
-            const lines = state.data.presupuesto[state.editingPresupuestoIdx].lineas;
+            const idx = state.editingPresupuestoIdx;
+            const lines = state.data.presupuesto[idx].lineas;
+
+            // Get previous revision lines for comparison
+            const prevIdx = idx - 1;
+            const prevLines = prevIdx >= 0 && state.data.presupuesto[prevIdx]
+                ? (state.data.presupuesto[prevIdx].lineas || [])
+                : [];
+
+            // Helper to find matching line from previous revision
+            const findPrevLine = (currentLine) => {
+                const descNorm = (currentLine.descripcion || '').toUpperCase().trim();
+                return prevLines.find(pl => {
+                    const prevDescNorm = (pl.descripcion || '').toUpperCase().trim();
+                    // Match by description/ubicacion
+                    return prevDescNorm === descNorm ||
+                        prevDescNorm.includes(descNorm) ||
+                        descNorm.includes(prevDescNorm);
+                });
+            };
 
             lines.forEach((l, i) => {
                 const tr = document.createElement('tr');
+                const importeActual = parseFloat(l.importe) || 0;
+
+                // Find matching line in previous revision
+                const prevLine = findPrevLine(l);
+                const importeAnterior = prevLine ? (parseFloat(prevLine.importe) || 0) : 0;
+                const diferencia = importeActual - importeAnterior;
+
+                // Color coding for diferencia
+                let difClass = 'text-muted';
+                let difPrefix = '';
+                if (diferencia > 0) {
+                    difClass = 'text-success fw-bold';
+                    difPrefix = '+';
+                } else if (diferencia < 0) {
+                    difClass = 'text-danger fw-bold';
+                }
+
+                // Show N/A if this is origin (no previous revision)
+                const showPrev = prevIdx >= 0;
+
                 tr.innerHTML = `
                     <td><input type="text" class="form-control form-control-sm" value="${l.descripcion || ''}" placeholder="Descripción" onchange="ComunicadoDetalle.updateLineaPresupuesto(${i}, 'descripcion', this.value)"></td>
                     <td><input type="text" class="form-control form-control-sm" value="${l.categoria || ''}" placeholder="Categoría" onchange="ComunicadoDetalle.updateLineaPresupuesto(${i}, 'categoria', this.value)"></td>
-                    <td><input type="text" class="form-control form-control-sm text-end currency-input" value="${_formatCurrency(l.importe)}" onchange="ComunicadoDetalle.updateLineaPresupuesto(${i}, 'importe', this.value)"></td>
-                    <td><button class="btn btn-sm text-danger" onclick="ComunicadoDetalle.removeLineaPresupuesto(${i})"><i class="bi bi-trash"></i></button></td>
+                    <td class="text-end ${showPrev ? '' : 'text-muted'}">
+                        ${showPrev ? _formatCurrency(importeAnterior) : '<small class="text-muted">N/A</small>'}
+                    </td>
+                    <td><input type="text" class="form-control form-control-sm text-end currency-input" value="${_formatCurrency(importeActual)}" onchange="ComunicadoDetalle.updateLineaPresupuesto(${i}, 'importe', this.value)"></td>
+                    <td class="text-end ${difClass}">
+                        ${showPrev ? difPrefix + _formatCurrency(Math.abs(diferencia)) : '<small class="text-muted">—</small>'}
+                    </td>
+                    <td class="text-center"><button class="btn btn-sm text-danger" onclick="ComunicadoDetalle.removeLineaPresupuesto(${i})"><i class="bi bi-trash"></i></button></td>
                 `;
                 tbody.appendChild(tr);
             });
@@ -1047,14 +1092,43 @@
         }
 
         function _recalcularTotalModal() {
-            const lines = state.data.presupuesto[state.editingPresupuestoIdx].lineas;
-            const total = lines.reduce((sum, l) => sum + (parseFloat(l.importe) || 0), 0);
+            const idx = state.editingPresupuestoIdx;
+            const lines = state.data.presupuesto[idx].lineas;
+            const totalActual = lines.reduce((sum, l) => sum + (parseFloat(l.importe) || 0), 0);
 
-            // Actualizar total visual en modal
-            document.getElementById('modal-total-revision').textContent = _formatCurrency(total);
+            // Get previous revision lines for comparison
+            const prevIdx = idx - 1;
+            const prevLines = prevIdx >= 0 && state.data.presupuesto[prevIdx]
+                ? (state.data.presupuesto[prevIdx].lineas || [])
+                : [];
+
+            // Calculate total anterior (sum of previous revision)
+            const totalAnterior = prevLines.reduce((sum, l) => sum + (parseFloat(l.importe) || 0), 0);
+            const totalDiferencia = totalActual - totalAnterior;
+
+            // Update totals in footer
+            const elAnterior = document.getElementById('modal-total-anterior');
+            const elActual = document.getElementById('modal-total-actual');
+            const elDif = document.getElementById('modal-total-diferencia');
+            const elRevision = document.getElementById('modal-total-revision');
+
+            if (elAnterior) elAnterior.textContent = prevIdx >= 0 ? _formatCurrency(totalAnterior) : 'N/A';
+            if (elActual) elActual.textContent = _formatCurrency(totalActual);
+            if (elRevision) elRevision.textContent = _formatCurrency(totalActual);
+
+            if (elDif) {
+                if (prevIdx >= 0) {
+                    const prefix = totalDiferencia > 0 ? '+' : '';
+                    elDif.textContent = prefix + _formatCurrency(totalDiferencia);
+                    elDif.className = 'text-end fw-bold ' + (totalDiferencia > 0 ? 'text-success' : totalDiferencia < 0 ? 'text-danger' : 'text-muted');
+                } else {
+                    elDif.textContent = '—';
+                    elDif.className = 'text-end text-muted';
+                }
+            }
 
             // Actualizar modelo del padre y tabla principal
-            state.data.presupuesto[state.editingPresupuestoIdx].monto = total;
+            state.data.presupuesto[state.editingPresupuestoIdx].monto = totalActual;
             _renderPresupuesto();
         }
 

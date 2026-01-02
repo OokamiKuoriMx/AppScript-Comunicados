@@ -126,6 +126,46 @@ function _analizarDocumento(doc, cache, batchDocs = []) {
         h.comunicadoId = cleanId;
     }
 
+    // VALIDACIÓN ESTRICTA: comunicadoId DEBE empezar con "L" (el consecutivo)
+    // Las referencias del ajustador (GL, AM, CT, etc.) NUNCA deben estar en comunicadoId
+    if (h.comunicadoId) {
+        const idUpper = String(h.comunicadoId).toUpperCase().trim();
+
+        // Regex para detectar si empieza con un prefijo de referencia (2+ letras seguidas de números)
+        // Ejemplos: GL061410, AM090123, CT070059
+        const esReferenciaAjustador = /^[A-Z]{2,}\d+/.test(idUpper);
+
+        if (esReferenciaAjustador) {
+            console.error(`[Import] ERROR: comunicadoId "${h.comunicadoId}" parece ser una referencia de ajustador, no el consecutivo.`);
+
+            // Intentar extraer el consecutivo correcto (L + números + letra opcional)
+            // Busca patrones como "-L05", "-L05A" dentro del string
+            const matchConsecutivo = idUpper.match(/L\d+[A-Z]?(?:\s|$|-|,|\))/);
+            if (matchConsecutivo) {
+                h.comunicadoId = matchConsecutivo[0].replace(/[\s\-,\)]/g, '');
+                console.log(`[Import] Corregido comunicadoId a: ${h.comunicadoId}`);
+            } else {
+                // Intento alternativo: buscar cualquier "L" + números al final
+                const matchFinal = idUpper.match(/L\d+[A-Z]?$/);
+                if (matchFinal) {
+                    h.comunicadoId = matchFinal[0];
+                    console.log(`[Import] Corregido comunicadoId (método 2) a: ${h.comunicadoId}`);
+                } else {
+                    // No podemos corregirlo - marcar como error
+                    doc.validacion.esValido = false;
+                    doc.validacion.status = 'ERROR';
+                    doc.validacion.motivo = `La IA devolvió una referencia de ajustador (${h.comunicadoId}) en lugar del consecutivo. El consecutivo debe ser "L" + número (ej: L05, L05A).`;
+                }
+            }
+        }
+        // Validar formato final: debe ser "L" + número + letra opcional
+        else if (!idUpper.match(/^L\d+[A-Z]?$/)) {
+            console.warn(`[Import] ADVERTENCIA: comunicadoId "${h.comunicadoId}" no cumple formato esperado (L + número + letra opcional)`);
+            h.advertencias = h.advertencias || [];
+            h.advertencias.push(`Formato de comunicadoId inusual: ${h.comunicadoId}`);
+        }
+    }
+
     // Detección de "Nuevos" Catálogos
     let statusAjustador = _checkStatus(cache.ajustadores, ['nombreAjustador', 'nombre'], (h.ajustadorNombre || h.ajustador));
     if (h.ajustadorAmbiguo) {
@@ -141,7 +181,7 @@ function _analizarDocumento(doc, cache, batchDocs = []) {
         cuenta: _checkStatus(cache.cuentas, ['referencia', 'cuenta'], h.refCta),
         siniestro: _checkStatus(cache.siniestros, 'siniestro', h.refSiniestro),
         ajustador: statusAjustador,
-        distrito: _checkStatus(cache.distritosRiego, 'distritoRiego', h.distritoRiego),
+        distrito: _checkStatusDistrito(cache.distritosRiego, h.distritoRiego, h.distritoRiegoAccion),
         aseguradora: statusAseguradora,
         advertencias: h.advertencias || []
     };
@@ -170,23 +210,8 @@ function _analizarDocumento(doc, cache, batchDocs = []) {
         const comunicadoIdClean = _cleanIdFunc(h.comunicadoId);
 
         // Determinar si es ORIGEN o ACTUALIZACION
-        // Es ORIGEN si:
-        // 1. tipoRegistro es vacío, 'ORIGEN', o
-        // 2. tipoRegistro es igual al comunicadoId (ej: ambos son 'L30'), o
-        // 3. tipoRegistro no tiene sufijo de actualización (A, B, C, etc.)
-        const tipoRegistroClean = _cleanIdFunc(h.tipoRegistro || '');
-        const esOrigenExplicito = !h.tipoRegistro || h.tipoRegistro === 'ORIGEN';
-        const tipoIgualComunicado = tipoRegistroClean === comunicadoIdClean;
-        // Detectar si tiene sufijo de actualización: termina en letra A-Z después de números
-        const tieneSufijoActualizacion = /\d+[A-Z]$/i.test(tipoRegistroClean);
-
-        const esOrigen = esOrigenExplicito || tipoIgualComunicado || !tieneSufijoActualizacion;
-
-        // Si la IA devolvió mal el tipoRegistro (L30 en vez de ORIGEN), corregirlo
-        if (esOrigen && h.tipoRegistro !== 'ORIGEN') {
-            console.log(`[Import] CORRIGIENDO tipoRegistro: "${h.tipoRegistro}" -> "ORIGEN"`);
-            h.tipoRegistro = 'ORIGEN';
-        }
+        // SIMPLE: Si tipoRegistro = "ORIGEN" → es origen, sino → es actualización
+        const esOrigen = !h.tipoRegistro || h.tipoRegistro === 'ORIGEN';
 
         console.log(`[Import] Procesando: RefCta=${refClean}, ComunicadoID=${comunicadoIdClean}, TipoRegistro=${h.tipoRegistro}, esOrigen=${esOrigen}`);
 
@@ -634,6 +659,55 @@ function _checkStatus(list, fields, value) {
 }
 
 /**
+ * NUEVO: Verificación especial para Distritos de Riego con soporte de distritoRiegoAccion
+ * @param {Array} list - Lista de distritos existentes
+ * @param {string} value - Valor del distrito del documento
+ * @param {string} accion - Acción sugerida por la IA ("Actualiza", "Mantener", o "Sin Dato")
+ * @returns {Object} Estado con información adicional de acción
+ */
+function _checkStatusDistrito(list, value, accion) {
+    if (!value) return { status: 'VACIO', valor: '', accion: null };
+    const cleanVal = String(value).toUpperCase().trim();
+
+    // Normalizar acción
+    const accionNorm = accion ? String(accion).toUpperCase().trim() : null;
+
+    // Check if exists in DB
+    const existingItem = list.find(item =>
+        String(item.distritoRiego || '').toUpperCase().trim() === cleanVal
+    );
+
+    if (existingItem) {
+        return {
+            status: 'EXISTE',
+            valor: value,
+            accion: accionNorm,
+            advertencia: accionNorm === 'ACTUALIZA' ? 'El catálogo se actualizará con este nombre más completo' : null
+        };
+    }
+
+    // Puede ser un nombre más completo de uno existente
+    // Buscar coincidencia parcial para determinar si es NUEVO o ACTUALIZA
+    const matchParcial = _findMatchingDistrito(value, list);
+
+    if (matchParcial && accionNorm === 'ACTUALIZA') {
+        return {
+            status: 'ACTUALIZA',
+            valor: value,
+            accion: accionNorm,
+            valorAnterior: matchParcial.distritoRiego,
+            advertencia: `Actualizará "${matchParcial.distritoRiego}" → "${cleanVal}"`
+        };
+    }
+
+    return {
+        status: 'NUEVO',
+        valor: value,
+        accion: accionNorm
+    };
+}
+
+/**
  * PASO 7 (BACKEND): CONTROLADOR PRINCIPAL
  * Orquesta la importación completa usando Persistencia Batch.
  * @param {string} fileContent - Contenido de texto del archivo CSV.
@@ -734,6 +808,16 @@ function ejecutarImportacion(fileContent) {
 
         console.log(`[${contexto}] Lote ordenado para consistencia: ${loteAgrupado.map(d => d.header.comunicadoId).join(' -> ')}`);
 
+        // CRÍTICO: Analizar cada documento para poblar doc.analisis
+        // Esto es necesario para que _procesarBatchInterno pueda clasificar correctamente
+        // los documentos como NUEVO, ACTUALIZACION_LOTE, ACTUALIZACION_BD, etc.
+        loteAgrupado.forEach((doc, idx) => {
+            const resultado = _analizarDocumento(doc, cache, loteAgrupado);
+            // Copiar los campos de analisis al documento
+            doc.analisis = resultado.analisis;
+            console.log(`[${contexto}] Analizando ${idx + 1}/${loteAgrupado.length}: ${doc.header.comunicadoId} -> status: ${resultado.analisis?.comunicado?.status || 'N/A'}`);
+        });
+
         return _procesarBatchInterno(loteAgrupado, cache);
     } catch (error) {
         console.error(`Error en ${contexto}:`, error);
@@ -792,17 +876,76 @@ function _procesarBatchInterno(loteAgrupado, cache) {
                 docsParaCrear.push(doc);
             } else if (st === 'REEMPLAZAR') {
                 // Existe ID exacto y vamos a actualizarlo
-                // CRÍTICO: Buscar el ID del comunicado existente en cache
+                // NUEVA LÓGICA: Usar versionAnterior para encontrar el padre
                 const _cleanId = (val) => String(val || '').toUpperCase().replace(/\s+/g, '').trim();
-                const comExistente = cache.comunicados.find(c =>
-                    String(c.idReferencia) === String(idReferencia) &&
-                    _cleanId(c.comunicado) === _cleanId(doc.header.comunicadoId)
-                );
-                if (comExistente) {
-                    doc._existingComId = comExistente.id;
-                    logBatch(`[${contexto}] REEMPLAZAR: ${doc.header.comunicadoId} -> ComID: ${comExistente.id}`);
+
+                // Método 1: Buscar por versionAnterior en actualizaciones
+                const versionAnterior = doc.header.versionAnterior;
+                let idComunicadoPadre = null;
+
+                // Obtener la familia base del comunicado actual (ej: L05A -> L05)
+                const familiaActual = _parseVersion(doc.header.comunicadoId).base;
+
+                if (versionAnterior) {
+                    logBatch(`[${contexto}] Buscando padre usando versionAnterior: "${versionAnterior}" (familia: ${familiaActual})`);
+
+                    // Buscar en actualizaciones una revisión que coincida con versionAnterior
+                    // y cuyo comunicado pertenezca a la misma cuenta y MISMA FAMILIA
+                    const actPadre = cache.actualizaciones.find(a => {
+                        // Verificar que la revisión coincida (L05 o "Origen" para L05)
+                        const revNorm = _cleanId(a.revision);
+                        const versionNorm = _cleanId(versionAnterior);
+
+                        // Verificar que sea de la misma cuenta
+                        const comPadre = cache.comunicados.find(c => String(c.id) === String(a.idComunicado));
+                        if (!comPadre) return false;
+                        if (String(comPadre.idReferencia) !== String(idReferencia)) return false;
+
+                        // CRÍTICO: Verificar que sea de la MISMA FAMILIA (L05 vs L04)
+                        const familiaCom = _parseVersion(comPadre.comunicado).base;
+                        if (familiaCom !== familiaActual) return false;
+
+                        // Ahora verificar la revisión
+                        return revNorm === versionNorm || revNorm === 'ORIGEN';
+                    });
+
+                    if (actPadre) {
+                        idComunicadoPadre = actPadre.idComunicado;
+                        logBatch(`[${contexto}] Padre encontrado via versionAnterior: idComunicado=${idComunicadoPadre}`);
+                    } else {
+                        // Fallback: Buscar comunicado de la misma familia en cache
+                        logBatch(`[${contexto}] No se encontró ${versionAnterior}, buscando comunicado de familia ${familiaActual}...`);
+                        const comFamilia = cache.comunicados.find(c => {
+                            if (String(c.idReferencia) !== String(idReferencia)) return false;
+                            const familiaCom = _parseVersion(c.comunicado).base;
+                            return familiaCom === familiaActual;
+                        });
+
+                        if (comFamilia) {
+                            idComunicadoPadre = comFamilia.id;
+                            logBatch(`[${contexto}] Comunicado de familia ${familiaActual} encontrado: idComunicado=${idComunicadoPadre}`);
+                        }
+                    }
+                }
+
+                // Método 2 (Fallback): Buscar comunicado existente por nombre exacto del comunicadoId
+                if (!idComunicadoPadre) {
+                    // Buscar por la BASE de la familia (ej: L05 para L05A)
+                    const comExistente = cache.comunicados.find(c =>
+                        String(c.idReferencia) === String(idReferencia) &&
+                        _parseVersion(c.comunicado).base === familiaActual
+                    );
+                    if (comExistente) {
+                        idComunicadoPadre = comExistente.id;
+                        logBatch(`[${contexto}] Padre encontrado por familia: ComID=${idComunicadoPadre}`);
+                    }
+                }
+
+                if (idComunicadoPadre) {
+                    doc._existingComId = idComunicadoPadre;
+                    logBatch(`[${contexto}] REEMPLAZAR: ${doc.header.comunicadoId} -> ComID: ${idComunicadoPadre}`);
                 } else {
-                    logBatch(`[${contexto}] WARN: REEMPLAZAR pero no se encontró comunicado en cache para ${doc.header.comunicadoId}`);
+                    logBatch(`[${contexto}] WARN: REEMPLAZAR pero no se encontró padre para ${doc.header.comunicadoId}`);
                 }
                 docsParaActualizar.push(doc);
             } else if (st === 'OMITIDO' || st === 'ERROR_SIN_PADRE') {
@@ -857,11 +1000,35 @@ function _procesarBatchInterno(loteAgrupado, cache) {
             _updateCache(cache, 'aseguradoras', res.ids, newAseguradoras, 'aseguradora');
         }
 
-        // Distritos
+        // Distritos - NUEVO: Soporta distritoRiegoAccion ("Actualiza" | "Mantener")
         const newDistritos = _extractUnique(validos, 'distritoRiego', cache.distritosRiego, 'distritoRiego');
         if (newDistritos.length > 0) {
+            logBatch(`[${contexto}] FASE 1: Creando ${newDistritos.length} distritos nuevos: ${JSON.stringify(newDistritos)}`);
             const res = createBatch('distritosRiego', newDistritos.map(d => ({ distritoRiego: d })));
             _updateCache(cache, 'distritosRiego', res.ids, newDistritos, 'distritoRiego');
+        }
+
+        // NUEVO: Procesar actualizaciones de distritos existentes cuando distritoRiegoAccion = "Actualiza"
+        const distritosParaActualizar = _extractDistritosToUpdate(validos, cache.distritosRiego);
+        if (distritosParaActualizar.length > 0) {
+            logBatch(`[${contexto}] FASE 1: Actualizando ${distritosParaActualizar.length} distritos con nombres más completos...`);
+            distritosParaActualizar.forEach(upd => {
+                try {
+                    const resUpd = updateRow('distritosRiego', upd.id, { distritoRiego: upd.nuevoNombre });
+                    if (resUpd.success) {
+                        // Actualizar cache local
+                        const distritoEnCache = cache.distritosRiego.find(d => String(d.id) === String(upd.id));
+                        if (distritoEnCache) {
+                            distritoEnCache.distritoRiego = upd.nuevoNombre;
+                        }
+                        logBatch(`[${contexto}] Distrito actualizado: "${upd.nombreAnterior}" -> "${upd.nuevoNombre}"`);
+                    } else {
+                        logBatch(`[${contexto}] ERROR actualizando distrito ${upd.id}: ${resUpd.message}`);
+                    }
+                } catch (e) {
+                    logBatch(`[${contexto}] EXCEPCION actualizando distrito: ${e.message}`);
+                }
+            });
         }
 
         // Ajustadores
@@ -1222,8 +1389,7 @@ function _procesarBatchInterno(loteAgrupado, cache) {
                     // RECALCULAR Historial en tiempo real usando el cache (que se irá actualizando en cada ciclo del loop)
                     const descCalculada = _construirHistorial(cache, ctaObj, doc.header.comunicadoId);
 
-                    // FIX: Prioridad a la descripción del Header (IA) sobre la calculada (User Request)
-                    // Especialmente si NO es origen (L30A), queremos la descripción explicita "L30, L30A"
+                    // Prioridad: IA primero (si tiene descripción), si no, usar la calculada
                     const descFinal = doc.header.descripcion || descCalculada || '';
 
                     if (descFinal) {
@@ -1494,6 +1660,49 @@ function _procesarBatchInterno(loteAgrupado, cache) {
                 }
                 // =================================================================
 
+                // =================================================================
+                // LÓGICA INFORMATIVO: Duplicar líneas del origen sin modificar montos
+                // =================================================================
+                if (tipoAccion === 'INFORMATIVO') {
+                    logBatch(`[${contexto}] INFORMATIVO detectado - duplicando líneas del origen`);
+
+                    // Buscar el ORIGEN del comunicado
+                    const idComunicado = updateObj.idComunicado;
+                    const actOrigen = cache.actualizaciones.find(a =>
+                        String(a.idComunicado) === String(idComunicado) &&
+                        (a.esOrigen === 1 || a.esOrigen === '1')
+                    );
+
+                    if (actOrigen) {
+                        logBatch(`[${contexto}] ORIGEN encontrado para INFORMATIVO: Act.id=${actOrigen.id}`);
+
+                        // Cargar líneas del ORIGEN desde BD
+                        const lineasPadre = readAllRows('presupuestoLineas').data || [];
+                        const lineasDelOrigen = lineasPadre.filter(l =>
+                            String(l.idActualizacion) === String(actOrigen.id)
+                        );
+
+                        logBatch(`[${contexto}] Líneas del ORIGEN a duplicar: ${lineasDelOrigen.length}`);
+
+                        if (lineasDelOrigen.length > 0) {
+                            // Copiar TODAS las líneas del ORIGEN sin modificar
+                            lines = lineasDelOrigen.map(l => ({
+                                concepto: l.descripcion,
+                                categoria: l.categoria,
+                                importe: l.importe
+                            }));
+
+                            logBatch(`[${contexto}] INFORMATIVO: ${lines.length} líneas duplicadas del origen`);
+                        } else {
+                            logBatch(`[${contexto}] WARN: ORIGEN sin líneas para INFORMATIVO`);
+                        }
+                    } else {
+                        logBatch(`[${contexto}] WARN: No se encontró ORIGEN para INFORMATIVO`);
+                        // En este caso no hay líneas que duplicar, quedará con lines=[]
+                    }
+                }
+                // =================================================================
+
                 lines.forEach(l => {
                     // Calculo de Categoría (Fallback si IA falló)
                     let catFinal = l.categoria;
@@ -1616,6 +1825,126 @@ function _extractUnique(docs, docField, existingList, dbField) {
         if (!exists) unique.add(normalizedVal);
     });
     return Array.from(unique);
+}
+
+/**
+ * NUEVO: Extrae distritos que deben actualizarse en el catálogo.
+ * Cuando la IA devuelve distritoRiegoAccion = "Actualiza", significa que el nombre
+ * extraído del PDF es más completo que el existente en el catálogo.
+ * 
+ * Ejemplo: Catálogo tiene "DTT 018 Huixtla" pero PDF tiene 
+ * "Distrito de Temporal Tecnificado 018 (DTT 018) Huixtla" -> Actualizar
+ * 
+ * @param {Array} docs - Documentos a procesar
+ * @param {Array} existingDistritos - Lista actual de distritos del catálogo
+ * @returns {Array} Lista de objetos {id, nombreAnterior, nuevoNombre} para actualizar
+ */
+function _extractDistritosToUpdate(docs, existingDistritos) {
+    const updates = [];
+    const procesados = new Set(); // Evitar duplicados
+
+    docs.forEach(d => {
+        const h = d.header;
+
+        // Solo procesar si la IA indicó "Actualiza"
+        if (!h.distritoRiegoAccion || h.distritoRiegoAccion.toUpperCase() !== 'ACTUALIZA') {
+            return;
+        }
+
+        const nuevoNombre = String(h.distritoRiego || '').trim();
+        if (!nuevoNombre || nuevoNombre === '' || nuevoNombre.toUpperCase() === 'SIN DATO') {
+            return;
+        }
+
+        // Evitar procesar el mismo distrito múltiples veces
+        if (procesados.has(nuevoNombre.toUpperCase())) {
+            return;
+        }
+        procesados.add(nuevoNombre.toUpperCase());
+
+        // Buscar distrito existente que coincida parcialmente
+        // Usamos lógica de matching flexible: siglas, números, nombres parciales
+        const distritoExistente = _findMatchingDistrito(nuevoNombre, existingDistritos);
+
+        if (distritoExistente) {
+            const nombreAnterior = String(distritoExistente.distritoRiego || '').trim();
+
+            // Solo actualizar si el nuevo nombre es más largo (más completo)
+            if (nuevoNombre.length > nombreAnterior.length && nuevoNombre.toUpperCase() !== nombreAnterior.toUpperCase()) {
+                updates.push({
+                    id: distritoExistente.id,
+                    nombreAnterior: nombreAnterior,
+                    nuevoNombre: nuevoNombre.toUpperCase()
+                });
+            }
+        }
+    });
+
+    return updates;
+}
+
+/**
+ * NUEVO: Busca un distrito existente que coincida con el nuevo nombre.
+ * Usa matching flexible basado en:
+ * - Siglas (DTT, DR)
+ * - Números de distrito (018, 011)
+ * - Nombre del lugar (Huixtla, Margaritas)
+ * 
+ * @param {string} nuevoNombre - Nombre más completo del PDF
+ * @param {Array} existingDistritos - Lista de distritos existentes
+ * @returns {Object|null} Distrito encontrado o null
+ */
+function _findMatchingDistrito(nuevoNombre, existingDistritos) {
+    if (!nuevoNombre || !existingDistritos || existingDistritos.length === 0) {
+        return null;
+    }
+
+    const nuevoUpper = nuevoNombre.toUpperCase();
+
+    // Extraer números del nuevo nombre (ej: "018" de "DTT 018 Huixtla")
+    const numerosNuevo = nuevoUpper.match(/\d+/g) || [];
+
+    // Extraer palabras significativas (ignorar artículos y preposiciones)
+    const palabrasIgnorar = ['DE', 'DEL', 'LA', 'EL', 'LOS', 'LAS', 'EN', 'A', 'DISTRITO', 'TEMPORAL', 'TECNIFICADO', 'RIEGO'];
+    const palabrasNuevo = nuevoUpper.split(/[\s,()-]+/)
+        .filter(p => p.length > 2 && !palabrasIgnorar.includes(p) && !/^\d+$/.test(p));
+
+    for (const distrito of existingDistritos) {
+        const existenteUpper = String(distrito.distritoRiego || '').toUpperCase();
+
+        // Si es exactamente igual, no necesita actualización (pero debemos encontrarlo)
+        if (existenteUpper === nuevoUpper) {
+            return distrito;
+        }
+
+        // Extraer números del existente
+        const numerosExistente = existenteUpper.match(/\d+/g) || [];
+
+        // Si comparten al menos un número de distrito, es candidato
+        const compartenNumero = numerosNuevo.some(n => numerosExistente.includes(n));
+
+        if (compartenNumero) {
+            // Verificar que comparte al menos una palabra significativa (nombre del lugar)
+            const palabrasExistente = existenteUpper.split(/[\s,()-]+/)
+                .filter(p => p.length > 2 && !palabrasIgnorar.includes(p) && !/^\d+$/.test(p));
+
+            const compartenPalabra = palabrasNuevo.some(p =>
+                palabrasExistente.some(pe => pe.includes(p) || p.includes(pe))
+            );
+
+            // Si comparten número Y palabra, es un match
+            if (compartenPalabra || numerosNuevo.length > 0) {
+                return distrito;
+            }
+        }
+
+        // Fallback: Si el nuevo contiene al existente o viceversa
+        if (nuevoUpper.includes(existenteUpper) || existenteUpper.includes(nuevoUpper)) {
+            return distrito;
+        }
+    }
+
+    return null;
 }
 
 function _prepareSiniestrosBatch(validos, cache) {

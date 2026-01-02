@@ -479,13 +479,24 @@
                     <table class="table table-hover align-middle mb-3">
                         <thead class="table-light">
                             <tr>
-                                <th style="width: 45%; min-width: 300px;">Ubicación</th>
-                                <th style="width: 20%; min-width: 140px;">Categoría</th>
-                                <th class="text-end" style="width: 25%; min-width: 150px;">Importe</th>
-                                <th class="text-center" style="width: 10%; min-width: 60px;">Acción</th>
+                                <th style="width: 35%; min-width: 250px;">Ubicación</th>
+                                <th style="width: 15%; min-width: 120px;">Categoría</th>
+                                <th class="text-end" style="width: 15%; min-width: 120px;">Importe Anterior</th>
+                                <th class="text-end" style="width: 15%; min-width: 120px;">Importe Actual</th>
+                                <th class="text-end" style="width: 12%; min-width: 100px;">Diferencia</th>
+                                <th class="text-center" style="width: 8%; min-width: 50px;">Acción</th>
                             </tr>
                         </thead>
                         <tbody id="modal-presupuesto-lines-body"></tbody>
+                        <tfoot class="table-light fw-bold">
+                            <tr>
+                                <td colspan="2" class="text-end">Totales:</td>
+                                <td class="text-end" id="modal-total-anterior">$0.00</td>
+                                <td class="text-end text-primary" id="modal-total-actual">$0.00</td>
+                                <td class="text-end" id="modal-total-diferencia">$0.00</td>
+                                <td></td>
+                            </tr>
+                        </tfoot>
                     </table>
                 </div>
                 <button class="btn btn-outline-primary btn-sm" onclick="ComunicadoDetalle.addLineaPresupuesto()">
