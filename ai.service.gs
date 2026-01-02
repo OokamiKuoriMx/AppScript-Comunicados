@@ -241,11 +241,23 @@ function _callGeminiWithPdf(base64Content, filename, errorFeedback = null, catal
                    - categoria = "DAÑO FISICO"
 
         - **descripcion (HISTORIAL)**: Construye la cadena de trazabilidad.
+            - Si es Nuevo Origen (Ej L04): "GL097117-L04"
+            - Si es Nuevo Origen con sufijo (Ej L04C): "GL097117-L04C"
+            - Si es Actualización (Ej L04C): "GL097117-L04, L04C".
             - Formato: "{REF_CTA}-{RAIZ}, {VERSION_ANTERIOR}, {VERSION_ACTUAL}"
             - Ejemplo para L30A: "GL070059-L30, L30A".
             - Ejemplo para L30B: "GL070059-L30, L30A, L30B".
-            - Si es Nuevo Origen (Ej L04): "GL097117-L04".
+            - Ejemplo para L30C: "GL070059-L30, L30A, L30B, L30C".
 
+        - **distritoRiego**: 
+            - Busca frases como: "daños registrados en infraestructura perteneciente al Distrito de Temporal Tecnificado 018 (DTT 018) Huixtla, en el Estado de Chiapas"
+            - Extrae el distrito mencionado (Ej: "Distrito de Temporal Tecnificado 018 (DTT 018) Huixtla")
+            - Coteja con la lista de distritos riego.
+            - Si es similar o coincide por contexto, deja el nombre.
+            - Si es mas completo al nombre de la lista usa el extraido por ejemplo: "DTT 018 Huixitla" sustituye por "Distrito de Temporal Tecnificado 018 (DTT 018) Huixtla" en el catalogo de distritos riego.    
+            - Si no menciona, deja "SIN DATO".
+            - Este campo no quiere decir que los comunicados sean diferentes.
+            
         2. **CATEGORIZACIÓN INTELIGENTE (Inferencia)**:
         - El PDF NO tiene columna "Categoría", debes DEDUCIRLA del texto del 'concepto'.
         - Reglas:
