@@ -250,14 +250,23 @@ function _callGeminiWithPdf(base64Content, filename, errorFeedback = null, catal
             - Ejemplo para L30C: "GL070059-L30, L30A, L30B, L30C".
 
         - **distritoRiego**: 
-            - Busca frases como: "daños registrados en infraestructura perteneciente al Distrito de Temporal Tecnificado 018 (DTT 018) Huixtla, en el Estado de Chiapas"
-            - Extrae el distrito mencionado (Ej: "Distrito de Temporal Tecnificado 018 (DTT 018) Huixtla")
-            - Coteja con la lista de distritos riego.
-            - Si es similar o coincide por contexto, deja el nombre.
-            - Si es mas completo al nombre de la lista usa el extraido por ejemplo: "DTT 018 Huixitla" sustituye por "Distrito de Temporal Tecnificado 018 (DTT 018) Huixtla" en el catalogo de distritos riego.    
-            - Si no menciona, deja "SIN DATO".
-            - Este campo no quiere decir que los comunicados sean diferentes.
-            
+            - Extracción: Localizar frases relacionadas con daños en infraestructura, por ejemplo: "daños registrados en infraestructura perteneciente al Distrito de Temporal Tecnificado 018 (DTT 018) Huixtla...".
+            - Identificación: Extraer el nombre del distrito mencionado (ej. "Distrito de Temporal Tecnificado 018 (DTT 018) Huixtla").
+            - Validación y Normalización: Comparar el texto extraído con el catálogo de distritos de riego.
+            - Coincidencia parcial: Si se detecta similitud por contexto (ej. "DTT 018 Huixtla"), realizar el cruce.
+            - Regla del nombre más completo:
+                - Caso A (Enriquecimiento): Si el nombre extraído del documento es más completo que el del catálogo, utilizar y actualizar con el nombre extraído (ej. sustituir "DTT 018 Huixtla" por "Distrito de Temporal Tecnificado 018 (DTT 018) Huixtla").
+                - Caso B (Estandarización): Si el catálogo ya posee el nombre completo y el documento usa una abreviatura, mantener el nombre oficial del catálogo.
+            - Valor por defecto: Si no se menciona ningún distrito, asignar "SIN DATO".
+            - Nota: Este campo es descriptivo y no determina la unicidad del comunicado.
+
+        -  **distritoRiegoAccion**: 
+            - Determina la acción a realizar en el catálogo basándose en la calidad del nombre extraído.
+            - Valores permitidos:
+                - "Actualiza": Se usa cuando el nombre extraído del documento es más completo o preciso que el que existe en la lista de distritos (ej. la lista tiene siglas y el documento el nombre completo).
+                - "Mantener": Se usa cuando el nombre de la lista es igual o más completo que el del documento, o cuando solo se requiere validación.
+            - Nota: Este campo es descriptivo y no determina la unicidad del comunicado.
+
         2. **CATEGORIZACIÓN INTELIGENTE (Inferencia)**:
         - El PDF NO tiene columna "Categoría", debes DEDUCIRLA del texto del 'concepto'.
         - Reglas:
@@ -318,6 +327,7 @@ function _callGeminiWithPdf(base64Content, filename, errorFeedback = null, catal
             "fi": "string (Fecha de Incidencia. Busca 'F/I:' en el texto y TRANSCRIBE LITERALMENTE tal como aparece. Ej: '03 de diciembre de 2020'. NO convertir a formato fecha)",
             "fondo": "string (Ej: FONDEN, CADENA, o vacío si no se menciona)",
             "distritoRiego": "string (Busca: 'Dirección Local [Estado]', 'Distrito de Riego', 'DTT', 'Distrito de Temporal'. Transcribe LITERAL. Ej: 'Dirección Local Campeche', 'DTT 011 MARGARITAS COMITAN')", 
+            "distritoRiegoAccion": "string ("Actualiza", "Mantener", o "Sin Dato" si no se menciona)",
             "totalPdf": number,
             "advertencias": ["string"]
         },
