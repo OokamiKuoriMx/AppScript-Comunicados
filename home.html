@@ -1,0 +1,174 @@
+<div class="container-fluid py-4 animate-fade-in">
+
+    <!-- Header / Welcome -->
+    <div class="row mb-4 align-items-center">
+        <div class="col-md-8">
+            <h1 class="display-6 fw-bold text-dark mb-0">
+                <i class="bi bi-speedometer2 text-primary me-2"></i>Dashboard
+            </h1>
+            <p class="text-muted mb-0">Bienvenido al Sistema de Gestión de Comunicados</p>
+        </div>
+        <div class="col-md-4 text-end">
+            <span class="badge bg-light text-dark border p-2 rounded-pill shadow-sm">
+                <i class="bi bi-calendar-event me-1"></i>
+                <span id="current-date">Cargando fecha...</span>
+            </span>
+        </div>
+    </div>
+
+    <!-- Stats Cards Row -->
+    <div class="row g-4 mb-5">
+        <!-- Card 1: Total -->
+        <div class="col-md-4">
+            <div class="card border-0 shadow-sm h-100 hover-lift overflow-hidden card-stat">
+                <div class="card-body position-relative">
+                    <div class="d-flex align-items-center mb-3">
+                        <div class="icon-shape bg-primary bg-opacity-10 text-primary rounded-3 p-3">
+                            <i class="bi bi-folder2-open fs-4"></i>
+                        </div>
+                        <div class="ms-3">
+                            <h6 class="text-uppercase text-muted small fw-bold mb-0">Total Comunicados</h6>
+                            <h2 class="fw-bold mb-0" id="stat-total">...</h2>
+                        </div>
+                    </div>
+                </div>
+                <div class="card-footer bg-transparent border-0 small text-muted">
+                    <i class="bi bi-arrow-clockwise me-1"></i>Actualizado recientemente
+                </div>
+            </div>
+        </div>
+
+        <!-- Card 2: Pendientes -->
+        <div class="col-md-4">
+            <div class="card border-0 shadow-sm h-100 hover-lift overflow-hidden card-stat">
+                <div class="card-body position-relative">
+                    <div class="d-flex align-items-center mb-3">
+                        <div class="icon-shape bg-warning bg-opacity-10 text-warning rounded-3 p-3">
+                            <i class="bi bi-hourglass-split fs-4"></i>
+                        </div>
+                        <div class="ms-3">
+                            <h6 class="text-uppercase text-muted small fw-bold mb-0">En Seguimiento</h6>
+                            <h2 class="fw-bold mb-0" id="stat-pendientes">...</h2>
+                        </div>
+                    </div>
+                </div>
+                <div class="card-footer bg-transparent border-0 small text-muted">
+                    <a href="#/comunicados" class="text-decoration-none text-warning fw-bold">Ver en seguimiento <i
+                            class="bi bi-arrow-right"></i></a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Card 3: Completados -->
+        <div class="col-md-4">
+            <div class="card border-0 shadow-sm h-100 hover-lift overflow-hidden card-stat">
+                <div class="card-body position-relative">
+                    <div class="d-flex align-items-center mb-3">
+                        <div class="icon-shape bg-success bg-opacity-10 text-success rounded-3 p-3">
+                            <i class="bi bi-check-circle fs-4"></i>
+                        </div>
+                        <div class="ms-3">
+                            <h6 class="text-uppercase text-muted small fw-bold mb-0">Completados</h6>
+                            <h2 class="fw-bold mb-0" id="stat-completados">...</h2>
+                        </div>
+                    </div>
+                </div>
+                <div class="card-footer bg-transparent border-0 small text-muted">
+                    Total histórico
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Access & Recent Activity -->
+    <div class="row g-4">
+        <!-- Quick Actions -->
+        <div class="col-lg-5">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-header bg-transparent border-0 pt-4 px-4 pb-2">
+                    <h5 class="fw-bold text-dark mb-0"><i class="bi bi-grid-fill me-2 text-secondary"></i>Accesos
+                        Directos</h5>
+                </div>
+                <div class="card-body p-4">
+                    <div class="d-grid gap-3">
+                        <a href="#/comunicados"
+                            class="btn btn-outline-primary btn-lg text-start p-3 hover-scale border-0 bg-light-subtle d-flex align-items-center">
+                            <div class="icon-circle bg-primary text-white me-3 rounded-circle d-flex align-items-center justify-content-center"
+                                style="width: 40px; height: 40px;">
+                                <i class="bi bi-plus-lg"></i>
+                            </div>
+                            <div>
+                                <div class="fw-bold text-dark">Gestionar Comunicados</div>
+                                <div class="small text-muted">Crear y editar registros</div>
+                            </div>
+                            <i class="bi bi-chevron-right ms-auto text-muted"></i>
+                        </a>
+
+                        <a href="#/catalogos"
+                            class="btn btn-outline-info btn-lg text-start p-3 hover-scale border-0 bg-light-subtle d-flex align-items-center">
+                            <div class="icon-circle bg-info text-white me-3 rounded-circle d-flex align-items-center justify-content-center"
+                                style="width: 40px; height: 40px;">
+                                <i class="bi bi-database"></i>
+                            </div>
+                            <div>
+                                <div class="fw-bold text-dark">Catálogos</div>
+                                <div class="small text-muted">Administrar tablas base</div>
+                            </div>
+                            <i class="bi bi-chevron-right ms-auto text-muted"></i>
+                        </a>
+
+                        <a href="#/importaciones"
+                            class="btn btn-outline-indigo btn-lg text-start p-3 hover-scale border-0 bg-light-subtle d-flex align-items-center">
+                            <div class="icon-circle bg-indigo text-white me-3 rounded-circle d-flex align-items-center justify-content-center"
+                                style="width: 40px; height: 40px; background-color: #6610f2;">
+                                <i class="bi bi-cloud-upload"></i>
+                            </div>
+                            <div>
+                                <div class="fw-bold text-dark">Importaciones</div>
+                                <div class="small text-muted">Carga masiva de datos</div>
+                            </div>
+                            <i class="bi bi-chevron-right ms-auto text-muted"></i>
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Recent Activity Table -->
+        <div class="col-lg-7">
+            <div class="card border-0 shadow-sm h-100">
+                <div
+                    class="card-header bg-transparent border-0 pt-4 px-4 pb-2 d-flex justify-content-between align-items-center">
+                    <h5 class="fw-bold text-dark mb-0"><i class="bi bi-clock-history me-2 text-secondary"></i>Recientes
+                    </h5>
+                    <a href="#/comunicados" class="btn btn-sm btn-light text-primary fw-bold rounded-pill px-3">Ver
+                        todo</a>
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="table table-hover align-middle mb-0"
+                            style="border-collapse: separate; border-spacing: 0;">
+                            <thead class="bg-light text-muted small text-uppercase">
+                                <tr>
+                                    <th class="ps-4 border-bottom py-3">Comunicado</th>
+                                    <th class="border-bottom py-3">Fecha</th>
+                                    <th class="border-bottom py-3">Estatus</th>
+                                    <th class="pe-4 text-end border-bottom py-3">Acción</th>
+                                </tr>
+                            </thead>
+                            <tbody id="recent-activity-body">
+                                <tr>
+                                    <td colspan="4" class="text-center py-5 text-muted">
+                                        <div class="spinner-border spinner-border-sm text-secondary me-2" role="status">
+                                        </div>
+                                        Cargando actividad...
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

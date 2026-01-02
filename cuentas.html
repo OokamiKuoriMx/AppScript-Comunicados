@@ -1,0 +1,634 @@
+<section class="card shadow-sm" id="cuentas-dashboard">
+    <div
+        class="card-header bg-light d-flex flex-column flex-lg-row gap-3 justify-content-between align-items-lg-center">
+        <div>
+            <h1 class="card-title h5 mb-1">Gestor de Referencias y Comunicados</h1>
+            <p class="text-muted small mb-0">Selecciona una referencia para visualizar y gestionar sus comunicados
+                asociados.</p>
+        </div>
+        <div class="d-flex gap-2 flex-wrap w-100 w-lg-auto justify-content-lg-end align-items-center">
+            <!-- Alta Express (Principal) -->
+            <button type="button" class="btn btn-success shadow fw-bold flex-fill flex-lg-grow-0 px-4 py-2"
+                id="btnAltaExpress" data-bs-toggle="modal" data-bs-target="#modalAltaExpress">
+                <i class="bi bi-rocket-takeoff me-2"></i> Alta Express
+            </button>
+
+            <!-- Separador Vertical -->
+            <div class="vr mx-2 d-none d-lg-block"></div>
+
+            <!-- Botones Secundarios (Iconos) -->
+            <button type="button" class="btn btn-outline-secondary flex-fill flex-lg-grow-0" id="btnAbrirModalCuenta"
+                data-bs-toggle="modal" data-bs-target="#modalCuenta" title="Agregar solo Referencia">
+                <i class="bi bi-folder-plus fs-5"></i>
+            </button>
+
+            <button type="button" class="btn btn-outline-primary flex-fill flex-lg-grow-0" id="btnNuevoComunicado"
+                disabled title="Agregar Comunicado a Referencia seleccionada">
+                <i class="bi bi-file-earmark-plus fs-5"></i>
+            </button>
+        </div>
+    </div>
+    <div class="card-body">
+        <div class="row g-4">
+            <div class="col-lg-5">
+                <div class="d-flex justify-content-between align-items-start mb-3">
+                    <div>
+                        <h2 class="h6 mb-1">Referencias Registradas</h2>
+                        <p class="text-muted small mb-0">Selecciona una referencia para ver sus comunicados asociados.
+                        </p>
+                    </div>
+                    <span class="badge text-bg-light" id="badgeTotalCuentas" hidden>0 referencias</span>
+                </div>
+                <div id="lista-cuentas" class="vstack gap-2" role="list" aria-live="polite">
+                    <div class="border rounded p-4 text-center text-muted bg-light-subtle" id="placeholder-cuentas">
+                        <p class="mb-1 fw-semibold">No hay referencias registradas</p>
+                        <p class="mb-0 small">Agrega una referencia para comenzar.</p>
+                    </div>
+                </div>
+            </div>
+            <div class="col-lg-7">
+                <div class="d-flex justify-content-between align-items-start mb-3">
+                    <div>
+                        <h2 class="h6 mb-1">Comunicados Asociados</h2>
+                        <span class="badge text-bg-secondary" id="badgeCuentaSeleccionada">Sin referencia
+                            seleccionada</span>
+                    </div>
+                </div>
+                <div id="panel-comunicados" class="vstack gap-2" role="region" aria-live="polite">
+                    <div class="border rounded p-4 text-center text-muted bg-light-subtle" id="placeholder-comunicados">
+                        <p class="mb-1 fw-semibold">Selecciona una referencia</p>
+                        <p class="mb-0 small">Aquí verás los comunicados vinculados a la referencia elegida.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Modal para Nuevo Comunicado -->
+<div class="modal fade" id="modalNuevoComunicado" tabindex="-1" aria-labelledby="modalNuevoComunicadoLabel"
+    aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <form id="form-comunicado" novalidate>
+                <div class="modal-header">
+                    <div>
+                        <h5 class="modal-title" id="modalNuevoComunicadoLabel">Registrar Comunicado</h5>
+                        <p class="mb-0 small text-muted">Referencia seleccionada: <span id="modalCuentaSeleccionada"
+                                class="fw-semibold"></span></p>
+                    </div>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+                </div>
+                <div class="modal-body" style="overflow-y: auto; max-height: 65vh;">
+                    <div class="alert alert-danger d-none" role="alert" id="alertErrorComunicado"></div>
+                    <div class="alert alert-info d-none" role="alert" id="alertInfoComunicado"></div>
+
+                    <div class="row g-3">
+                        <!-- Fila 1: Comunicado y Fecha -->
+                        <div class="col-md-9">
+                            <label for="comunicadoNombre" class="form-label">Comunicado</label>
+                            <input type="text" class="form-control text-uppercase" id="comunicadoNombre" required
+                                autocomplete="off" maxlength="180" placeholder="Ej: L01">
+                            <div class="invalid-feedback">El nombre del comunicado es obligatorio.</div>
+                        </div>
+                        <div class="col-md-3">
+                            <label for="comunicadoFecha" class="form-label">Fecha</label>
+                            <input type="date" class="form-control" id="comunicadoFecha" required>
+                            <div class="invalid-feedback">Selecciona la fecha del comunicado.</div>
+                        </div>
+
+                        <!-- Fila 2: Descripción -->
+                        <div class="col-12">
+                            <label for="comunicadoDescripcion" class="form-label">Descripción</label>
+                            <textarea class="form-control" id="comunicadoDescripcion" rows="2" required
+                                placeholder="Ej: AM018638-L01, L01A"></textarea>
+                            <div class="invalid-feedback">La descripción es obligatoria.</div>
+                        </div>
+
+                        <!-- Fila 3: Estado y Distrito de Riego -->
+                        <div class="col-md-3">
+                            <label for="comunicadoEstado" class="form-label">Estado</label>
+                            <div class="dropdown combobox-dropdown w-100">
+                                <input type="text" class="form-control text-uppercase combobox-input dropdown-toggle"
+                                    id="comunicadoEstado" required autocomplete="off" placeholder="Ej: DURANGO"
+                                    role="combobox" data-bs-toggle="dropdown" aria-haspopup="listbox"
+                                    aria-autocomplete="list" aria-expanded="false" aria-owns="estadoSuggestions">
+                                <input type="hidden" id="comunicadoEstadoId">
+                                <div class="dropdown-menu w-100 shadow-sm combo-suggestions" id="estadoSuggestions"
+                                    role="listbox" style="max-height: 220px; overflow-y: auto;"></div>
+                            </div>
+                            <div class="invalid-feedback">Selecciona el estado.</div>
+                        </div>
+                        <div class="col-md-9">
+                            <label for="comunicadoDistrito" class="form-label">Distrito de Riego</label>
+                            <div class="dropdown combobox-dropdown w-100">
+                                <input type="text" class="form-control text-uppercase combobox-input dropdown-toggle"
+                                    id="comunicadoDistrito" required autocomplete="off"
+                                    placeholder="Ej: DR-001 PABELLON" role="combobox" data-bs-toggle="dropdown"
+                                    aria-haspopup="listbox" aria-autocomplete="list" aria-expanded="false"
+                                    aria-owns="distritoSuggestions">
+                                <input type="hidden" id="comunicadoDistritoId">
+                                <div class="dropdown-menu w-100 shadow-sm combo-suggestions" id="distritoSuggestions"
+                                    role="listbox" style="max-height: 220px; overflow-y: auto;"></div>
+                            </div>
+                            <div class="invalid-feedback">Selecciona el distrito de riego.</div>
+                        </div>
+
+                        <!-- Fila 4: Siniestro -->
+                        <div class="col-12">
+                            <label for="comunicadoSiniestro" class="form-label">Siniestro</label>
+                            <div class="dropdown combobox-dropdown w-100">
+                                <input type="text" class="form-control text-uppercase combobox-input dropdown-toggle"
+                                    id="comunicadoSiniestro" required autocomplete="off" placeholder="Ej: SEQUIA 2024"
+                                    role="combobox" data-bs-toggle="dropdown" aria-haspopup="listbox"
+                                    aria-autocomplete="list" aria-expanded="false" aria-owns="siniestroSuggestions">
+                                <input type="hidden" id="comunicadoSiniestroId">
+                                <div class="dropdown-menu w-100 shadow-sm combo-suggestions" id="siniestroSuggestions"
+                                    role="listbox" style="max-height: 220px; overflow-y: auto;"></div>
+                            </div>
+                            <div class="invalid-feedback">Selecciona o registra el siniestro.</div>
+                        </div>
+                    </div>
+
+                    <div class="mt-4 border rounded p-3 bg-light-subtle d-none" id="wrapperSiniestroExtra">
+                        <p class="mb-3 small text-muted" id="siniestroExtraLabel">Captura los datos del nuevo siniestro.
+                        </p>
+                        <div class="row g-3">
+                            <div class="col-12">
+                                <label for="siniestroFenomeno" class="form-label">Fenómeno</label>
+                                <input type="text" class="form-control text-uppercase" id="siniestroFenomeno"
+                                    placeholder="Ej: HURACAN, SEQUIA, INUNDACION">
+                            </div>
+                            <div class="col-12 mt-3">
+                                <label for="siniestroFi" class="form-label">FI</label>
+                                <input type="text" class="form-control text-uppercase" id="siniestroFi"
+                                    placeholder="Ej: CICLO P-V 2024, INICIO DE LLUVIAS">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-primary" id="btnGuardarComunicado">Guardar Comunicado</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Modal para Crear/Editar Cuenta -->
+<div class="modal fade" id="modalCuenta" tabindex="-1" aria-labelledby="modalCuentaLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form id="form-cuenta" novalidate>
+                <div class="modal-header">
+                    <h5 class="modal-title" id="modalCuentaLabel">Agregar Nueva Referencia</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="cuentaId">
+                    <div class="mb-3">
+                        <label for="nombreCuenta" class="form-label">Nombre de la Referencia</label>
+                        <input type="text" class="form-control" id="nombreCuenta"
+                            oninput="this.value = this.value.toUpperCase()" required placeholder="Ej: AM005837">
+                        <div class="invalid-feedback">El nombre de la referencia es obligatorio.</div>
+                    </div>
+                    <div class="mb-3">
+                        <label for="referenciaAjustador" class="form-label">Ajustador</label>
+                        <div class="dropdown combobox-dropdown w-100">
+                            <input type="text" class="form-control text-uppercase combobox-input dropdown-toggle"
+                                id="referenciaAjustador" autocomplete="off" placeholder="Ej: CHARLES TAYLOR"
+                                role="combobox" data-bs-toggle="dropdown" aria-haspopup="listbox"
+                                aria-autocomplete="list" aria-expanded="false" aria-owns="ajustadorSuggestions">
+                            <input type="hidden" id="referenciaAjustadorId">
+                            <div class="dropdown-menu w-100 shadow-sm combo-suggestions" id="ajustadorSuggestions"
+                                role="listbox" style="max-height: 220px; overflow-y: auto;"></div>
+                        </div>
+                        <small class="text-muted">Selecciona un ajustador existente o escribe uno nuevo para
+                            crearlo.</small>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cerrar</button>
+                    <button type="submit" class="btn btn-primary" id="btnGuardarCuenta">Guardar Referencia</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Modal para Confirmar Eliminación DE REFERENCIA (Rediseñado) -->
+<div class="modal fade" id="modalConfirmDelete" tabindex="-1" aria-labelledby="modalConfirmDeleteLabel"
+    aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content border-0 shadow-lg" style="border-radius: 1rem; overflow: hidden;">
+            <div class="modal-header border-0 pb-0 position-absolute w-100 justify-content-end" style="z-index: 10;">
+                <button type="button" class="btn-close m-3" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+            </div>
+            <div class="modal-body p-5 text-center">
+                <div class="mb-4">
+                    <div class="d-inline-flex align-items-center justify-content-center bg-danger bg-opacity-10 rounded-circle text-danger p-3"
+                        style="width: 80px; height: 80px;">
+                        <i class="bi bi-trash3-fill display-5 animate-pulse"></i>
+                    </div>
+                </div>
+                <h3 class="fw-bold text-dark mb-2">¿Eliminar Referencia?</h3>
+                <p class="text-muted mb-4 fs-6">
+                    Estás a punto de eliminar la referencia <strong id="deleteAccountName" class="text-dark"></strong>.
+                    <br>Esta acción es <strong>irreversible</strong>.
+                </p>
+
+                <div class="card bg-danger bg-opacity-10 border-0 mb-4 text-start">
+                    <div class="card-body p-3">
+                        <div class="d-flex">
+                            <i class="bi bi-exclamation-triangle-fill text-danger fs-4 me-3"></i>
+                            <div>
+                                <h6 class="text-danger fw-bold mb-1">Advertencia: Eliminación en Cascada</h6>
+                                <p class="small text-danger mb-0 opacity-75" style="line-height: 1.4;">
+                                    Se eliminarán <b>TODOS los Comunicados asociados</b> y su árbol completo de datos
+                                    (Equipo, Tickets, Financieros, Actualizaciones).
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="d-grid gap-2">
+                    <button type="button" class="btn btn-danger btn-lg shadow-sm fw-semibold" id="btnConfirmDelete">
+                        <i class="bi bi-trash me-2"></i> Eliminar Referencia y Datos
+                    </button>
+                    <button type="button" class="btn btn-light btn-lg text-muted fw-medium mt-2"
+                        data-bs-dismiss="modal">
+                        Cancelar
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal para Confirmar Eliminación de Comunicado (Rediseñado) -->
+<div class="modal fade" id="modalConfirmDeleteComunicado" tabindex="-1"
+    aria-labelledby="modalConfirmDeleteComunicadoLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content border-0 shadow-lg" style="border-radius: 1rem; overflow: hidden;">
+            <div class="modal-header border-0 pb-0 position-absolute w-100 justify-content-end" style="z-index: 10;">
+                <button type="button" class="btn-close m-3" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+            </div>
+            <div class="modal-body p-5 text-center">
+                <div class="mb-4">
+                    <div class="d-inline-flex align-items-center justify-content-center bg-danger bg-opacity-10 rounded-circle text-danger p-3"
+                        style="width: 80px; height: 80px;">
+                        <i class="bi bi-trash3-fill display-5 animate-pulse"></i>
+                    </div>
+                </div>
+                <h3 class="fw-bold text-dark mb-2">¿Eliminar Comunicado?</h3>
+                <p class="text-muted mb-4 fs-6">
+                    Estás a punto de eliminar el comunicado <strong id="deleteComunicadoName"
+                        class="text-dark"></strong>.
+                    <br>Esta acción es <strong>irreversible</strong> y borrará todos los datos asociados.
+                </p>
+
+                <div class="card bg-danger bg-opacity-10 border-0 mb-4 text-start">
+                    <div class="card-body p-3">
+                        <div class="d-flex">
+                            <i class="bi bi-exclamation-octagon-fill text-danger fs-4 me-3"></i>
+                            <div>
+                                <h6 class="text-danger fw-bold mb-1">Impacto de la eliminación</h6>
+                                <p class="small text-danger mb-0 opacity-75" style="line-height: 1.4;">
+                                    Se borrarán <b>Datos Generales</b>, <b>Equipos</b>, <b>Tickets</b>,
+                                    <b>Financieros</b> y todas las <b>Actualizaciones</b> vinculadas.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="d-grid gap-2">
+                    <button type="button" class="btn btn-danger btn-lg shadow-sm fw-semibold"
+                        id="btnConfirmDeleteComunicado">
+                        <i class="bi bi-trash me-2"></i> Sí, eliminar todo
+                    </button>
+                    <button type="button" class="btn btn-light btn-lg text-muted fw-medium mt-2"
+                        data-bs-dismiss="modal">
+                        Cancelar operación
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    /* Animación de pulso suave para el icono */
+    .animate-pulse {
+        animation: pulse-red 2s infinite;
+    }
+
+    @keyframes pulse-red {
+        0% {
+            transform: scale(0.95);
+        }
+
+        70% {
+            transform: scale(1.1);
+        }
+
+        100% {
+            transform: scale(0.95);
+        }
+    }
+</style>
+
+<style>
+    /* Estilos para el listado de comunicados (Rediseño) */
+    .comunicado-card {
+        background-color: #fff;
+        border: 1px solid #eaeaea;
+        border-radius: 12px;
+        transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+        position: relative;
+        overflow: hidden;
+    }
+
+    .comunicado-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 10px 20px -5px rgba(0, 0, 0, 0.08);
+        border-color: #d1d5db;
+        z-index: 2;
+    }
+
+    .comunicado-card.selected {
+        background-color: #fcfdff;
+        border-color: #bfdbfe;
+        box-shadow: 0 4px 12px rgba(37, 99, 235, 0.1);
+    }
+
+    .comunicado-card.selected::before {
+        content: '';
+        position: absolute;
+        left: 0;
+        top: 0;
+        bottom: 0;
+        width: 4px;
+        background: #0d6efd;
+        border-top-left-radius: 12px;
+        border-bottom-left-radius: 12px;
+    }
+
+    .icon-box {
+        width: 42px;
+        height: 42px;
+        flex-shrink: 0;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 10px;
+        font-size: 1.25rem;
+    }
+
+    .bg-soft-primary {
+        background-color: rgba(13, 110, 253, 0.08);
+        color: #0d6efd;
+    }
+
+    .bg-soft-success {
+        background-color: rgba(25, 135, 84, 0.08);
+        color: #198754;
+    }
+
+    .bg-soft-warning {
+        background-color: rgba(255, 193, 7, 0.12);
+        color: #b48909;
+    }
+
+    .bg-soft-secondary {
+        background-color: rgba(108, 117, 125, 0.08);
+        color: #6c757d;
+    }
+
+    .action-btn-group {
+        opacity: 0.4;
+        transition: opacity 0.2s;
+    }
+
+    .comunicado-card:hover .action-btn-group,
+    .comunicado-card.selected .action-btn-group {
+        opacity: 1;
+    }
+
+    .badge-modern {
+        padding: 0.4em 0.8em;
+        font-size: 0.7rem;
+        font-weight: 600;
+        border-radius: 6px;
+        letter-spacing: 0.3px;
+        text-transform: uppercase;
+    }
+
+    /* Utilerias de texto */
+    .line-clamp-1 {
+        display: -webkit-box;
+        -webkit-line-clamp: 1;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+    }
+
+    .line-clamp-2 {
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+    }
+</style>
+
+<!-- Modal Alta Express (Referencia + Comunicado) -->
+<div class="modal fade" id="modalAltaExpress" tabindex="-1" aria-labelledby="modalAltaExpressLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <form id="form-express" novalidate>
+                <div class="modal-header bg-success text-white">
+                    <h5 class="modal-title" id="modalAltaExpressLabel">
+                        <i class="bi bi-rocket-takeoff"></i> Alta Express
+                    </h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"
+                        aria-label="Cerrar"></button>
+                </div>
+                <div class="modal-body" style="overflow-y: auto; max-height: 75vh;">
+
+                    <!-- SECCIÓN 1: REFERENCIA DE AJUSTADOR -->
+                    <h6 class="border-bottom pb-2 mb-3 text-success">1. Referencia de Ajustador</h6>
+                    <div class="row g-3 mb-4">
+                        <div class="col-md-6">
+                            <label for="express_nombreCuenta" class="form-label">Referencia</label>
+                            <div class="dropdown combobox-dropdown w-100">
+                                <input type="text" class="form-control text-uppercase combobox-input dropdown-toggle"
+                                    id="express_nombreCuenta" required autocomplete="off" placeholder="Ej: AM005837"
+                                    role="combobox" data-bs-toggle="dropdown" aria-haspopup="listbox"
+                                    aria-autocomplete="list" aria-expanded="false"
+                                    aria-owns="express_nombreCuentaSuggestions">
+                                <input type="hidden" id="express_nombreCuentaId">
+                                <div class="dropdown-menu w-100 shadow-sm combo-suggestions"
+                                    id="express_nombreCuentaSuggestions" role="listbox"
+                                    style="max-height: 220px; overflow-y: auto;"></div>
+                            </div>
+                            <div class="invalid-feedback">Selecciona o escribe una referencia válida.</div>
+                            <div id="aviso-nuevo-express-cuenta"
+                                class="form-text text-warning d-none small animate-pulse">
+                                <i class="bi bi-plus-circle-dotted me-1"></i> Se dará de alta esta nueva referencia.
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="express_ajustador" class="form-label">Ajustador</label>
+                            <div class="dropdown combobox-dropdown w-100">
+                                <input type="text" class="form-control text-uppercase combobox-input dropdown-toggle"
+                                    id="express_ajustador" autocomplete="off" placeholder="Ej: CHARLES TAYLOR"
+                                    role="combobox" data-bs-toggle="dropdown" aria-haspopup="listbox"
+                                    aria-autocomplete="list" aria-expanded="false"
+                                    aria-owns="express_ajustadorSuggestions">
+                                <input type="hidden" id="express_ajustadorId">
+                                <div class="dropdown-menu w-100 shadow-sm combo-suggestions"
+                                    id="express_ajustadorSuggestions" role="listbox"
+                                    style="max-height: 220px; overflow-y: auto;"></div>
+                            </div>
+                            <div class="invalid-feedback">Selecciona o crea un ajustador.</div>
+                            <div id="aviso-nuevo-express-ajustador"
+                                class="form-text text-warning d-none small animate-pulse">
+                                <i class="bi bi-person-plus-fill me-1"></i> Se dará de alta este nuevo ajustador.
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- SECCIÓN 2: REFERENCIA DE ASEGURADORA -->
+                    <h6 class="border-bottom pb-2 mb-3 text-warning">2. Referencia de Aseguradora</h6>
+                    <div class="row g-3 mb-4">
+                        <!-- Siniestro -->
+                        <div class="col-md-6">
+                            <label for="express_comunicadoSiniestro" class="form-label">Siniestro</label>
+                            <div class="dropdown combobox-dropdown w-100">
+                                <input type="text" class="form-control text-uppercase combobox-input dropdown-toggle"
+                                    id="express_comunicadoSiniestro" required autocomplete="off"
+                                    placeholder="Ej: SEQUIA 2024" role="combobox" data-bs-toggle="dropdown"
+                                    aria-haspopup="listbox" aria-autocomplete="list" aria-expanded="false"
+                                    aria-owns="express_siniestroSuggestions">
+                                <input type="hidden" id="express_comunicadoSiniestroId">
+                                <div class="dropdown-menu w-100 shadow-sm combo-suggestions"
+                                    id="express_siniestroSuggestions" role="listbox"
+                                    style="max-height: 220px; overflow-y: auto;"></div>
+                            </div>
+                            <div class="invalid-feedback">Requerido.</div>
+                        </div>
+
+                        <!-- Aseguradora -->
+                        <div class="col-md-6">
+                            <label class="form-label">Aseguradora</label>
+                            <div class="dropdown combobox-dropdown w-100 position-relative"
+                                id="express_wrapperSiniestroAseguradora">
+                                <input type="text" class="form-control text-uppercase combobox-input dropdown-toggle"
+                                    id="express_siniestroAseguradora" placeholder="BUSCAR ASEGURADORA..."
+                                    autocomplete="off" role="combobox" data-bs-toggle="dropdown" aria-haspopup="listbox"
+                                    aria-autocomplete="list" aria-expanded="false"
+                                    aria-owns="express_siniestroAseguradoraSuggestions">
+                                <input type="hidden" id="express_siniestroAseguradoraId" name="idAseguradora">
+                                <ul class="dropdown-menu w-100 shadow-sm combo-suggestions"
+                                    id="express_siniestroAseguradoraSuggestions" role="listbox"
+                                    style="max-height: 200px; overflow-y: auto;"></ul>
+                            </div>
+                        </div>
+
+                        <!-- Campos Extra Siniestro (Ocultos por defecto) -->
+                        <div class="col-12 d-none" id="express_wrapperSiniestroExtra">
+                            <div class="p-3 bg-light rounded border border-warning border-start-0 border-end-0">
+                                <h6 class="text-warning small mb-2"><i class="bi bi-plus-circle me-1"></i>Nuevo
+                                    Siniestro</h6>
+                                <div class="row g-3">
+                                    <div class="col-12">
+                                        <label for="express_siniestroFenomeno"
+                                            class="form-label small mb-1">Fenómeno</label>
+                                        <input type="text" class="form-control form-control-sm text-uppercase"
+                                            id="express_siniestroFenomeno" placeholder="Ej: SEQUIA">
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label for="express_siniestroFi" class="form-label small mb-1">Fecha de
+                                            Incidencia</label>
+                                        <input type="text" class="form-control form-control-sm text-uppercase"
+                                            id="express_siniestroFi" placeholder="Ej: 2024">
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label for="express_siniestroFondo" class="form-label small mb-1">Fondo</label>
+                                        <input type="text" class="form-control form-control-sm text-uppercase"
+                                            id="express_siniestroFondo" placeholder="Ej: FONDEN">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- SECCIÓN 3: DATOS DEL COMUNICADO -->
+                    <h6 class="border-bottom pb-2 mb-3 text-primary">3. Datos del Comunicado Inicial</h6>
+                    <div class="row g-3">
+                        <!-- Comunicado y Fecha -->
+                        <div class="col-md-9">
+                            <label for="express_comunicadoNombre" class="form-label">Comunicado</label>
+                            <input type="text" class="form-control text-uppercase" id="express_comunicadoNombre"
+                                required autocomplete="off" maxlength="180" placeholder="Ej: L01">
+                            <div class="invalid-feedback">Requerido.</div>
+                        </div>
+                        <div class="col-md-3">
+                            <label for="express_comunicadoFecha" class="form-label">Fecha</label>
+                            <input type="date" class="form-control" id="express_comunicadoFecha" required>
+                            <div class="invalid-feedback">Requerido.</div>
+                        </div>
+
+                        <!-- Descripción -->
+                        <div class="col-12">
+                            <label for="express_comunicadoDescripcion" class="form-label">Descripción</label>
+                            <textarea class="form-control" id="express_comunicadoDescripcion" rows="2" required
+                                placeholder="Ej: AM018638-L01, L01A"></textarea>
+                            <div class="invalid-feedback">Requerida.</div>
+                        </div>
+
+                        <!-- Estado y Distrito -->
+                        <div class="col-md-3">
+                            <label for="express_comunicadoEstado" class="form-label">Estado</label>
+                            <div class="dropdown combobox-dropdown w-100">
+                                <input type="text" class="form-control text-uppercase combobox-input dropdown-toggle"
+                                    id="express_comunicadoEstado" required autocomplete="off" placeholder="Ej: DURANGO"
+                                    role="combobox" data-bs-toggle="dropdown" aria-haspopup="listbox"
+                                    aria-autocomplete="list" aria-expanded="false"
+                                    aria-owns="express_estadoSuggestions">
+                                <input type="hidden" id="express_comunicadoEstadoId">
+                                <div class="dropdown-menu w-100 shadow-sm combo-suggestions"
+                                    id="express_estadoSuggestions" role="listbox"
+                                    style="max-height: 220px; overflow-y: auto;"></div>
+                            </div>
+                            <div class="invalid-feedback">Requerido.</div>
+                        </div>
+                        <div class="col-md-9">
+                            <label for="express_comunicadoDistrito" class="form-label">Distrito de Riego</label>
+                            <div class="dropdown combobox-dropdown w-100">
+                                <input type="text" class="form-control text-uppercase combobox-input dropdown-toggle"
+                                    id="express_comunicadoDistrito" required autocomplete="off"
+                                    placeholder="Ej: DR-001 PABELLON" role="combobox" data-bs-toggle="dropdown"
+                                    aria-haspopup="listbox" aria-autocomplete="list" aria-expanded="false"
+                                    aria-owns="express_distritoSuggestions">
+                                <input type="hidden" id="express_comunicadoDistritoId">
+                                <div class="dropdown-menu w-100 shadow-sm combo-suggestions"
+                                    id="express_distritoSuggestions" role="listbox"
+                                    style="max-height: 220px; overflow-y: auto;"></div>
+                            </div>
+                            <div class="invalid-feedback">Requerido.</div>
+                        </div>
+
+
+
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-success" id="btnGuardarExpress">Guardar Todo</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>

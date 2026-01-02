@@ -1,0 +1,474 @@
+<div class="row g-4 fade-in">
+    <!-- Header Section de la vista -->
+    <div class="col-12 d-flex justify-content-between align-items-center mb-3">
+        <div>
+            <h2 class="fw-bold mb-1 text-gradient">Comunicados</h2>
+            <p class="text-muted mb-0">Gestión centralizada de sus comunicados y siniestros.</p>
+        </div>
+        <div class="d-flex gap-2">
+            <button id="btnImportarComunicados" class="btn btn-primary text-white border-0 shadow-sm"
+                title="Importar Comunicados" onclick="Importacion.openModal()">
+                <i class="bi bi-file-earmark-arrow-up me-2"></i>Importar
+            </button>
+            <button id="btnRecargarComunicados" class="btn btn-outline-light text-dark border-0 shadow-sm"
+                title="Actualizar lista">
+                <i class="bi bi-arrow-clockwise fs-5"></i>
+            </button>
+
+            <!-- View Toggles -->
+            <div class="btn-group shadow-sm" role="group" aria-label="Vista">
+                <input type="radio" class="btn-check" name="view-mode" id="view-list" autocomplete="off" checked>
+                <label class="btn btn-outline-primary" for="view-list" title="Vista de Lista"><i
+                        class="bi bi-list-ul"></i></label>
+
+                <input type="radio" class="btn-check" name="view-mode" id="view-map" autocomplete="off">
+                <label class="btn btn-outline-primary" for="view-map" title="Vista de Mapa"><i
+                        class="bi bi-map-fill"></i></label>
+            </div>
+
+            <span class="badge bg-primary rounded-pill d-flex align-items-center px-3 shadow-sm">
+                <span id="total-comunicados-badge" class="fs-6 me-1">0</span> Comunicados
+            </span>
+        </div>
+    </div>
+
+    <!-- Loader -->
+    <div id="comunicados-loader" class="col-12 text-center py-5">
+        <div class="spinner-border text-primary" style="width: 3rem; height: 3rem;" role="status">
+            <span class="visually-hidden">Cargando...</span>
+        </div>
+        <p class="text-muted mt-3 animate-pulse">Cargando información...</p>
+    </div>
+
+    <!-- Mensajes de Estado -->
+    <div id="comunicados-error" class="col-12 d-none">
+        <div class="alert alert-danger shadow-sm border-0 d-flex align-items-center" role="alert">
+            <i class="bi bi-exclamation-triangle-fill fs-4 me-3"></i>
+            <div>
+                <h5 class="alert-heading fw-bold mb-1">Error al cargar</h5>
+                <p class="mb-0 error-message">No se pudieron recuperar los comunicados.</p>
+            </div>
+        </div>
+    </div>
+
+    <div id="comunicados-empty" class="col-12 d-none">
+        <div class="text-center py-5 text-muted">
+            <div class="mb-3">
+                <i class="bi bi-inbox fs-1 text-secondary opacity-50"></i>
+            </div>
+            <h5>No hay comunicados registrados</h5>
+            <p>Crea un nuevo comunicado desde el panel de Cuentas.</p>
+        </div>
+    </div>
+
+    <!-- Dashboard Section -->
+    <div id="dashboard-container" class="col-12 d-none fade-in">
+        <div class="row g-3 mb-4">
+            <!-- Total Card -->
+            <div class="col-12 col-md-6 col-xl-3">
+                <div class="stat-card p-3 h-100" style="--card-border-color: #0d6efd;">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div>
+                            <div class="stat-label mb-1">Total Comunicados</div>
+                            <div class="stat-value" id="stat-total">0</div>
+                            <div class="stat-trend text-muted">
+                                <i class="bi bi-folder2-open"></i> Registros totales
+                            </div>
+                        </div>
+                        <div class="stat-icon bg-primary bg-opacity-10 text-primary">
+                            <i class="bi bi-grid-fill"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Importantes Card -->
+            <div class="col-12 col-md-6 col-xl-3">
+                <div class="stat-card p-3 h-100" style="--card-border-color: #dc3545;">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div>
+                            <div class="stat-label mb-1">Sin Siniestro</div>
+                            <div class="stat-value text-danger" id="stat-sin-siniestro">0</div>
+                            <div class="stat-trend text-danger">
+                                <i class="bi bi-exclamation-circle"></i> Requieren atención
+                            </div>
+                        </div>
+                        <div class="stat-icon bg-danger bg-opacity-10 text-danger">
+                            <i class="bi bi-bell-fill"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- En Proceso Card (Or Siniestros Nuevos) -->
+            <div class="col-12 col-md-6 col-xl-3">
+                <div class="stat-card p-3 h-100" style="--card-border-color: #ffc107;">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div>
+                            <div class="stat-label mb-1">Nuevos Siniestros</div>
+                            <div class="stat-value text-dark" id="stat-nuevos-siniestros">0</div>
+                            <div class="stat-trend text-muted">
+                                <i class="bi bi-stars text-warning"></i> Detectados recientemente
+                            </div>
+                        </div>
+                        <div class="stat-icon bg-warning bg-opacity-10 text-warning">
+                            <i class="bi bi-magic"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Recientes Card -->
+            <div class="col-12 col-md-6 col-xl-3">
+                <div class="stat-card p-3 h-100" style="--card-border-color: #198754;">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div>
+                            <div class="stat-label mb-1">Este Mes</div>
+                            <div class="stat-value text-success" id="stat-mes-actual">0</div>
+                            <div class="stat-trend text-success">
+                                <i class="bi bi-graph-up-arrow"></i> Actividad reciente
+                            </div>
+                        </div>
+                        <div class="stat-icon bg-success bg-opacity-10 text-success">
+                            <i class="bi bi-calendar-check mx-auto"></i>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Filter Bar -->
+        <div class="filter-bar d-flex flex-wrap gap-3 align-items-center">
+            <div class="flex-grow-1 position-relative search-input-group" style="min-width: 200px;">
+                <div class="input-group">
+                    <span class="input-group-text text-muted"><i class="bi bi-search"></i></span>
+                    <input type="text" id="filter-search" class="form-control"
+                        placeholder="Buscar por referencia, comunicado o descripción...">
+                </div>
+            </div>
+
+            <div style="min-width: 150px;">
+                <select id="filter-status" class="form-select filter-select">
+                    <option value="all">Todos los Estados</option>
+                    <option value="con_siniestro">Con Siniestro</option>
+                    <option value="sin_siniestro">Sin Siniestro</option>
+                </select>
+            </div>
+
+            <div style="min-width: 140px;">
+                <select id="filter-year" class="form-select filter-select">
+                    <option value="all">Todos los Años</option>
+                    <option value="2025">2025</option>
+                    <option value="2024">2024</option>
+                    <option value="2023">2023</option>
+                </select>
+            </div>
+
+            <button id="btn-clear-filters" class="btn btn-light text-muted border" title="Limpiar filtros">
+                <i class="bi bi-x-lg"></i>
+            </button>
+        </div>
+    </div>
+
+    <!-- Map Section -->
+    <div id="map-section-container" class="col-12 d-none fade-in mb-4">
+        <div class="card border-0 shadow-lg overflow-hidden glass-card">
+            <div class="card-header bg-transparent border-0 d-flex justify-content-between align-items-center mt-2">
+                <h5 class="fw-bold text-dark mb-0 ms-2"><i class="bi bi-geo-alt-fill text-primary me-2"></i>Mapa de
+                    Distribución</h5>
+                <small class="text-muted me-2">Clic en un estado para filtrar</small>
+            </div>
+            <div class="card-body p-0">
+                <?!= include('mapa_mexico') ?>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tabla Principal -->
+    <div id="comunicados-table-container" class="col-12 d-none">
+        <div class="card border-0 shadow-lg overflow-hidden glass-card">
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead class="bg-light-subtle text-secondary small text-uppercase">
+                        <tr>
+                            <!-- Columnas Referencia y Comunicado (corto) eliminadas -->
+                            <th class="ps-4 cursor-pointer" onclick="Comunicados.ordenar('descripcion')">
+                                Comunicado <i class="bi bi-arrow-down-up small text-muted ms-1"
+                                    id="sort-icon-descripcion"></i>
+                            </th> <!-- Muestra Descripción -->
+                            <th class="cursor-pointer" onclick="Comunicados.ordenar('fecha')">
+                                Fecha <i class="bi bi-arrow-down-up small text-muted ms-1" id="sort-icon-fecha"></i>
+                            </th>
+                            <th class="cursor-pointer" onclick="Comunicados.ordenar('estado')">
+                                Estado <i class="bi bi-arrow-down-up small text-muted ms-1" id="sort-icon-estado"></i>
+                            </th>
+                            <th class="cursor-pointer" onclick="Comunicados.ordenar('contratista')">
+                                Contratista <i class="bi bi-arrow-down-up small text-muted ms-1"
+                                    id="sort-icon-contratista"></i>
+                            </th>
+                            <th class="text-end cursor-pointer" onclick="Comunicados.ordenar('presupuesto')">
+                                Reclamo <i class="bi bi-arrow-down-up small text-muted ms-1"
+                                    id="sort-icon-presupuesto"></i>
+                            </th>
+                            <th class="text-end cursor-pointer" onclick="Comunicados.ordenar('montoSupervision')">
+                                Supervisión <i class="bi bi-arrow-down-up small text-muted ms-1"
+                                    id="sort-icon-montoSupervision"></i>
+                            </th>
+                            <th class="text-end pe-4">Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody id="lista-comunicados-body" class="bg-white">
+                        <!-- Las filas se renderizan dinámicamente desde JS -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Detalle/Edición Rápida -->
+<div class="modal fade" id="modalDetalleComunicado" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-centered">
+        <div class="modal-content border-0 shadow-lg" style="border-radius: 1rem; overflow: hidden;">
+
+            <!-- Modal Header -->
+            <div class="modal-header bg-white border-bottom py-3">
+                <div class="d-flex align-items-center">
+                    <div class="bg-primary bg-opacity-10 text-primary rounded-circle d-flex align-items-center justify-content-center me-3"
+                        style="width: 40px; height: 40px;">
+                        <i class="bi bi-eye-fill fs-5"></i>
+                    </div>
+                    <div>
+                        <h5 class="modal-title fw-bold text-dark mb-0">Vista Rápida</h5>
+                        <small class="text-muted">Detalles generales del comunicado</small>
+                    </div>
+                </div>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+
+            <!-- Modal Loading State -->
+            <div id="modal-comunicado-loader" class="modal-body text-center py-5">
+                <div class="spinner-border text-primary text-gradient" role="status"></div>
+                <p class="mt-2 text-muted">Cargando detalles...</p>
+            </div>
+
+            <!-- Modal Content Form -->
+            <div id="modal-comunicado-content" class="modal-body p-4 d-none">
+
+                <!-- Alertas del modal -->
+                <div id="modal-comunicado-error" class="alert alert-danger d-none mb-4"></div>
+
+                <form id="form-detalle-comunicado" class="needs-validation" novalidate>
+                    <!-- Fila 1: Comunicado y Fecha -->
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label fw-bold text-muted small text-uppercase">Comunicado</label>
+                            <input type="text" class="form-control form-control-lg bg-light" id="detalle-comunicado"
+                                readonly>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label fw-bold text-muted small text-uppercase">Fecha</label>
+                            <input type="date" class="form-control form-control-lg" id="detalle-fecha" disabled>
+                        </div>
+                    </div>
+
+                    <!-- Fila 2: Descripción -->
+                    <div class="mb-3">
+                        <label class="form-label fw-bold text-muted small text-uppercase">Descripción</label>
+                        <textarea class="form-control" id="detalle-descripcion" rows="2" disabled></textarea>
+                    </div>
+
+                    <hr class="my-4 border-secondary-subtle">
+                    <hr class="my-4 border-secondary-subtle">
+                    <!-- <h6 class="text-primary fw-bold mb-3">Ubicación y Siniestro</h6> -->
+
+                    <!-- Fila 3: Estado y Distrito (Combobox Híbrido) -->
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label fw-bold text-muted small text-uppercase">Estado</label>
+                            <select class="form-select bg-light" id="detalle-estado" disabled>
+                                <option value="">Cargando...</option>
+                            </select>
+                        </div>
+                        <div class="col-md-6 position-relative">
+                            <label class="form-label fw-bold text-muted small text-uppercase">Distrito de Riego</label>
+                            <div class="input-group">
+                                <span class="input-group-text bg-light border-end-0"><i
+                                        class="bi bi-geo-alt text-primary"></i></span>
+                                <input type="text" class="form-control border-start-0 ps-0 bg-light"
+                                    id="detalle-distrito" placeholder="Buscar o escribir..." autocomplete="off"
+                                    disabled>
+                                <button class="btn btn-outline-secondary dropdown-toggle dropdown-toggle-split bg-light"
+                                    type="button" data-bs-toggle="dropdown" aria-expanded="false" disabled></button>
+                                <ul class="dropdown-menu w-100 shadow" id="dropdown-distrito-list"
+                                    style="max-height: 200px; overflow-y: auto;">
+                                    <!-- Opciones dinámicas -->
+                                </ul>
+                            </div>
+                            <div id="aviso-nuevo-distrito" class="form-text text-warning d-none">
+                                <i class="bi bi-plus-circle"></i> Nuevo distrito: se creará al guardar.
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Fila 4: Siniestro (Combobox Híbrido) -->
+                    <div class="mb-3 position-relative">
+                        <label class="form-label fw-bold text-muted small text-uppercase">Siniestro</label>
+                        <div class="input-group">
+                            <span class="input-group-text bg-light border-end-0"><i
+                                    class="bi bi-exclamation-octagon text-danger"></i></span>
+                            <input type="text" class="form-control border-start-0 ps-0 bg-light" id="detalle-siniestro"
+                                placeholder="Buscar o escribir siniestro..." autocomplete="off" disabled>
+                            <button class="btn btn-outline-secondary dropdown-toggle dropdown-toggle-split bg-light"
+                                type="button" data-bs-toggle="dropdown" aria-expanded="false" disabled></button>
+                            <ul class="dropdown-menu w-100 shadow" id="dropdown-siniestro-list"
+                                style="max-height: 200px; overflow-y: auto;">
+                                <!-- Opciones dinámicas -->
+                            </ul>
+                        </div>
+                        <div id="aviso-nuevo-siniestro" class="form-text text-warning d-none">
+                            <i class="bi bi-plus-circle"></i> Nuevo siniestro: se creará al guardar.
+                        </div>
+                    </div>
+
+                    <!-- Fila 5: Detalles del Siniestro (Fenómeno, Fondo, FI) -->
+                    <div class="row g-3 bg-light rounded p-3 mx-0 border">
+                        <div class="col-md-4">
+                            <label class="form-label fw-bold text-muted small text-uppercase">Fenómeno</label>
+                            <div class="input-group input-group-sm">
+                                <input type="text" class="form-control bg-white" id="detalle-fenomeno"
+                                    list="datalist-fenomeno" disabled>
+                                <datalist id="datalist-fenomeno"></datalist>
+                            </div>
+                            <div id="aviso-nuevo-fenomeno" class="form-text text-warning x-small d-none">Nuevo</div>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label fw-bold text-muted small text-uppercase">Fondo</label>
+                            <div class="input-group input-group-sm">
+                                <input type="text" class="form-control bg-white" id="detalle-fondo"
+                                    list="datalist-fondo" disabled>
+                                <datalist id="datalist-fondo"></datalist>
+                            </div>
+                            <div id="aviso-nuevo-fondo" class="form-text text-warning x-small d-none">Nuevo</div>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label fw-bold text-muted small text-uppercase">F.I.</label>
+                            <div class="input-group input-group-sm">
+                                <input type="text" class="form-control bg-white" id="detalle-fi" list="datalist-fi"
+                                    disabled>
+                                <datalist id="datalist-fi"></datalist>
+                            </div>
+                            <div id="aviso-nuevo-fi" class="form-text text-warning x-small d-none">Nuevo</div>
+                        </div>
+                    </div>
+
+                </form>
+            </div>
+
+            <!-- Modal Footer -->
+            <div class="modal-footer border-0 pt-0">
+                <button type="button" class="btn btn-outline-secondary rounded-pill px-4"
+                    data-bs-dismiss="modal">Cerrar</button>
+                <button type="button" class="btn btn-outline-primary rounded-pill px-4" id="btnEditarComunicado">
+                    <i class="bi bi-pencil me-1"></i> Editar
+                </button>
+                <button type="button" class="btn btn-primary rounded-pill px-4 d-none" id="btnGuardarComunicado">
+                    <i class="bi bi-save me-1"></i> Guardar Cambios
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    /* Estilos Específicos para este componente */
+    .glass-card {
+        background: rgba(255, 255, 255, 0.95);
+        backdrop-filter: blur(10px);
+    }
+
+    .text-gradient {
+        background: linear-gradient(45deg, #0d6efd, #0dcaf0);
+        -webkit-background-clip: text;
+        background-clip: text;
+        -webkit-text-fill-color: transparent;
+    }
+
+    .animate-pulse {
+        animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+        0% {
+            opacity: 0.6;
+        }
+
+        50% {
+            opacity: 1;
+        }
+
+        100% {
+            opacity: 0.6;
+        }
+    }
+
+    .badge {
+        font-weight: 500;
+    }
+
+    .x-small {
+        font-size: 0.75rem;
+    }
+
+    /* Mejorar dropdowns en modales */
+    .dropdown-menu {
+        border: none;
+        border-radius: 0.5rem;
+        box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15) !important;
+    }
+
+    .dropdown-item {
+        font-size: 0.9rem;
+        padding: 0.5rem 1rem;
+    }
+
+    .dropdown-item:active {
+        background-color: var(--primary-color);
+        color: white;
+    }
+</style>
+
+
+<!-- Modal Confirmación Eliminación (Listado) -->
+<div class="modal fade" id="modalConfirmDeleteListado" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content border-0 shadow-lg" style="border-radius: 1rem; overflow: hidden;">
+            <div class="modal-body p-5 text-center">
+                <div class="mb-4">
+                    <div class="d-inline-flex align-items-center justify-content-center bg-danger bg-opacity-10 rounded-circle text-danger p-3"
+                        style="width: 80px; height: 80px;">
+                        <i class="bi bi-trash3-fill display-5 animate-pulse"></i>
+                    </div>
+                </div>
+                <h3 class="fw-bold text-dark mb-2">¿Eliminar Comunicado?</h3>
+                <p class="text-muted mb-4 fs-6">
+                    Esta acción es irreversible y borrará <strong>todos los datos asociados</strong>.
+                </p>
+
+                <div class="d-grid gap-2">
+                    <button type="button" class="btn btn-danger btn-lg shadow-sm fw-semibold"
+                        id="btn-confirm-delete-list">
+                        <i class="bi bi-trash me-2"></i> Sí, eliminar registro
+                    </button>
+                    <button type="button" class="btn btn-light btn-lg text-muted fw-medium mt-2"
+                        data-bs-dismiss="modal">
+                        Cancelar
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL DE IMPORTACIÓN INTELIGENTE -->
+<?!= include('importacion_modal') ?>

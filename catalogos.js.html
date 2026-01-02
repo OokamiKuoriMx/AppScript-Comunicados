@@ -1,0 +1,825 @@
+<script>
+    /**
+     * Componente Catalogos
+     * Gestión genérica de catálogos auxiliares (Aseguradoras, Ajustadores, etc.)
+     */
+    console.log('📦 Catalogos.js cargado');
+    window.Catalogos = (() => {
+        'use strict';
+
+        let state = {
+            activeCatalog: 'aseguradoras',
+            data: [],
+            loading: false
+        };
+
+        let dom = {};
+
+        // Definición de Catálogos soportados y sus campos visuales
+        const CATALOG_CONFIG = {
+            aseguradoras: { title: 'Aseguradoras', headers: ['ID', 'Aseguradora'], keys: ['id', 'aseguradora'] },
+            ajustadores: { title: 'Ajustadores', headers: ['ID', 'Nombre', 'Usuario'], keys: ['id', 'nombreAjustador', 'usuario'] },
+            distritosRiego: { title: 'Distritos de Riego', headers: ['ID', 'Distrito'], keys: ['id', 'distritoRiego'] },
+            siniestros: { title: 'Siniestros', headers: ['ID', 'Siniestro', 'Fenómeno', 'Fondo', 'ID Aseguradora'], keys: ['id', 'siniestro', 'fenomeno', 'fondo', 'idAseguradora'] },
+            datosGenerales: {
+                title: 'Comunicados (Maestro)',
+                // Orden Solicitado: Referencia, Ajustador, Comunicado, Siniestro, Aseguradora, Fecha, Descripción, Distrito, Estado
+                headers: ['Referencia', 'Ajustador', 'Comunicado', 'Siniestro', 'Aseguradora', 'Fecha', 'Descripción', 'Distrito de Riego', 'Estado'],
+                keys: ['virtual_referencia', 'idAjustador', 'idComunicado', 'idSiniestro', 'virtual_aseguradora', 'fecha', 'descripcion', 'idDR', 'idEstado']
+            }
+        };
+
+        // --- HELPER DE NORMALIZACIÓN ---
+        function _normalize(val) {
+            return String(val || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+        }
+
+        async function init(container) {
+            console.log('Iniciando Módulo de Catálogos...');
+            // Inyectar plantilla
+            await _mount(container);
+
+            _cacheDom();
+            _bindEvents();
+            _loadData();
+        }
+
+        async function _mount(container) {
+            container.innerHTML = '';
+            // Intentar obtener de caché global
+            let content = globalThis.TEMPLATES?.['catalogos'];
+
+            if (!content) {
+                // Si no está en caché (ej. navegación directa), intentar cargar
+                console.log('Plantilla catalogos no en caché, solicitando...');
+                try {
+                    content = await fetchTemplates('catalogos');
+                    // fetchTemplates ya actualiza globalThis.TEMPLATES si tiene éxito
+                } catch (e) {
+                    console.error('Error cargando plantilla catalogos:', e);
+                }
+            }
+
+            if (!content) {
+                container.innerHTML = '<div class="alert alert-danger">Error: No se pudo cargar la plantilla de Catálogos.</div>';
+                throw new Error('Plantilla no encontrada');
+            }
+
+            container.innerHTML = content;
+        }
+
+        function _cacheDom() {
+            dom = {
+                selector: document.getElementById('cat-selector'),
+                table: document.getElementById('cat-table'),
+                thead: document.getElementById('cat-thead'),
+                tbody: document.getElementById('cat-tbody'),
+                loader: document.getElementById('loader-overlay'),
+                btnAdd: document.getElementById('btn-add'),
+                count: document.getElementById('cat-count'),
+                // Modal puede no estar inicializado si bootstrap no cargó, pero asumimos que sí.
+                modalEl: document.getElementById('modal-catalogo'),
+                modalTitle: document.getElementById('modal-title'),
+                modalError: document.getElementById('modal-error'),
+                form: document.getElementById('form-catalogo'),
+                dynamicFields: document.getElementById('dynamic-fields'),
+                btnSave: document.getElementById('btn-save'),
+                fieldId: document.getElementById('field-id')
+            };
+
+            if (dom.modalEl) {
+                dom.modal = new bootstrap.Modal(dom.modalEl);
+            }
+        }
+
+        function _bindEvents() {
+            if (dom.selector) {
+                dom.selector.addEventListener('change', (e) => {
+                    state.activeCatalog = e.target.value;
+                    _loadData();
+                });
+            }
+
+            if (dom.btnAdd) {
+                dom.btnAdd.addEventListener('click', () => {
+                    _openModal(null);
+                });
+            }
+
+            if (dom.btnSave) {
+                dom.btnSave.addEventListener('click', _saveData);
+            }
+        }
+
+        async function _loadData() {
+            _setLoading(true);
+            try {
+                // Limpiar tabla antes de cargar
+                if (dom.tbody) dom.tbody.innerHTML = '';
+
+                // Actualizar headers y Clases de Tabla
+                const config = CATALOG_CONFIG[state.activeCatalog];
+                const isSheetMode = state.activeCatalog === 'datosGenerales';
+
+                if (dom.thead) {
+                    // Si es modo Excel, headers sin padding extra y sin columna acciones
+                    const cellClass = isSheetMode ? '' : 'px-4 py-3';
+                    let headerHtml = config.headers.map(h => `<th class="fw-semibold ${cellClass}">${h}</th>`).join('');
+                    if (!isSheetMode) {
+                        headerHtml += `<th class="fw-semibold px-4 py-3 text-end">Acciones</th>`;
+                    }
+                    dom.thead.innerHTML = headerHtml;
+                }
+
+                // Toggle clases contenedores
+                if (dom.table) {
+                    const container = dom.table.parentElement;
+                    if (isSheetMode) {
+                        dom.table.classList.add('sheet-table');
+                        dom.table.classList.remove('table', 'table-hover', 'mb-0'); // Quitar estilos bootstrap standard
+                        if (container) {
+                            container.classList.add('sheet-container', 'sheet-scroll-area');
+                            container.classList.remove('table-responsive', 'shadow-sm', 'rounded-3');
+                        }
+                        // Mostrar barra batch si hay cambios (o resetear)
+                        state.pendingChanges = {};
+                        _updateBatchUI();
+                    } else {
+                        dom.table.classList.remove('sheet-table');
+                        dom.table.classList.add('table', 'table-hover', 'mb-0');
+                        if (container) {
+                            container.classList.remove('sheet-container', 'sheet-scroll-area');
+                            container.classList.add('table-responsive', 'shadow-sm', 'rounded-3');
+                        }
+                        document.getElementById('batch-save-bar').style.display = 'none';
+                    }
+                }
+
+                // Fetch Data
+                // Fetch Data
+                if (state.activeCatalog === 'datosGenerales') {
+                    // Úsamos la función dedicada para evitar problemas de configuración
+                    const [coms, cuentas, sin, ajust, dr, est, emp, aseg, mainDataResp] = await Promise.all([
+                        serverCall('readAllRows', 'comunicados'),
+                        serverCall('readAllRows', 'cuentas'),
+                        serverCall('readAllRows', 'siniestros'),
+                        serverCall('readAllRows', 'ajustadores'),
+                        serverCall('readAllRows', 'distritosRiego'),
+                        serverCall('readAllRows', 'estados'),
+                        serverCall('readAllRows', 'empresas'),
+                        serverCall('readAllRows', 'aseguradoras'),
+                        serverCall('readDatosGenerales')
+                    ]);
+
+                    // Parsear el string JSON retornado por readDatosGenerales
+                    try {
+                        let parsedData = [];
+
+                        // Normalizar respuesta (objeto {success, data} o array o string)
+                        let raw = mainDataResp;
+                        if (typeof raw === 'string') {
+                            try { raw = JSON.parse(raw); } catch (e) { }
+                        }
+
+                        // Si es encapsulado {success:true, data: "..."}
+                        if (raw && raw.success && raw.data && typeof raw.data === 'string') {
+                            try { parsedData = JSON.parse(raw.data); } catch (e) { }
+                            if (raw.debugHeaders) {
+                                console.warn('DEBUG HEADERS (DatosGenerales):', raw.debugHeaders);
+                                // ALERT TEMPORAL PARA USUARIO
+                                setTimeout(() => alert('COLUMNAS DETECTADAS EN HOJA:\n' + JSON.stringify(raw.debugHeaders, null, 2)), 1000);
+                            }
+                        }
+                        // Si es encapsulado {success:true, data: [...]}
+                        else if (raw && raw.success && Array.isArray(raw.data)) {
+                            parsedData = raw.data;
+                        }
+                        // Si es array directo
+                        else if (Array.isArray(raw)) {
+                            parsedData = raw;
+                        }
+
+                        state.data = parsedData || [];
+                    } catch (e) {
+                        console.error('Error parseando DatosGenerales:', e);
+                        state.data = [];
+                    }
+
+                    state.dependencyData = {
+                        comunicados: Array.isArray(coms) ? coms : [],
+                        cuentas: Array.isArray(cuentas) ? cuentas : [],
+                        siniestros: Array.isArray(sin) ? sin : [],
+                        ajustadores: Array.isArray(ajust) ? ajust : [],
+                        distritosRiego: Array.isArray(dr) ? dr : [],
+                        estados: Array.isArray(est) ? est : [],
+                        empresas: Array.isArray(emp) ? emp : [],
+                        aseguradoras: Array.isArray(aseg) ? aseg : []
+                    };
+
+                } else {
+                    // Carga estándar
+                    const response = await serverCall('readAllRows', state.activeCatalog);
+                    state.data = Array.isArray(response) ? response : [];
+
+                    // Cargar dependencias específicas
+                    if (state.activeCatalog === 'siniestros') {
+                        const asegs = await serverCall('readAllRows', 'aseguradoras');
+                        state.dependencyData = { aseguradoras: Array.isArray(asegs) ? asegs : [] };
+                    } else {
+                        state.dependencyData = {};
+                    }
+                }
+
+                _renderTable();
+
+            } catch (error) {
+                console.error('Error cargando catálogo:', error);
+                if (dom.tbody) dom.tbody.innerHTML = `<tr><td colspan="100" class="text-center text-danger py-4">${error.message}</td></tr>`;
+            } finally {
+                _setLoading(false);
+            }
+        }
+
+        function _renderTable() {
+            if (!dom.tbody) return;
+            // DEBUG: Inspect data structure for missing columns issue
+            if (state.data.length > 0) {
+                console.log('DEBUG _renderTable item[0]:', state.data[0]);
+                console.log('DEBUG _renderTable dependencyData keys:', Object.keys(state.dependencyData || {}));
+                if (state.dependencyData?.comunicados?.length > 0) console.log('DEBUG First Comunicado:', state.dependencyData.comunicados[0]);
+                if (state.dependencyData?.siniestros?.length > 0) console.log('DEBUG First Siniestro:', state.dependencyData.siniestros[0]);
+                if (state.dependencyData?.aseguradoras?.length > 0) console.log('DEBUG First Aseguradora:', state.dependencyData.aseguradoras[0]);
+            }
+
+            const config = CATALOG_CONFIG[state.activeCatalog];
+            const keys = config.keys;
+            const isSheetMode = state.activeCatalog === 'datosGenerales';
+
+            if (state.data.length === 0) {
+                dom.tbody.innerHTML = `<tr><td colspan="100" class="text-center text-muted py-5"><i class="bi bi-inbox fs-1 d-block mb-2"></i>Sin registros</td></tr>`;
+                if (dom.count) dom.count.textContent = '0 registros';
+                return;
+            }
+
+            // --- HEADERS & FILTERS ---
+            if (dom.thead) {
+                const cellClass = isSheetMode ? '' : 'px-4 py-3';
+                let headerHtml = config.headers.map(h => `<th class="fw-semibold ${cellClass}">${h}</th>`).join('');
+                if (!isSheetMode) headerHtml += `<th class="fw-semibold px-4 py-3 text-end">Acciones</th>`;
+
+                let filterHtml = '';
+                if (isSheetMode) {
+                    const filters = keys.map((k, idx) => `
+                        <th><input type="text" class="sheet-filter-input" placeholder="..." onkeyup="Catalogos.filterTable(this, ${idx})"></th>
+                    `).join('');
+                    filterHtml = `<tr class="filter-row">${filters}</tr>`;
+                }
+
+                dom.thead.innerHTML = `<tr>${headerHtml}</tr>${filterHtml}`;
+            }
+
+            // --- BODY GENERATION ---
+            const html = state.data.map(item => {
+                const itemId = item.id || item.ID;
+
+                // --- MODO SHEET (EXCEL-LIKE) ---
+                if (isSheetMode) {
+                    const dd = state.dependencyData || {};
+                    const cells = keys.map(k => {
+                        let val = item[k] || '';
+
+                        // 1. Referencia Virtual
+                        if (k === 'virtual_referencia') {
+                            let display = '-';
+                            // Intentar obtener ID de comunicado
+                            let idCom = item.idComunicado;
+                            // Si no hay idComunicado, o es 0, intentar buscar por otros campos si existen
+                            // Pero asumimos idComunicado es la llave.
+
+                            if (dd.comunicados && dd.cuentas) {
+                                // A. Buscar Comunicado Exacto por ID
+                                let com = dd.comunicados.find(c => String(c.id) === String(idCom));
+
+                                // B. Si no, buscar por Nombre (Fuzzy fallback) si idCom parece nombre
+                                if (!com && idCom && isNaN(Number(idCom))) {
+                                    const cleanId = _normalize(idCom);
+                                    com = dd.comunicados.find(c => _normalize(c.comunicado) === cleanId || _normalize(c.clave) === cleanId);
+                                }
+
+                                if (com) {
+                                    // Handle variation in field names
+                                    const refId = com.idReferencia || com.id_referencia || com.referencia;
+                                    // A. Buscar Cuenta por ID
+                                    let cta = dd.cuentas.find(c => String(c.id) === String(refId));
+
+                                    // B. Fallback nombre cuenta? (Menos probable aqui, idReferencia suele ser numérico)
+                                    if (cta) display = cta.referencia || cta.cuenta || cta.nombre;
+                                }
+                            }
+                            // Fallback: If no lookup worked but we have a value stored directly
+                            if ((display === '-' || !display) && item.referencia) display = item.referencia;
+
+                            // CHANGE: Use input readonly for consistency
+                            return `<td><input type="text" class="sheet-input text-center fw-bold text-primary" value="${display}" readonly tabindex="-1"></td>`;
+                        }
+
+                        // 2. Comunicado 
+                        if (k === 'idComunicado') {
+                            let display = val;
+                            let fullText = val;
+                            if (dd.comunicados) {
+                                // A. ID Exacto
+                                let com = dd.comunicados.find(c => String(c.id) === String(val));
+
+                                // B. Fuzzy Name Match
+                                if (!com && val && isNaN(Number(val))) {
+                                    const clean = _normalize(val);
+                                    com = dd.comunicados.find(c => _normalize(c.comunicado) === clean);
+                                }
+
+                                if (com) {
+                                    display = com.comunicado || com.nombre || com.clave;
+                                    fullText = display; // Tooltip
+                                } else {
+                                    // display = val;
+                                }
+                            }
+
+                            // FORCE DISPLAY of value if lookup failed
+                            if (!display && val) display = val;
+
+                            // LAST RESORT DEBUG: If value is totally empty, try to show raw object keys for the first row to help user debug
+                            if ((!display || display === 'undefined') && item === state.data[0]) {
+                                fullText = "DEBUG KEYS: " + Object.keys(item).join(', ');
+                                display = "[DEBUG: VACÍO]";
+                            }
+
+                            return `<td><input type="text" class="sheet-input font-monospace text-dark fw-bold small" value="${display || ''}" readonly tabindex="-1" title="${fullText}" style="opacity: 0.9;"></td>`;
+                        }
+
+                        // 3. Ajustador (Select)
+                        if (k === 'idAjustador') {
+                            // Lógica Default: si está vacío, usar el de la referencia
+                            let defaultSelected = val;
+                            if (!val && dd.comunicados && dd.cuentas && item.idComunicado) {
+                                // Re-look up del comunicado (reutilizar logica de arriba seria ideal pero aqui es local)
+                                let com = dd.comunicados.find(c => String(c.id) === String(item.idComunicado));
+                                if (!com && isNaN(Number(item.idComunicado))) {
+                                    const clean = _normalize(item.idComunicado);
+                                    com = dd.comunicados.find(c => _normalize(c.comunicado) === clean);
+                                }
+
+                                if (com) {
+                                    const refId = com.idReferencia || com.id_referencia;
+                                    const cta = dd.cuentas.find(c => String(c.id) === String(refId));
+                                    if (cta && cta.idAjustador) defaultSelected = cta.idAjustador;
+                                }
+                            }
+
+                            let optionsHtml = '';
+                            if (dd.ajustadores) {
+                                optionsHtml = `<option value="">-</option>` + dd.ajustadores.map(x => {
+                                    // Fuzzy compare option value vs selected
+                                    const isSelected = String(x.id) === String(defaultSelected) ||
+                                        (isNaN(Number(defaultSelected)) && _normalize(x.nombreAjustador) === _normalize(defaultSelected));
+                                    return `<option value="${x.id}" ${isSelected ? 'selected' : ''}>${x.nombreAjustador || x.nombre}</option>`;
+                                }).join('');
+                            }
+                            return `<td><select class="sheet-select" data-id="${itemId}" data-field="${k}" onchange="Catalogos.handleBatchChange(this)">${optionsHtml}</select></td>`;
+                        }
+
+                        // 4. Siniestro (Select)
+                        if (k === 'idSiniestro') {
+                            let optionsHtml = '';
+                            if (dd.siniestros) {
+                                optionsHtml = `<option value="">-</option>` + dd.siniestros.map(x => {
+                                    const isSelected = String(x.id) === String(val) ||
+                                        (isNaN(Number(val)) && _normalize(x.siniestro) === _normalize(val));
+                                    return `<option value="${x.id}" ${isSelected ? 'selected' : ''}>${x.siniestro || x.nombre}</option>`;
+                                }).join('');
+                            }
+                            return `<td><select class="sheet-select" data-id="${itemId}" data-field="${k}" onchange="Catalogos.handleBatchChange(this)">${optionsHtml}</select></td>`;
+                        }
+
+                        // 5. Aseguradora (Virtual)
+                        if (k === 'virtual_aseguradora') {
+                            let display = '-';
+                            const idSin = item.idSiniestro;
+                            if (idSin && dd.siniestros) {
+                                let s = dd.siniestros.find(x => String(x.id) === String(idSin));
+                                // Fuzzy match siniestro
+                                if (!s && isNaN(Number(idSin))) {
+                                    const clean = _normalize(idSin);
+                                    s = dd.siniestros.find(x => _normalize(x.siniestro) === clean);
+                                }
+
+                                if (s && s.idAseguradora && dd.aseguradoras) {
+                                    let a = dd.aseguradoras.find(x => String(x.id) === String(s.idAseguradora));
+                                    // No fuzzy needed for idAseguradora mostly, but just in case
+                                    if (!a && isNaN(Number(s.idAseguradora))) {
+                                        const cleanA = _normalize(s.idAseguradora);
+                                        a = dd.aseguradoras.find(x => _normalize(x.aseguradora) === cleanA);
+                                    }
+
+                                    if (a) display = a.aseguradora || a.nombre || a.descripcion;
+                                }
+                            }
+                            return `<td id="cell-aseg-${itemId}"><input type="text" class="sheet-input text-muted small" value="${display}" readonly tabindex="-1"></td>`;
+                        }
+
+                        // 6. Fecha
+                        if (k === 'fecha') {
+                            let safeDate = '';
+                            if (val) {
+                                // Soporte para DD/MM/YYYY (Excel/Sheets común en español)
+                                if (val.includes('/')) {
+                                    const parts = val.split('/');
+                                    if (parts.length === 3) {
+                                        // Asumimos DD/MM/YYYY
+                                        // parts[0] = dia, parts[1] = mes, parts[2] = año
+                                        // new Date espera YYYY-MM-DD o MM/DD/YYYY? Mejor string YYYY-MM-DD
+                                        // Nos aseguramos de tener 2 digitos
+                                        const d = parts[0].padStart(2, '0');
+                                        const m = parts[1].padStart(2, '0');
+                                        const y = parts[2];
+                                        safeDate = `${y}-${m}-${d}`;
+                                    }
+                                } else if (val.includes('T')) {
+                                    safeDate = val.split('T')[0];
+                                } else {
+                                    safeDate = val;
+                                }
+                            }
+                            return `<td><input type="date" class="sheet-input text-center text-secondary" value="${safeDate}" data-id="${itemId}" data-field="${k}" onchange="Catalogos.handleBatchChange(this)"></td>`;
+                        }
+
+                        // 7. Descripción
+                        if (k === 'descripcion') {
+                            return `<td><input type="text" class="sheet-input" value="${val}" placeholder="Escribir descripción..." data-id="${itemId}" data-field="${k}" onchange="Catalogos.handleBatchChange(this)"></td>`;
+                        }
+
+                        // 8. Distritos / Estados (Selects Genéricos)
+                        if (k === 'idDR' && dd.distritosRiego) {
+                            const opts = `<option value="">-</option>` + dd.distritosRiego.map(x => `<option value="${x.id}" ${String(x.id) === String(val) ? 'selected' : ''}>${x.distritoRiego || x.nombre}</option>`).join('');
+                            return `<td><select class="sheet-select" data-id="${itemId}" data-field="${k}" onchange="Catalogos.handleBatchChange(this)">${opts}</select></td>`;
+                        }
+                        if (k === 'idEstado' && dd.estados) {
+                            const opts = `<option value="">-</option>` + dd.estados.map(x => `<option value="${x.id}" ${String(x.id) === String(val) ? 'selected' : ''}>${x.estado || x.nombre}</option>`).join('');
+                            return `<td><select class="sheet-select" data-id="${itemId}" data-field="${k}" onchange="Catalogos.handleBatchChange(this)">${opts}</select></td>`;
+                        }
+
+                        // Fallback (Texto simple)
+                        return `<td><input type="text" class="sheet-input" value="${val}" data-id="${itemId}" data-field="${k}" onchange="Catalogos.handleBatchChange(this)"></td>`;
+
+                    }).join('');
+
+                    return `<tr class="sheet-row">${cells}</tr>`;
+                }
+
+                // --- MODO STANDARD ---
+                const cells = keys.map(k => {
+                    let val = item[k] || '';
+                    if (k === 'id') val = `<span class="font-monospace text-muted small">${val}</span>`;
+
+                    if (k === 'idAseguradora' && state.activeCatalog === 'siniestros' && state.dependencyData?.aseguradoras) {
+                        const aseg = state.dependencyData.aseguradoras.find(a => String(a.id) === String(val));
+                        if (aseg) val = `${aseg.aseguradora} <small class="text-muted">(${val})</small>`;
+                    }
+                    return `<td class="px-4 py-3">${val}</td>`;
+                }).join('');
+
+                const actions = `
+                    <td class="text-end px-4 py-3">
+                        <button class="btn btn-sm btn-outline-primary" onclick="Catalogos.editar(${itemId})" title="Editar">
+                            <i class="bi bi-pencil"></i>
+                        </button>
+                    </td>
+                `;
+                return `<tr>${cells}${actions}</tr>`;
+            }).join('');
+
+            dom.tbody.innerHTML = html;
+            if (dom.count) dom.count.textContent = `${state.data.length} registros`;
+        }
+
+        // --- FILTRADO POR COLUMNA ---
+        function _filterTable(input, colIndex) {
+            const filter = input.value.toUpperCase();
+            const table = dom.table;
+            const tr = table.getElementsByTagName("tr");
+
+            // Empezar en 2 si hay fila de filtros, sino 1
+            const startRow = state.activeCatalog === 'datosGenerales' ? 2 : 1;
+
+            for (let i = startRow; i < tr.length; i++) {
+                const td = tr[i].getElementsByTagName("td")[colIndex];
+                if (td) {
+                    // Buscar en input, select o texto directo
+                    let txtValue = td.textContent || td.innerText;
+                    const inputEl = td.querySelector('input, select');
+                    if (inputEl) {
+                        if (inputEl.tagName === 'SELECT') {
+                            txtValue = inputEl.options[inputEl.selectedIndex].text;
+                        } else {
+                            txtValue = inputEl.value;
+                        }
+                    }
+
+                    if (txtValue.toUpperCase().indexOf(filter) > -1) {
+                        tr[i].style.display = "";
+                    } else {
+                        tr[i].style.display = "none";
+                    }
+                }
+            }
+        }
+
+        function _setLoading(isLoading) {
+            if (dom.loader) dom.loader.classList.toggle('d-none', !isLoading);
+        }
+
+        // --- CRUD MODAL ---
+
+        function _openModal(id) {
+            if (!dom.modal) return;
+            dom.modalError.classList.add('d-none');
+            dom.dynamicFields.innerHTML = '';
+
+            const isEdit = !!id;
+            dom.fieldId.value = id || '';
+            dom.modalTitle.textContent = isEdit ? `Editar ${state.activeCatalog}` : `Nuevo ${state.activeCatalog}`;
+
+            const config = CATALOG_CONFIG[state.activeCatalog];
+            const item = isEdit ? state.data.find(d => (d.id || d.ID) == id) : {};
+
+            const editableKeys = config.keys.filter(k => k !== 'id');
+
+            editableKeys.forEach(k => {
+                const label = k.charAt(0).toUpperCase() + k.slice(1).replace(/([A-Z])/g, ' $1');
+                const val = item ? (item[k] || '') : '';
+
+                const col = document.createElement('div');
+                col.className = 'col-12';
+
+                let inputHtml = '';
+                if (k === 'idAseguradora' && state.activeCatalog === 'siniestros') {
+                    const options = (state.dependencyData?.aseguradoras || []).map(a =>
+                        `<option value="${a.id}" ${String(a.id) === String(val) ? 'selected' : ''}>${a.aseguradora}</option>`
+                    ).join('');
+
+                    inputHtml = `
+                        <select class="form-select" name="${k}" required>
+                            <option value="">-- Seleccionar --</option>
+                            ${options}
+                        </select>
+                    `;
+                } else if (state.activeCatalog === 'datosGenerales' && state.dependencyData) {
+                    const dd = state.dependencyData;
+
+                    if (k === 'idComunicado') {
+                        // Mostrar como Read-Only con nombre resuelto
+                        let displayVal = val;
+                        if (dd.comunicados && dd.cuentas) {
+                            const com = dd.comunicados.find(c => String(c.id) === String(val));
+                            if (com) {
+                                const cta = dd.cuentas.find(c => String(c.id) === String(com.idReferencia));
+                                const ref = cta ? cta.referencia : 'S/R';
+                                displayVal = `${ref} | ${com.comunicado}`;
+                            }
+                        }
+                        inputHtml = `
+                            <input type="text" class="form-control bg-light" value="${displayVal}" readonly>
+                            <input type="hidden" name="${k}" value="${val}">
+                        `;
+                    } else if (k === 'idSiniestro') {
+                        const options = (dd.siniestros || []).map(x => `<option value="${x.id}" ${String(x.id) === String(val) ? 'selected' : ''}>${x.siniestro || x.nombre}</option>`).join('');
+                        inputHtml = `<select class="form-select" name="${k}" required><option value="">-- Siniestro --</option>${options}</select>`;
+                    } else if (k === 'idAjustador') {
+                        const options = (dd.ajustadores || []).map(x => `<option value="${x.id}" ${String(x.id) === String(val) ? 'selected' : ''}>${x.nombreAjustador || x.nombre}</option>`).join('');
+                        inputHtml = `<select class="form-select" name="${k}" required><option value="">-- Ajustador --</option>${options}</select>`;
+                    } else if (k === 'idDR') {
+                        const options = (dd.distritosRiego || []).map(x => `<option value="${x.id}" ${String(x.id) === String(val) ? 'selected' : ''}>${x.distritoRiego || x.nombre}</option>`).join('');
+                        inputHtml = `<select class="form-select" name="${k}" required><option value="">-- Distrito --</option>${options}</select>`;
+                    } else if (k === 'idEstado') {
+                        const options = (dd.estados || []).map(x => `<option value="${x.id}" ${String(x.id) === String(val) ? 'selected' : ''}>${x.estado || x.nombre}</option>`).join('');
+                        inputHtml = `<select class="form-select" name="${k}" required><option value="">-- Estado --</option>${options}</select>`;
+                    } else {
+                        // Fallback Text
+                        inputHtml = `<input type="text" class="form-control" name="${k}" value="${val}" required>`;
+                    }
+
+                } else {
+                    inputHtml = `<input type="text" class="form-control" name="${k}" value="${val}" required>`;
+                }
+
+                col.innerHTML = `
+                    <label class="form-label small text-muted text-uppercase fw-bold">${label}</label>
+                    ${inputHtml}
+                `;
+                dom.dynamicFields.appendChild(col);
+            });
+
+            dom.modal.show();
+        }
+
+        async function _saveData() {
+            const form = dom.form;
+            if (!form.checkValidity()) {
+                form.reportValidity();
+                return;
+            }
+
+            dom.btnSave.disabled = true;
+            dom.btnSave.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Guardando...';
+
+            try {
+                const id = dom.fieldId.value;
+                const activeKey = state.activeCatalog;
+
+                const payload = {};
+                // Recolectar Inputs y Selects
+                const inputs = dom.dynamicFields.querySelectorAll('input, select');
+                inputs.forEach(inp => {
+                    payload[inp.name] = inp.value;
+                });
+
+                if (id) {
+                    if (activeKey === 'datosGenerales') {
+                        // Uso de función dedicada para update
+                        const responseStr = await serverCall('updateDatosGenerales', id, payload);
+                        try {
+                            const parsed = JSON.parse(responseStr);
+                            if (!parsed.success) throw new Error(parsed.message || 'Error al actualizar');
+                        } catch (e) {
+                            // Si no es JSON valido o success false
+                            if (e.message !== 'Error al actualizar') console.warn('Respuesta updateDatosGenerales no estándar:', responseStr);
+                        }
+                    } else {
+                        await serverCall('updateRow', activeKey, id, payload);
+                    }
+                } else {
+                    await serverCall('createRow', activeKey, payload);
+                }
+
+                dom.modal.hide();
+                _showAlert('Éxito', 'Guardado correctamente');
+                await _loadData();
+
+            } catch (error) {
+                console.error(error);
+                dom.modalError.textContent = error.message;
+                dom.modalError.classList.remove('d-none');
+            } finally {
+                dom.btnSave.disabled = false;
+                dom.btnSave.innerHTML = '<i class="bi bi-save me-1"></i> Guardar';
+            }
+        }
+
+        function _bindEvents() {
+            if (dom.selector) {
+                dom.selector.addEventListener('change', (e) => {
+                    state.activeCatalog = e.target.value;
+                    _loadData();
+                });
+            }
+
+            if (dom.btnAdd) {
+                dom.btnAdd.addEventListener('click', () => {
+                    _openModal(null);
+                });
+            }
+
+            if (dom.btnSave) {
+                dom.btnSave.addEventListener('click', _saveData);
+            }
+
+            // Eventos Batch
+            const btnBatchSave = document.getElementById('btn-batch-save');
+            const btnBatchCancel = document.getElementById('btn-batch-cancel');
+
+            if (btnBatchSave) btnBatchSave.addEventListener('click', _saveBatch);
+            if (btnBatchCancel) btnBatchCancel.addEventListener('click', _cancelBatch);
+        }
+
+        // --- LOGICA BATCH ---
+
+        function _handleBatchChange(el) {
+            const id = el.dataset.id;
+            const field = el.dataset.field;
+            if (!id || !field) return;
+
+            const val = el.value;
+
+            if (!state.pendingChanges) state.pendingChanges = {};
+            if (!state.pendingChanges[id]) state.pendingChanges[id] = {};
+
+            state.pendingChanges[id][field] = val;
+
+            el.classList.add('cell-modified');
+
+            // Actualización Dinámica
+            if (field === 'idSiniestro') {
+                const dd = state.dependencyData;
+                const cellAseg = document.getElementById('cell-aseg-' + id);
+                if (cellAseg && dd.siniestros && dd.aseguradoras) {
+                    let s = dd.siniestros.find(x => String(x.id) === String(val));
+                    // Fuzzy fallback
+                    if (!s && isNaN(Number(val))) {
+                        const clean = _normalize(val);
+                        s = dd.siniestros.find(x => _normalize(x.siniestro) === clean);
+                    }
+
+                    let newAseg = '-';
+                    if (s && s.idAseguradora) {
+                        let a = dd.aseguradoras.find(x => String(x.id) === String(s.idAseguradora));
+                        // Fuzzy fallback aseg (unlikely for id but consistency)
+                        if (!a && isNaN(Number(s.idAseguradora))) {
+                            const cleanA = _normalize(s.idAseguradora);
+                            a = dd.aseguradoras.find(x => _normalize(x.aseguradora) === cleanA);
+                        }
+                        if (a) newAseg = a.aseguradora || a.nombre;
+                    }
+                    cellAseg.textContent = newAseg;
+                }
+            }
+            _updateBatchUI();
+        }
+
+        function _updateBatchUI() {
+            const bar = document.getElementById('batch-save-bar');
+            const counter = document.getElementById('batch-changes-count');
+            if (!bar || !counter) return;
+
+            const ids = Object.keys(state.pendingChanges || {});
+            const changesCount = ids.length;
+
+            if (changesCount > 0) {
+                bar.style.display = 'flex';
+                counter.textContent = `${changesCount} registro(s) modificado(s)`;
+            } else {
+                bar.style.display = 'none';
+            }
+        }
+
+        async function _saveBatch() {
+            const ids = Object.keys(state.pendingChanges || {});
+            if (ids.length === 0) return;
+
+            const btn = document.getElementById('btn-batch-save');
+            const originalText = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Guardando...';
+
+            try {
+                // Convertir a array para el backend
+                const updates = ids.map(id => ({
+                    id: id,
+                    data: state.pendingChanges[id]
+                }));
+
+                console.log('Enviando batch:', updates);
+
+                const responseStr = await serverCall('updateBatchDatosGenerales', updates);
+                const parsed = JSON.parse(responseStr);
+
+                if (parsed.success) {
+                    _showAlert('Éxito', parsed.message || 'Cambios guardados');
+                    state.pendingChanges = {}; // Reset
+                    _updateBatchUI();
+                    await _loadData(); // Recargar para limpiar estados de UI
+                } else {
+                    throw new Error(parsed.message || 'Error en batch');
+                }
+
+            } catch (e) {
+                console.error(e);
+                alert('Error guardando cambios: ' + e.message);
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = originalText;
+            }
+        }
+
+        function _cancelBatch() {
+            if (confirm('¿Descartar todos los cambios no guardados?')) {
+                state.pendingChanges = {};
+                _updateBatchUI();
+                _loadData(); // Restaurar valores originales
+            }
+        }
+
+        function _showAlert(title, msg) {
+            if (globalThis.Swal) Swal.fire({ icon: 'success', title, text: msg, timer: 1500, showConfirmButton: false });
+            else alert(msg);
+        }
+
+        return {
+            init: init,
+            mount: init,
+            render: () => '<div id="catalogos-container"></div>',
+            editar: _openModal,
+            handleBatchChange: _handleBatchChange,
+            filterTable: _filterTable
+        };
+    })();
+</script>

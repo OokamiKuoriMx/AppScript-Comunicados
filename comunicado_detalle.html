@@ -1,0 +1,541 @@
+<div class="d-flex flex-column h-100">
+    <!-- Contenido completo (se oculta mientras carga) -->
+    <div id="detalle-content" class="d-none">
+        <!-- Header de Navegación -->
+        <header
+            class="bg-white border-bottom shadow-sm py-3 px-4 d-flex align-items-center justify-content-between z-index-sticky">
+            <div class="d-flex align-items-center gap-3">
+                <button class="btn btn-outline-secondary btn-sm" id="btn-volver-listado">
+                    <i class="bi bi-arrow-left"></i> Volver
+                </button>
+                <div>
+                    <h5 class="m-0 fw-bold text-primary" id="header-titulo">Cargando...</h5>
+                    <small class="text-muted" id="header-subtitulo">...</small>
+                </div>
+            </div>
+            <div class="d-flex gap-2">
+                <span class="badge bg-light text-dark border d-flex align-items-center">
+                    <i class="bi bi-circle-fill text-success me-2" style="font-size: 0.5rem;"></i>
+                    <span id="header-status">Activo</span>
+                </span>
+                <button class="btn btn-outline-danger btn-sm" id="btn-eliminar-comunicado" title="Eliminar Comunicado">
+                    <i class="bi bi-trash"></i>
+                </button>
+                <button class="btn btn-primary btn-sm" id="btn-guardar-todo">
+                    <i class="bi bi-save"></i> Guardar Cambios
+                </button>
+            </div>
+        </header>
+
+        <!-- Contenedor Principal -->
+        <div class="d-flex flex-grow-1 overflow-hidden">
+            <!-- Sidebar de Navegación -->
+            <nav class="bg-light border-end" style="width: 260px; min-width: 260px;">
+                <div class="list-group list-group-flush pt-3" id="detalle-nav-tabs" role="tablist">
+                    <a class="list-group-item list-group-item-action active d-flex align-items-center gap-2 py-3"
+                        data-bs-toggle="list" href="#tab-general" role="tab">
+                        <i class="bi bi-info-circle"></i> Información General
+                    </a>
+                    <a class="list-group-item list-group-item-action d-flex align-items-center gap-2 py-3"
+                        data-bs-toggle="list" href="#tab-presupuesto" role="tab">
+                        <i class="bi bi-currency-dollar"></i> Presupuesto
+                    </a>
+                    <a class="list-group-item list-group-item-action d-flex align-items-center gap-2 py-3"
+                        data-bs-toggle="list" href="#tab-equipo" role="tab">
+                        <i class="bi bi-people"></i> Equipo y Asignaciones
+                    </a>
+                    <a class="list-group-item list-group-item-action d-flex align-items-center gap-2 py-3"
+                        data-bs-toggle="list" href="#tab-financiero" role="tab">
+                        <i class="bi bi-receipt"></i> Estimaciones y Facturas
+                    </a>
+                    <a class="list-group-item list-group-item-action d-flex align-items-center gap-2 py-3"
+                        data-bs-toggle="list" href="#tab-tickets" role="tab">
+                        <i class="bi bi-ticket-perforated"></i> Sistema de Tickets
+                    </a>
+                    <a class="list-group-item list-group-item-action d-flex align-items-center gap-2 py-3"
+                        data-bs-toggle="list" href="#tab-actualizaciones" role="tab">
+                        <i class="bi bi-clock-history"></i> Historial y Actualizaciones
+                    </a>
+                </div>
+            </nav>
+
+            <!-- Área de Contenido -->
+            <main class="flex-grow-1 overflow-auto bg-light p-4">
+                <div class="tab-content" id="detalle-tab-content">
+
+                    <!-- TAB: GENERAL -->
+                    <div class="tab-pane fade show active" id="tab-general" role="tabpanel">
+
+                        <!-- GRUPO 1: DATOS DEL COMUNICADO -->
+                        <div class="card shadow-sm border-0 mb-4">
+                            <div class="card-header bg-white py-3">
+                                <h6 class="mb-0 fw-bold">1. Datos del Comunicado</h6>
+                            </div>
+                            <div class="card-body">
+                                <form id="form-general">
+                                    <div class="row g-3">
+                                        <!-- ID Oculto -->
+                                        <div class="d-none">
+                                            <input type="text" id="gen-id" readonly>
+                                        </div>
+
+                                        <!-- Fila 1: Comunicado / Fecha de registro / Fecha documento -->
+                                        <div class="col-md-6">
+                                            <label class="form-label small text-muted">
+                                                <i class="bi bi-file-earmark-text me-1"></i>Comunicado
+                                            </label>
+                                            <input type="text" class="form-control fw-bold fs-5" id="gen-comunicado">
+                                        </div>
+                                        <div class="col-md-3">
+                                            <label class="form-label small text-muted">
+                                                <i class="bi bi-calendar-event me-1"></i>Fecha de Registro
+                                            </label>
+                                            <input type="date" class="form-control" id="gen-fecha">
+                                        </div>
+                                        <div class="col-md-3">
+                                            <label class="form-label small text-muted">
+                                                <i class="bi bi-calendar-date me-1"></i>Fecha del Documento
+                                            </label>
+                                            <input type="date" class="form-control bg-light text-primary fw-bold"
+                                                id="gen-fecha-documento">
+                                        </div>
+
+                                        <!-- Fila 2: Descripción Detallada -->
+                                        <div class="col-12">
+                                            <label class="form-label small text-muted">
+                                                <i class="bi bi-card-text me-1"></i>Descripción Detallada
+                                            </label>
+                                            <textarea class="form-control" id="gen-descripcion" rows="3"></textarea>
+                                        </div>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+
+                        <!-- GRUPO 2: DATOS DEL AJUSTADOR -->
+                        <div class="card shadow-sm border-0 mb-4">
+                            <div class="card-header bg-white py-3">
+                                <h6 class="mb-0 fw-bold">2. Datos del Ajustador</h6>
+                            </div>
+                            <div class="card-body">
+                                <div class="row g-3">
+                                    <div class="col-md-6">
+                                        <label class="form-label small text-muted">
+                                            <i class="bi bi-building me-1"></i>Referencia
+                                        </label>
+                                        <input type="text" class="form-control bg-light" id="gen-cuenta" readonly>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label small text-muted">
+                                            <i class="bi bi-person-badge me-1"></i>Ajustador
+                                        </label>
+                                        <div class="position-relative">
+                                            <input type="text" class="form-select fw-bold" id="gen-ajustador"
+                                                placeholder="Escribir o seleccionar..." autocomplete="off"
+                                                data-bs-toggle="dropdown" aria-expanded="false"
+                                                style="cursor: pointer;">
+                                            <ul class="dropdown-menu w-100" id="dropdown-gen-ajustador-list"
+                                                style="max-height: 250px; overflow-y: auto;">
+                                            </ul>
+                                        </div>
+                                        <div id="aviso-gen-ajustador" class="form-text text-warning d-none small mt-1">
+                                            <i class="bi bi-exclamation-triangle-fill me-1"></i> Nuevo Ajustador - Se
+                                            creará al guardar.
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- GRUPO 3: DATOS DE LA ASEGURADORA -->
+                        <div class="card shadow-sm border-0 mb-4">
+                            <div class="card-header bg-white py-3">
+                                <h6 class="mb-0 fw-bold">3. Datos de la Aseguradora</h6>
+                            </div>
+                            <div class="card-body">
+                                <div class="row g-3">
+                                    <div class="col-md-6">
+                                        <label class="form-label small text-muted">Siniestro</label>
+                                        <div class="position-relative">
+                                            <input type="text" class="form-select" id="gen-siniestro"
+                                                placeholder="Escribir o seleccionar..." autocomplete="off"
+                                                data-bs-toggle="dropdown" aria-expanded="false"
+                                                style="cursor: pointer;">
+                                            <ul class="dropdown-menu w-100" id="dropdown-gen-siniestro-list"
+                                                style="max-height: 250px; overflow-y: auto;">
+                                            </ul>
+                                        </div>
+                                        <div id="aviso-gen-siniestro" class="form-text text-warning d-none small mt-1">
+                                            <i class="bi bi-exclamation-triangle-fill me-1"></i> Nuevo Siniestro
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label small text-muted"> <i
+                                                class="bi bi-shield-check me-1"></i>Aseguradora</label>
+                                        <div class="position-relative">
+                                            <input type="text" class="form-select fw-bold" id="gen-aseguradora"
+                                                placeholder="Escribir o seleccionar..." autocomplete="off"
+                                                data-bs-toggle="dropdown" aria-expanded="false"
+                                                style="cursor: pointer;">
+                                            <ul class="dropdown-menu w-100" id="dropdown-gen-aseguradora-list"
+                                                style="max-height: 250px; overflow-y: auto;">
+                                            </ul>
+                                        </div>
+                                        <div id="aviso-gen-aseguradora"
+                                            class="form-text text-warning d-none small mt-1">
+                                            <i class="bi bi-exclamation-triangle-fill me-1"></i> Nueva Aseguradora - Se
+                                            creará al guardar.
+                                        </div>
+                                    </div>
+
+                                    <!-- Fila 5: Fenómeno (Full width to separate logical groups slightly, or can be 12 col) -->
+                                    <div class="col-12">
+                                        <label class="form-label small text-muted">Fenómeno</label>
+                                        <input type="text" class="form-control bg-light" id="gen-fenomeno">
+                                    </div>
+
+                                    <!-- Fila 6: Fecha de incidencia / Fondo -->
+                                    <div class="col-md-6">
+                                        <label class="form-label small text-muted">Fecha de Incidencia (FI)</label>
+                                        <input type="text" class="form-control bg-light" id="gen-fi"
+                                            placeholder="Fecha o FI">
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label small text-muted">Fondo</label>
+                                        <input type="text" class="form-control bg-light" id="gen-fondo">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- GRUPO 4: UBICACIÓN -->
+                        <div class="card shadow-sm border-0">
+                            <div class="card-header bg-white py-3">
+                                <h6 class="mb-0 fw-bold">4. Ubicación</h6>
+                            </div>
+                            <div class="card-body">
+                                <div class="row g-3">
+                                    <!-- Fila 7: Estado / Distrito de riego -->
+                                    <div class="col-md-6">
+                                        <label class="form-label small text-muted">Estado</label>
+                                        <select class="form-select" id="gen-estado">
+                                            <option value="">Cargando...</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <label class="form-label small text-muted">Distrito de Riego</label>
+                                        <div class="position-relative">
+                                            <input type="text" class="form-select" id="gen-distrito"
+                                                placeholder="Escribir o seleccionar..." autocomplete="off"
+                                                data-bs-toggle="dropdown" aria-expanded="false"
+                                                style="cursor: pointer;">
+                                            <ul class="dropdown-menu w-100" id="dropdown-gen-distrito-list"
+                                                style="max-height: 250px; overflow-y: auto;">
+                                            </ul>
+                                        </div>
+                                        <div id="aviso-gen-distrito" class="form-text text-warning d-none small mt-1">
+                                            <i class="bi bi-exclamation-triangle-fill me-1"></i> Nuevo Distrito
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- TAB: PRESUPUESTO (Actualizaciones) -->
+                    <div class="tab-pane fade" id="tab-presupuesto" role="tabpanel">
+                        <div class="card shadow-sm border-0">
+                            <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
+                                <div>
+                                    <h6 class="mb-0 fw-bold">Bitácora de Presupuesto</h6>
+                                    <small class="text-muted">Registro de actualizaciones (Origen y Revisiones)</small>
+                                </div>
+                                <button class="btn btn-primary btn-sm" id="btn-add-actualizacion">
+                                    <i class="bi bi-plus-lg"></i> Agregar Actualización
+                                </button>
+                            </div>
+                            <div class="table-responsive">
+                                <table class="table table-hover align-middle mb-0">
+                                    <thead class="bg-light">
+                                        <tr>
+                                            <th class="ps-4" style="width: 10%;">Revisión</th>
+                                            <th style="width: 15%;">Fecha</th>
+                                            <th style="width: 35%;">Importe Obra <small
+                                                    class="text-muted fw-normal">(Calc vs Manual)</small></th>
+                                            <th style="width: 25%;">Supervisión</th>
+                                            <th class="text-center" style="width: 15%;">Acciones</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="tabla-presupuesto-body">
+                                        <!-- Placeholder -->
+                                        <tr>
+                                            <td colspan="4" class="text-center py-5 text-muted">
+                                                <i class="bi bi-journal-plus fs-1 d-block mb-2"></i>
+                                                Sin presupuesto registrado. Haga clic en Agregar para iniciar (Origen).
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                    <tfoot class="bg-light fw-bold">
+                                        <tr>
+                                            <td colspan="2" class="text-end align-middle">Vigente:</td>
+                                            <td class="text-end text-primary fs-5" id="footer-total-obra">$0.00</td>
+                                            <td class="text-end text-primary fs-5" id="footer-total-sup">$0.00</td>
+                                            <td></td>
+                                        </tr>
+                                    </tfoot>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- TAB: EQUIPO -->
+                    <div class="tab-pane fade" id="tab-equipo" role="tabpanel">
+                        <div class="row g-4">
+                            <!-- Contratistas -->
+                            <div class="col-12">
+                                <div class="card shadow-sm border-0">
+                                    <div
+                                        class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
+                                        <h6 class="mb-0 fw-bold">Contratistas Asignados</h6>
+                                        <button class="btn btn-outline-primary btn-sm" id="btn-add-contratista">
+                                            <i class="bi bi-person-plus"></i> Asignar Contratista
+                                        </button>
+                                    </div>
+                                    <div class="card-body p-0">
+                                        <div id="lista-contratistas" class="list-group list-group-flush">
+                                            <div class="text-center py-4 text-muted">
+                                                <small>No hay contratistas asignados</small>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <!-- Supervisión -->
+                            <div class="col-12">
+                                <div class="card shadow-sm border-0">
+                                    <div
+                                        class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
+                                        <h6 class="mb-0 fw-bold">Equipo de Supervisión</h6>
+                                        <button class="btn btn-outline-primary btn-sm" id="btn-add-supervisor">
+                                            <i class="bi bi-person-plus"></i> Asignar Supervisor
+                                        </button>
+                                    </div>
+                                    <div class="card-body p-0">
+                                        <div id="lista-supervisores" class="list-group list-group-flush">
+                                            <div class="text-center py-4 text-muted">
+                                                <small>No hay supervisores asignados</small>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- TAB: FINANCIERO -->
+                    <!-- TAB: FINANCIERO -->
+                    <div class="tab-pane fade" id="tab-financiero" role="tabpanel">
+                        <!-- Resumen Financiero Superior -->
+                        <div class="row g-3 mb-4">
+                            <div class="col-md-4">
+                                <div
+                                    class="card shadow-sm border-0 h-100 bg-light-primary border-start border-4 border-primary">
+                                    <div class="card-body">
+                                        <small class="text-muted fw-bold text-uppercase">Presupuesto Autorizado</small>
+                                        <div class="fs-4 fw-bold text-dark mt-1" id="fin-autorizado">$0.00</div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div
+                                    class="card shadow-sm border-0 h-100 bg-light-success border-start border-4 border-success">
+                                    <div class="card-body">
+                                        <small class="text-muted fw-bold text-uppercase">Ejercido (Avance Obra)</small>
+                                        <div class="fs-4 fw-bold text-success mt-1" id="fin-ejercido">$0.00</div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div
+                                    class="card shadow-sm border-0 h-100 bg-light-info border-start border-4 border-info">
+                                    <div class="card-body">
+                                        <small class="text-muted fw-bold text-uppercase">Por Ejercer</small>
+                                        <div class="fs-4 fw-bold text-primary mt-1" id="fin-por-ejercer">$0.00</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Tabla Detallada Unificada -->
+                        <div class="card shadow-sm border-0">
+                            <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
+                                <div>
+                                    <h6 class="mb-0 fw-bold">Estimaciones y Facturación</h6>
+                                    <small class="text-muted">Desglose de estimaciones, amortizaciones y facturas
+                                        asociadas</small>
+                                </div>
+                                <button class="btn btn-primary btn-sm" id="btn-add-estimacion">
+                                    <i class="bi bi-plus-lg"></i> Registrar Estimación
+                                </button>
+                            </div>
+                            <div class="table-responsive">
+                                <table class="table table-hover align-middle mb-0 small checkbox-fix">
+                                    <thead class="bg-light text-secondary">
+                                        <tr>
+                                            <th style="min-width: 80px;">No.</th>
+                                            <th style="min-width: 110px;">Fecha</th>
+                                            <th class="text-end" style="min-width: 120px;">Monto Ejecutado</th>
+                                            <th class="text-end" style="min-width: 120px;">Amortización</th>
+                                            <th class="text-end bg-light" style="min-width: 110px;">Subtotal</th>
+                                            <th class="text-end bg-light" style="min-width: 100px;">IVA</th>
+                                            <th class="text-end fw-bold text-success" style="min-width: 120px;">Total
+                                                Factura</th>
+                                            <th style="min-width: 120px;">Folio Factura</th>
+                                            <th style="width: 50px;"></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="lista-estimaciones-body">
+                                        <tr>
+                                            <td colspan="9" class="text-center py-5 text-muted">
+                                                Cargando información financiera...
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- TAB: TICKETS -->
+                    <div class="tab-pane fade" id="tab-tickets" role="tabpanel">
+                        <div class="card shadow-sm border-0 h-100">
+                            <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
+                                <h6 class="mb-0 fw-bold">Sistema de Tickets e Incidencias</h6>
+                                <button class="btn btn-primary btn-sm" id="btn-add-ticket"><i class="bi bi-plus-lg"></i>
+                                    Nuevo Ticket</button>
+                            </div>
+                            <div class="card-body bg-light">
+                                <div class="row" id="lista-tickets">
+                                    <!-- Columna de Tickets (Kanban simplificado o Lista) -->
+                                    <div class="col-12">
+                                        <div class="alert alert-info border-0 shadow-sm d-flex align-items-center">
+                                            <i class="bi bi-info-circle-fill me-2 fs-4"></i>
+                                            <div>
+                                                <strong>Sin tickets</strong>
+                                                <p class="mb-0 small">No hay tickets registrados para este comunicado.
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- TAB: ACTUALIZACIONES -->
+                    <div class="tab-pane fade" id="tab-actualizaciones" role="tabpanel">
+                        <div class="timeline p-4" id="lista-actualizaciones">
+                            <!-- Ejemplo de item de timeline -->
+                            <div class="d-flex gap-3 mb-4">
+                                <div class="d-flex flex-column align-items-center">
+                                    <div class="rounded-circle bg-primary text-white d-flex align-items-center justify-content-center"
+                                        style="width: 32px; height: 32px;">
+                                        <i class="bi bi-pencil-fill small"></i>
+                                    </div>
+                                    <div class="h-100 border-start border-2 my-1"></div>
+                                </div>
+                                <div class="card shadow-sm border-0 flex-grow-1">
+                                    <div class="card-body">
+                                        <div class="d-flex justify-content-between mb-1">
+                                            <h6 class="fw-bold mb-0">Modificación de Datos Generales</h6>
+                                            <small class="text-muted">Hace 2 horas</small>
+                                        </div>
+                                        <p class="text-muted small mb-0">El usuario actualizó la descripción y el estado
+                                            del
+                                            comunicado.</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+            </main>
+        </div>
+    </div> <!-- Cierre de detalle-content -->
+</div>
+
+<!-- Modal Desglose Presupuestal -->
+<div class="modal fade" id="modalPresupuestoDetalle" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl">
+        <div class="modal-content">
+            <div class="modal-header bg-primary text-white">
+                <h5 class="modal-title"><i class="bi bi-list-check me-2"></i>Desglose Presupuestal</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"
+                    aria-label="Close"></button>
+            </div>
+            <div class="modal-body p-4">
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle mb-3">
+                        <thead class="table-light">
+                            <tr>
+                                <th style="width: 45%; min-width: 300px;">Ubicación</th>
+                                <th style="width: 20%; min-width: 140px;">Categoría</th>
+                                <th class="text-end" style="width: 25%; min-width: 150px;">Importe</th>
+                                <th class="text-center" style="width: 10%; min-width: 60px;">Acción</th>
+                            </tr>
+                        </thead>
+                        <tbody id="modal-presupuesto-lines-body"></tbody>
+                    </table>
+                </div>
+                <button class="btn btn-outline-primary btn-sm" onclick="ComunicadoDetalle.addLineaPresupuesto()">
+                    <i class="bi bi-plus-lg me-1"></i>Agregar Línea
+                </button>
+            </div>
+            <div class="modal-footer bg-light justify-content-between">
+                <div class="fs-5">
+                    <span class="text-muted">Total:</span>
+                    <span class="fw-bold text-primary" id="modal-total-revision">$0.00</span>
+                </div>
+                <button type="button" class="btn btn-primary px-4" data-bs-dismiss="modal">
+                    <i class="bi bi-check-lg me-1"></i>Aceptar
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Confirmación Eliminación desde Detalle -->
+<div class="modal fade" id="modalConfirmDeleteDetalle" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content border-0 shadow-lg" style="border-radius: 1rem; overflow: hidden;">
+            <div class="modal-header border-0 pb-0 position-absolute w-100 justify-content-end" style="z-index: 10;">
+                <button type="button" class="btn-close m-3" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+            </div>
+            <div class="modal-body p-5 text-center">
+                <div class="mb-4">
+                    <div class="d-inline-flex align-items-center justify-content-center bg-danger bg-opacity-10 rounded-circle text-danger p-3"
+                        style="width: 80px; height: 80px;">
+                        <i class="bi bi-trash3-fill display-5 animate-pulse"></i>
+                    </div>
+                </div>
+                <h3 class="fw-bold text-dark mb-2">¿Eliminar Comunicado?</h3>
+                <p class="text-muted mb-4 fs-6">
+                    Estás a punto de eliminar este comunicado permanentemente.
+                    <br>Esta acción borrará <strong>todos los datos asociados</strong> (Tickets, Finanzas, Equipo).
+                </p>
+
+                <div class="d-grid gap-2">
+                    <button type="button" class="btn btn-danger btn-lg shadow-sm fw-semibold"
+                        id="btn-confirm-delete-detalle">
+                        <i class="bi bi-trash me-2"></i> Sí, eliminar todo
+                    </button>
+                    <button type="button" class="btn btn-light btn-lg text-muted fw-medium mt-2"
+                        data-bs-dismiss="modal">
+                        Cancelar
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

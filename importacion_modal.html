@@ -1,0 +1,196 @@
+<!-- MODAL DE IMPORTACIÓN INTELIGENTE (Reutilizable) -->
+<div class="modal fade" id="modalImportacion" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+        <div class="modal-content border-0 shadow-lg">
+
+            <!-- HEADER -->
+            <div class="modal-header bg-gradient-primary text-white border-0 py-3">
+                <div class="d-flex align-items-center w-100 justify-content-between">
+                    <div>
+                        <h5 class="modal-title fw-bold mb-0">
+                            <i class="bi bi-file-earmark-spreadsheet-fill me-2"></i>Importación Inteligente
+                        </h5>
+                        <p class="mb-0 small opacity-75 mt-1">Carga masiva de documentos desde Excel/CSV.</p>
+                    </div>
+                    <div class="d-flex gap-2">
+                        <button class="btn btn-sm btn-outline-light" onclick="Importacion.reset()">
+                            <i class="bi bi-arrow-clockwise me-1"></i> Reiniciar
+                        </button>
+                        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"
+                            aria-label="Close"></button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- BODY -->
+            <div class="modal-body p-4 bg-light">
+
+                <!-- STAGE 1: UPLOAD & ANALYZE -->
+                <div id="stage-1-upload" class="wizard-stage">
+                    <div id="drop-zone"
+                        class="upload-zone text-center p-5 border-2 border-dashed rounded bg-white mb-4 transition-hover shadow-sm">
+                        <i class="bi bi-cloud-arrow-up text-primary" style="font-size: 3rem;"></i>
+                        <h5 class="mt-3 fw-bold text-muted">Arrastra archivos Excel/CSV o PDFs aquí</h5>
+                        <p class="text-muted small">o haz clic para seleccionar (Soporta Lotes)</p>
+                        <input type="file" id="file-input" class="d-none" accept=".csv, .txt, .xlsx, .xls, .pdf"
+                            multiple>
+                        <button class="btn btn-primary mt-2 px-4 rounded-pill"
+                            onclick="document.getElementById('file-input').click()">
+                            Seleccionar Archivo
+                        </button>
+                        <div id="file-info" class="mt-3 d-none">
+                            <span class="badge bg-info text-dark px-3 py-2 shadow-sm">
+                                <i class="bi bi-file-earmark-check me-2"></i><span
+                                    id="filename-display">archivo.csv</span>
+                            </span>
+                        </div>
+                    </div>
+
+                    <div class="d-flex justify-content-center mb-4">
+                        <button id="btn-analizar" class="btn btn-lg btn-success shadow px-5 rounded-pill" disabled
+                            onclick="Importacion.analizar()">
+                            <i class="bi bi-search me-2"></i> Analizar y Procesar
+                        </button>
+                        <button id="btn-analizar-pdf"
+                            class="btn btn-lg btn-warning shadow px-5 rounded-pill ms-2 d-none text-white">
+                            <i class="bi bi-robot me-2"></i> Analizar con IA (Lote)
+                        </button>
+                    </div>
+                </div>
+
+                <!-- LOADER (Floating/Shared) -->
+                <div id="import-loader" class="text-center py-5 d-none">
+                    <div class="spinner-border text-primary" style="width: 3rem; height: 3rem;" role="status"></div>
+                    <p class="mt-3 text-muted fs-5 animate-pulse" id="loader-msg">Analizando estructura...</p>
+                </div>
+
+                <!-- STAGE 2 & 4: PREVIEW & PROGRESS (Shared Table) -->
+                <div id="preview-container" class="d-none wizard-stage">
+                    <h6 class="fw-bold text-secondary mb-3"><i class="bi bi-table me-2"></i><span
+                            id="preview-title">Reporte de Procesamiento</span></h6>
+
+                    <div class="alert alert-info border-0 shadow-sm d-flex align-items-center bg-white mb-3">
+                        <i class="bi bi-info-circle-fill fs-4 me-3 text-primary"></i>
+                        <div id="preview-summary" class="text-dark">
+                            Resumen del análisis pendiente.
+                        </div>
+                    </div>
+
+                    <!-- Reporte Errores (Shared) -->
+                    <div id="error-report-container"
+                        class="alert alert-warning d-flex align-items-center justify-content-between mb-4 d-none shadow-sm">
+                        <div>
+                            <i class="bi bi-exclamation-triangle-fill fs-4 me-3 text-warning"></i>
+                            <span id="error-report-msg" class="fw-bold text-dark">Se omitieron registros.</span>
+                        </div>
+                        <button id="btn-download-errors" class="btn btn-warning text-dark fw-bold border-0">
+                            <i class="bi bi-download me-2"></i> Descargar Reporte
+                        </button>
+                    </div>
+
+                    <div class="table-responsive shadow-sm rounded border bg-white"
+                        style="max-height: 400px; overflow-y: auto;">
+                        <table class="table table-hover align-middle mb-0 small table-striped">
+                            <thead class="bg-light sticky-top">
+                                <tr>
+                                    <th>Referencia</th>
+                                    <th>Comunicado</th>
+                                    <th>Tipo</th>
+                                    <th class="text-end">Total Doc</th>
+                                    <th class="text-end">Líneas</th>
+                                    <th class="text-center">Estado</th>
+                                    <th>Detalles</th>
+                                    <th class="text-center col-progress">Progreso</th>
+                                </tr>
+                            </thead>
+                            <tbody id="preview-body">
+                                <!-- Filas dinámicas -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- STAGE 3: CONFIRMATION (Intermediate) -->
+                <div id="confirmation-stage" class="d-none wizard-stage text-center py-5">
+                    <div class="mb-4">
+                        <i class="bi bi-question-circle text-primary opacity-25" style="font-size: 5rem;"></i>
+                    </div>
+                    <h3 class="fw-bold mb-3">¿Confirmar Importación?</h3>
+                    <p class="text-muted fs-5 mb-4">
+                        Se importarán <strong id="confirm-count" class="text-dark">0</strong> registros.
+                    </p>
+                    <div class="d-flex justify-content-center gap-3">
+                        <button class="btn btn-outline-secondary rounded-pill px-4" onclick="Importacion.setStage(2)">
+                            <i class="bi bi-arrow-left me-2"></i>Volver a Revisar
+                        </button>
+                        <button class="btn btn-primary btn-lg rounded-pill px-5 shadow" id="btn-start-import">
+                            <i class="bi bi-cloud-upload-fill me-2"></i> Sí, Importar Ahora
+                        </button>
+                    </div>
+                </div>
+
+                <!-- STAGE 5: SUMMARY (Final) -->
+                <div id="summary-stage" class="d-none wizard-stage text-center py-5">
+                    <div class="mb-4">
+                        <i class="bi bi-check-circle-fill text-success" style="font-size: 5rem;"></i>
+                    </div>
+                    <h3 class="fw-bold mb-3 text-success">¡Proceso Finalizado!</h3>
+                    <div class="row justify-content-center mt-4">
+                        <div class="col-md-6">
+                            <div class="card border-0 shadow-sm bg-light">
+                                <div class="card-body">
+                                    <div class="d-flex justify-content-between border-bottom pb-2 mb-2">
+                                        <span class="text-muted">Total Procesado</span>
+                                        <strong id="summary-total">0</strong>
+                                    </div>
+                                    <div class="d-flex justify-content-between border-bottom pb-2 mb-2">
+                                        <span class="text-muted">Importados Exitosamente</span>
+                                        <strong class="text-success" id="summary-success">0</strong>
+                                    </div>
+                                    <div class="d-flex justify-content-between">
+                                        <span class="text-muted">Fallidos</span>
+                                        <strong class="text-danger" id="summary-errors">0</strong>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mt-5">
+                        <button class="btn btn-outline-primary rounded-pill px-4" onclick="Importacion.reset()">
+                            <i class="bi bi-arrow-clockwise me-2"></i> Importar Otro Archivo
+                        </button>
+                        <button class="btn btn-primary rounded-pill px-4 ms-2" data-bs-dismiss="modal">
+                            <i class="bi bi-check-lg me-2"></i> Finalizar
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- FOOTER -->
+            <div id="import-modal-footer" class="modal-footer bg-white border-top-0">
+                <button type="button" class="btn btn-secondary rounded-pill px-4"
+                    data-bs-dismiss="modal">Cerrar</button>
+                <button type="button" id="btn-confirmar-importacion" class="btn btn-primary rounded-pill px-4 d-none">
+                    <i class="bi bi-check-circle-fill me-2"></i>Confirmar Importación
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    .upload-zone {
+        border-style: dashed;
+        border-color: #dee2e6;
+        cursor: pointer;
+        transition: all 0.3s ease;
+    }
+
+    .upload-zone:hover,
+    .upload-zone.dragover {
+        border-color: #0d6efd;
+        background-color: #e9ecef !important;
+        transform: scale(1.01);
+    }
+</style>

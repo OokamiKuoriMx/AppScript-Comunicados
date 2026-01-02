@@ -1,0 +1,1938 @@
+<script>
+    /**
+     * MÓDULO IMPORTACIÓN FRONTEND
+     * Maneja la carga de archivos y la comunicación con el backend.
+     */
+    globalThis.Importacion = (() => {
+        'use strict';
+
+        const dom = {
+            dropZone: document.getElementById('drop-zone'),
+            fileInput: document.getElementById('file-input'),
+            fileInfo: document.getElementById('file-info'),
+            filenameDisplay: document.getElementById('filename-display'),
+            filenameDisplay: document.getElementById('filename-display'),
+            btnAnalizar: document.getElementById('btn-analizar'),
+            btnAnalizarPdf: document.getElementById('btn-analizar-pdf'), // NEW Button
+            loader: document.getElementById('import-loader'),
+            loaderMsg: document.getElementById('loader-msg'),
+            previewContainer: document.getElementById('preview-container'),
+            previewBody: document.getElementById('preview-body'),
+            previewSummary: document.getElementById('preview-summary'),
+            // Wizard Stages
+            stage1: document.getElementById('stage-1-upload'),
+            stage3: document.getElementById('confirmation-stage'),
+            stage5: document.getElementById('summary-stage'),
+            // Wizard Elements
+            confirmCount: document.getElementById('confirm-count'),
+            btnStartImport: document.getElementById('btn-start-import'),
+            previewTitle: document.getElementById('preview-title'),
+            summaryTotal: document.getElementById('summary-total'),
+            summarySuccess: document.getElementById('summary-success'),
+            summaryErrors: document.getElementById('summary-errors')
+        };
+
+        let currentFile = null;
+        let currentCsvContent = null; // Store for confirmation step
+
+        const init = () => {
+            _cacheDom();
+            _addEventListeners();
+            console.log('Componente Importacion inicializado (Modal mode)');
+        };
+
+        const _addEventListeners = () => {
+            // Drag & Drop
+            ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+                dom.dropZone.addEventListener(eventName, _preventDefaults, false);
+            });
+
+            ['dragenter', 'dragover'].forEach(eventName => {
+                dom.dropZone.addEventListener(eventName, () => dom.dropZone.classList.add('dragover'), false);
+            });
+
+            ['dragleave', 'drop'].forEach(eventName => {
+                dom.dropZone.addEventListener(eventName, () => dom.dropZone.classList.remove('dragover'), false);
+            });
+
+            dom.dropZone.addEventListener('drop', _handleDrop, false);
+            dom.fileInput.addEventListener('change', _handleFileSelect, false);
+
+            // Wizard Listeners
+            if (dom.btnStartImport) {
+                dom.btnStartImport.addEventListener('click', startImportFlow);
+            }
+        };
+
+        const _preventDefaults = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+        };
+
+        const _handleDrop = (e) => {
+            const dt = e.dataTransfer;
+            const files = dt.files;
+            _handleFiles(files);
+        };
+
+        const _handleFileSelect = (e) => {
+            const files = e.target.files;
+            _handleFiles(files);
+        };
+
+        const _handleFiles = (files) => {
+            if (files.length > 0) {
+                // Validación Simple de Tipo
+                const isPdf = files[0].name.toLowerCase().endsWith('.pdf');
+
+                if (isPdf) {
+                    // Modo PDF Batch
+                    dom.filenameDisplay.innerHTML = `<span class="badge bg-danger me-2">PDF</span> ${files.length} archivo(s) seleccionado(s)`;
+                    dom.btnAnalizar.classList.add('d-none'); // Hide CSV button
+                    if (dom.btnAnalizarPdf) dom.btnAnalizarPdf.classList.remove('d-none');
+                    dom.btnAnalizarPdf.disabled = false;
+                    dom.btnAnalizarPdf.onclick = () => _iniciarCargaIA(files);
+                } else {
+                    // Modo Legacy (CSV/Excel)
+                    currentFile = files[0];
+                    dom.filenameDisplay.textContent = currentFile.name;
+                    dom.btnAnalizar.classList.remove('d-none');
+                    if (dom.btnAnalizarPdf) dom.btnAnalizarPdf.classList.add('d-none');
+                    dom.btnAnalizar.disabled = false;
+                }
+                dom.fileInfo.classList.remove('d-none');
+            }
+        };
+
+        // ===============================================
+        //  GESTOR DE COLA IA (BATCH PDF)
+        // ===============================================
+        const _iniciarCargaIA = async (fileList) => {
+            const files = Array.from(fileList);
+            console.log(`Iniciando Carga IA de ${files.length} archivos`);
+
+            _showLoader(true, `Preparando ${files.length} archivos...`);
+
+            const RESULTADOS_BATCH = [];
+            let total = files.length;
+            let procesados = 0;
+
+            for (let i = 0; i < total; i++) {
+                const file = files[i];
+                const msg = `Procesando IA (${i + 1}/${total}): ${file.name}`;
+                dom.loaderMsg.textContent = msg;
+
+                try {
+                    // 1. Leer Archivo a Base64
+                    const base64 = await _readFileAsBase64(file);
+
+                    // 2. Enviar a Backend (IA + Extracción)
+                    let resIA = await serverCall('procesarPdfIA', { content: base64, filename: file.name });
+
+                    console.log('DEBUG resIA', resIA);
+
+                    // Robustez: Si llega como string, parsearlo
+                    if (typeof resIA === 'string') {
+                        try {
+                            resIA = JSON.parse(resIA);
+                            console.log('DEBUG resIA parsed:', resIA);
+                        } catch (e) {
+                            console.error('Error parseando resIA:', e);
+                        }
+                    }
+
+                    if (resIA && (resIA.success || resIA.header)) {
+                        // Adaptador: Si serverCall devolvió la data directa (sin wrapper success), úsala.
+                        const datosIA = resIA.success ? resIA.data : resIA;
+
+                        // 3. Analizar Datos vs DB (Previsualización)
+                        // IMPORTANTE: Pasar documentos previos como contexto de lote para detectar padres
+                        const analisis = await serverCall('analizarExtraccionIA', datosIA, RESULTADOS_BATCH);
+
+                        console.log('DEBUG analisis', analisis);
+
+                        // Lógica flexible: manejar tanto respuesta empaquetada como desempaquetada
+                        let rowData = null;
+
+                        if (analisis) {
+                            if (analisis.success && analisis.data) {
+                                // Caso empaquetado: { success: true, data: {...} }
+                                rowData = analisis.data;
+                            } else if (analisis.esValido !== undefined || analisis.status) {
+                                // Caso desempaquetado: El objeto ya es la fila de datos (tiene esValido/status)
+                                rowData = analisis;
+                            }
+                        }
+
+                        if (rowData) {
+                            RESULTADOS_BATCH.push(rowData);
+                        } else {
+                            // Falló análisis de negocio
+                            RESULTADOS_BATCH.push(_crearErrorRow(file.name, (analisis && analisis.message) ? analisis.message : 'Error en análisis (Datos inválidos)'));
+                        }
+                    } else {
+                        // Falló IA o OCR
+                        RESULTADOS_BATCH.push(_crearErrorRow(file.name, (resIA && resIA.message) ? resIA.message : 'Error interno: Respuesta IA inválida'));
+                    }
+
+                } catch (error) {
+                    console.error('Error file:', file.name, error);
+                    RESULTADOS_BATCH.push(_crearErrorRow(file.name, error.message));
+                }
+
+                procesados++;
+            }
+
+            // FIN: Renderizar Resultados Batch
+            _showLoader(false);
+
+            // Construir estructura compatible con _renderResultados
+            const reportData = {
+                filas: RESULTADOS_BATCH,
+                resumen: {
+                    total: total,
+                    validos: RESULTADOS_BATCH.filter(r => r.esValido && r.status !== 'OMITIDO').length,
+                    omitidos: RESULTADOS_BATCH.filter(r => r.status === 'OMITIDO').length,
+                    errores: RESULTADOS_BATCH.filter(r => !r.esValido).length
+                }
+            };
+
+            _renderResultados(reportData);
+            setStage(2);
+        };
+
+        const _readFileAsBase64 = (file) => {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => {
+                    // split ',' to get clean base64
+                    resolve(reader.result.split(',')[1]);
+                };
+                reader.onerror = error => reject(error);
+                reader.readAsDataURL(file);
+            });
+        };
+
+        const _crearErrorRow = (filename, errorMsg) => {
+            return {
+                ref: filename, // Usar nombre de archivo como ref temporal
+                comunicado: 'ERROR IMPORT',
+                status: 'ERROR',
+                esValido: false,
+                motivo: errorMsg,
+                analisis: { comunicado: { debug: null } } // Dummy structure
+            };
+        };
+
+
+
+        const reset = () => {
+            currentFile = null;
+            dom.fileInput.value = '';
+            dom.fileInfo.classList.add('d-none');
+            dom.btnAnalizar.disabled = true;
+            dom.fileInput.value = '';
+            dom.fileInfo.classList.add('d-none');
+            dom.btnAnalizar.disabled = true;
+
+            // Reset Wizard
+            currentPreviewData = [];
+            currentCsvContent = null;
+            setStage(1);
+            dom.previewBody.innerHTML = '';
+
+            // Preview additions
+            dom.btnConfirmar.classList.add('d-none');
+            dom.errorReportContainer.classList.add('d-none');
+            currentCsvContent = null;
+        };
+
+        const analizar = () => {
+            if (!currentFile) return;
+
+            const fileName = currentFile.name.toLowerCase();
+            const isExcel = fileName.endsWith('.xlsx') || fileName.endsWith('.xls');
+
+            if (isExcel) {
+                _procesarExcel(currentFile);
+            } else {
+                const reader = new FileReader();
+                reader.onload = async (e) => {
+                    const content = e.target.result;
+                    await _procesarBackend(content);
+                };
+                reader.readAsText(currentFile);
+            }
+        };
+
+        const _procesarExcel = async (file) => {
+            _showLoader(true, 'Procesando archivo Excel...');
+
+            try {
+                const reader = new FileReader();
+                reader.onload = async (e) => {
+                    const base64Data = e.target.result.split(',')[1];
+                    const result = await serverCall('convertirExcelACsv', base64Data);
+
+                    if (result.success) {
+                        await _procesarBackend(result.csvContent);
+                    } else {
+                        alert('Error al procesar Excel: ' + result.message);
+                        _showLoader(false);
+                    }
+                };
+                reader.readAsDataURL(file);
+            } catch (error) {
+                console.error(error);
+                alert('Error al leer el archivo Excel: ' + error.message);
+                _showLoader(false);
+            }
+        };
+
+        const _procesarBackend = async (csvContent) => {
+            _showLoader(true, 'Analizando archivo y catálogos...');
+            currentCsvContent = csvContent; // Save for later
+
+            try {
+                // PASO 1: Previsualización (Solo Lectura)
+                // serverCall devuelve directamente 'data' si es exitoso, y lanza error si falla.
+                const data = await serverCall('previsualizarImportacion', csvContent);
+
+                if (data) {
+                    _renderResultados(data);
+                    setStage(2); // Move to Preview Stage
+                } else {
+                    throw new Error('La respuesta de previsualización esta vacía.');
+                }
+
+            } catch (error) {
+                console.error(error);
+                alert('Error en el análisis: ' + error.message);
+            } finally {
+                _showLoader(false);
+            }
+        };
+
+        let currentPreviewData = [];
+
+        const setStage = (stage) => {
+            console.log('Wizard Stage set to:', stage);
+
+            // Hide all stages first
+            if (dom.stage1) dom.stage1.classList.add('d-none');
+            if (dom.previewContainer) dom.previewContainer.classList.add('d-none');
+            if (dom.stage3) dom.stage3.classList.add('d-none');
+            if (dom.stage5) dom.stage5.classList.add('d-none');
+
+            // Redundant legacy element hide just in case
+            if (dom.dropZone && stage !== 1) dom.dropZone.classList.add('d-none');
+
+            // Footer starts visible by default, but hide for specific stages
+            if (dom.modalFooter) {
+                if ([3, 4, 5].includes(stage)) {
+                    dom.modalFooter.classList.add('d-none');
+                } else {
+                    dom.modalFooter.classList.remove('d-none');
+                }
+            }
+
+            // Show requested stage
+            switch (stage) {
+                case 1:
+                    if (dom.stage1) dom.stage1.classList.remove('d-none');
+                    if (dom.dropZone) dom.dropZone.classList.remove('d-none');
+                    break;
+                case 2:
+                    dom.previewContainer.classList.remove('d-none');
+                    if (dom.previewTitle) dom.previewTitle.innerText = 'Reporte de Procesamiento';
+                    // Activar botones de Stage 2 (Volver, Confirmar)
+                    break;
+                case 3:
+                    dom.stage3.classList.remove('d-none');
+                    break;
+                case 4:
+                    dom.previewContainer.classList.remove('d-none');
+                    if (dom.previewTitle) dom.previewTitle.innerText = 'Importando...';
+                    if (dom.btnConfirmar) dom.btnConfirmar.classList.add('d-none');
+                    break;
+                case 5:
+                    dom.stage5.classList.remove('d-none');
+                    break;
+            }
+        };
+
+        const confirmar = async () => {
+            // Legacy wrapper if called directly, redirects to Wizard Stage 3
+            if (!currentPreviewData || currentPreviewData.length === 0) return;
+
+            // Count valid items
+            const count = currentPreviewData.filter(d => d.esValido && d.status !== 'OMITIDO').length;
+            if (count === 0) { alert('Nada que importar'); return; }
+
+            if (dom.confirmCount) dom.confirmCount.innerText = count;
+            setStage(3);
+        };
+
+        const startImportFlow = async () => {
+            // Actual execution (Stage 4)
+            if (!currentPreviewData || currentPreviewData.length === 0) return;
+
+            // Filtrar solo los que se pueden importar (VALIDOS y NO ERRORES)
+            // Incluimos REEMPLAZAR (Actualizaciones) y NUEVO. OMITIDO se salta.
+            const toImportIndices = currentPreviewData
+                .map((d, i) => ({ data: d, index: i }))
+                .filter(item => item.data.esValido && item.data.status !== 'OMITIDO');
+
+            if (toImportIndices.length === 0) {
+                alert('No hay registros nuevos o modificados para importar.');
+                return;
+            }
+
+            setStage(4); // Switch to Progress View
+
+            // if (!confirm(`Se importarán ${toImportIndices.length} registros uno por uno. ¿Continuar?`)) return;
+
+            dom.btnConfirmar.disabled = true;
+            let successCount = 0;
+            let errorCount = 0;
+
+            for (const item of toImportIndices) {
+                const idx = item.index;
+                let payload = item.data.rawPayload;
+
+                // UI: Spinner
+                _updateRowStatus(idx, 'loading');
+
+                if (!payload) {
+                    console.error(`Row ${idx}: rawPayload is missing`, item.data);
+                    _updateRowStatus(idx, 'error', 'Error inetrno: Datos faltantes');
+                    errorCount++;
+                    continue;
+                }
+
+                try {
+                    // Stringify to ensure safe transmission
+                    const payloadStr = JSON.stringify(payload);
+                    const res = await serverCall('importarUnico', payloadStr);
+
+                    if (res.success) {
+                        console.log(`Row ${idx} Logs:`, res.debugLogs);
+                        _updateRowStatus(idx, 'success', res.message);
+                        successCount++;
+                    } else {
+                        _updateRowStatus(idx, 'error', res.message);
+                        errorCount++;
+                    }
+                } catch (e) {
+                    _updateRowStatus(idx, 'error', e.message);
+                    errorCount++;
+                }
+            }
+
+            // Summary Stage 5
+            if (dom.summaryTotal) dom.summaryTotal.innerText = toImportIndices.length;
+            if (dom.summarySuccess) dom.summarySuccess.innerText = successCount;
+            if (dom.summaryErrors) dom.summaryErrors.innerText = errorCount;
+
+            setStage(5);
+            /*
+            if (globalThis.Swal) {
+                Swal.fire({
+                    icon: errorCount === 0 ? 'success' : 'warning',
+                    title: 'Proceso Finalizado',
+                    text: `Importados: ${successCount}\nFallidos: ${errorCount}`,
+                });
+            } else {
+                alert(`Proceso Finalizado.\nImportados: ${successCount}\nFallidos: ${errorCount}`);
+            }
+            */
+
+            dom.btnConfirmar.disabled = false;
+            // Opcional: Recargar tabla principal si hubo exitos
+            if (successCount > 0 && globalThis.Comunicados && typeof Comunicados.recargar === 'function') {
+                Comunicados.recargar();
+            }
+        };
+
+        const _updateRowStatus = (index, type, msg) => {
+            const el = document.getElementById(`row-status-${index}`);
+            if (!el) return;
+
+            if (type === 'loading') {
+                el.innerHTML = `<div class="spinner-border spinner-border-sm text-primary" role="status"></div>`;
+            } else if (type === 'success') {
+                el.innerHTML = `<i class="bi bi-check-circle-fill text-success fs-5" title="${msg || 'Éxito'}"></i>`;
+            } else if (type === 'error') {
+                el.innerHTML = `<i class="bi bi-x-circle-fill text-danger fs-5" title="${msg || 'Error'}"></i>
+                                <div class="text-danger small mt-1" style="font-size: 0.7em; line-height: 1.1;">${msg || 'Error'}</div>`;
+            }
+        };
+
+        const _renderResultados = (data) => {
+            // dom.previewContainer.classList.remove('d-none'); // Handled by setStage
+            dom.previewBody.innerHTML = '';
+
+            const filas = data.filas || [];
+            currentPreviewData = filas; // Guardar referencia global
+
+            // Ensure Header has Progress Column
+            const theadRow = dom.previewContainer.querySelector('thead tr');
+            if (theadRow && !theadRow.querySelector('.col-progress')) {
+                const th = document.createElement('th');
+                th.className = 'col-progress text-center';
+                th.innerText = 'Progreso';
+                theadRow.appendChild(th);
+            }
+
+            const resumen = data.resumen || {};
+
+            dom.previewSummary.innerHTML = `
+                <strong>Total Filas:</strong> ${resumen.total || 0} <span class="mx-2">|</span>
+                <strong class="text-success">A Importar:</strong> ${resumen.validos || 0} <span class="mx-2">|</span>
+                <strong class="text-secondary">Omitidos:</strong> ${resumen.omitidos || 0} <span class="mx-2">|</span>
+                <strong class="text-danger">Errores:</strong> ${resumen.errores || 0}
+            `;
+
+            // Mostrar botón Confirmar solo si hay válidos > 0
+            if (resumen.validos > 0) {
+                dom.btnConfirmar.classList.remove('d-none');
+                dom.btnConfirmar.disabled = false;
+                dom.btnConfirmar.onclick = confirmar;
+                dom.btnConfirmar.innerHTML = `<i class="bi bi-cloud-upload me-2"></i>Confirmar Importación (${resumen.validos})`;
+            } else {
+                dom.btnConfirmar.classList.add('d-none');
+            }
+
+            // Reporte de errores
+            if (resumen.errores > 0) {
+                dom.errorReportContainer.classList.remove('d-none');
+                dom.errorReportMsg.innerHTML = `<i class="bi bi-exclamation-triangle-fill me-2"></i>Atención: <strong>${resumen.errores}</strong> registros tienen errores y NO se procesarán.`;
+                dom.btnDownloadErrors.classList.add('d-none');
+            } else {
+                dom.errorReportContainer.classList.add('d-none');
+            }
+
+            const html = filas.map((d, i) => {
+                let badgeClass = 'bg-secondary';
+                let badgeText = 'DESCONOCIDO';
+
+                if (d.status === 'OMITIDO') {
+                    badgeClass = 'bg-warning text-dark';
+                    badgeText = '<i class="bi bi-exclamation-triangle me-1"></i>OMITIDO';
+                } else if (d.status === 'ERROR' || !d.esValido) {
+                    badgeClass = 'bg-danger';
+                    badgeText = '<i class="bi bi-x-circle me-1"></i>ERROR';
+                } else {
+                    badgeClass = 'bg-success';
+                    badgeText = '<i class="bi bi-check-circle me-1"></i>VÁLIDO';
+                }
+
+                const badgeEstado = `<span class="badge ${badgeClass}">${badgeText}</span>`;
+
+                // Analisis de entidades nuevas
+                const analisisBadges = [];
+                if (d.analisis) {
+                    if (d.analisis.cuenta?.status === 'NUEVO') analisisBadges.push('<span class="badge bg-info text-dark ms-1">Nueva Cuenta</span>');
+                    if (d.analisis.siniestro?.status === 'NUEVO') analisisBadges.push('<span class="badge bg-purple ms-1" style="background-color: #6f42c1;">Nuevo Siniestro</span>');
+                    if (d.analisis.distrito?.status === 'NUEVO') analisisBadges.push('<span class="badge bg-info text-dark ms-1">Nuevo DR</span>');
+
+                    // Comunicado Status
+                    if (d.analisis.comunicado?.status === 'EXISTE') {
+                        analisisBadges.push('<span class="badge bg-warning text-dark ms-1"><i class="bi bi-exclamation-circle me-1"></i>Comunicado Existente</span>');
+                    } else if (d.analisis.comunicado?.status === 'NUEVO') {
+                        analisisBadges.push('<span class="badge bg-success ms-1">Nuevo Comunicado</span>');
+                    } else if (d.analisis.comunicado?.status === 'ACTUALIZACION_LOTE') {
+                        analisisBadges.push('<span class="badge bg-info text-dark ms-1"><i class="bi bi-arrow-up-circle me-1"></i>Actualización (En Lote)</span>');
+                    } else if (d.analisis.comunicado?.status === 'ACTUALIZACION_BD') {
+                        analisisBadges.push('<span class="badge bg-primary ms-1"><i class="bi bi-arrow-up-circle me-1"></i>Actualización (En BD)</span>');
+                    } else if (d.analisis.comunicado?.status === 'ACTUALIZACION') {
+                        analisisBadges.push('<span class="badge bg-info text-dark ms-1"><i class="bi bi-arrow-up-circle me-1"></i>Actualización</span>');
+                    } else if (d.analisis.comunicado?.status === 'DUPLICADO_CONTENIDO') {
+                        analisisBadges.push('<span class="badge bg-danger ms-1"><i class="bi bi-exclamation-triangle me-1"></i>Posible Duplicado (Monto)</span>');
+                    } else if (d.analisis.comunicado?.status === 'REEMPLAZAR') {
+                        analisisBadges.push('<span class="badge bg-primary ms-1"><i class="bi bi-pencil-square me-1"></i>Actualización Detectada</span>');
+                        // Mostrar Cambios
+                        if (d.analisis.comunicado.cambios && d.analisis.comunicado.cambios.length > 0) {
+                            d.analisis.comunicado.cambios.forEach(change => {
+                                analisisBadges.push(`<span class="badge bg-light text-dark border ms-1"><small>${change}</small></span>`);
+                            });
+                        }
+                    } else if (d.analisis.comunicado?.status === 'OMITIDO') {
+                        analisisBadges.push('<span class="badge bg-secondary ms-1"><i class="bi bi-slash-circle me-1"></i>Sin Cambios (Se omitirá)</span>');
+                    } else if (d.analisis.comunicado?.status === 'ERROR_SIN_PADRE') {
+                        analisisBadges.push('<span class="badge bg-danger ms-1"><i class="bi bi-x-circle me-1"></i>Error: Padre no existe</span>');
+                    }
+                }
+
+                return `
+                    <tr id="row-${i}">
+                        <td class="fw-bold">
+                            ${d.ref || '-'}
+                            ${analisisBadges.join('')}
+                        </td>
+                        <td>${d.comunicado || '-'}</td>
+                        <td><small class="text-muted">${d.tipo || 'UNK'}</small></td> 
+                        <td class="text-end font-monospace">${d.monto ? '$' + parseFloat(d.monto).toLocaleString() : '-'}</td>
+                        <td class="text-end font-monospace text-muted small">${d.sumaLineas ? '$' + parseFloat(d.sumaLineas).toLocaleString() : '-'}</td>
+                        <td class="text-center">${badgeEstado}</td>
+                        <td class="small ${d.esValido ? 'text-muted' : 'text-danger'}">
+                            ${d.motivo || ''}
+                            ${d.analisis.advertencias && d.analisis.advertencias.length > 0 ?
+                        `<br>${d.analisis.advertencias.map(a => `<span class="badge bg-warning text-dark me-1"><i class="bi bi-exclamation-triangle me-1"></i>${a}</span>`).join('')}` : ''}
+                            ${d.analisis.comunicado.debug ?
+                        `<br><span style="font-size:0.7em; opacity:0.7; font-family:monospace;">
+                                [DBG: CSV="${d.analisis.comunicado.debug.csvEstado}" | RES=${d.analisis.comunicado.debug.resId} | DB=${d.analisis.comunicado.debug.dbId}]
+                                </span>` : ''}
+                        </td>
+                        <td class="text-center" id="row-status-${i}">
+                            ${d.esValido && d.status !== 'OMITIDO' ? '<i class="bi bi-circle text-muted small"></i>' : '-'}
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+
+            dom.previewBody.innerHTML = html;
+        };
+
+        const _descargarCsv = (base64Content, filename) => {
+            const link = document.createElement('a');
+            link.href = 'data:text/csv;base64,' + base64Content;
+            link.download = filename;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        };
+
+        const _showLoader = (show, msg) => {
+            if (show) {
+                dom.loader.classList.remove('d-none');
+                dom.loaderMsg.textContent = msg;
+                dom.btnAnalizar.disabled = true;
+                // Hide stage 1 content temporarily if needed, or overlay it.
+                // But for now, let's keep it simple. The loader is full width/floating?
+                // In the HTML it is distinct. 
+                // Let's just hide the current stage content if we want a "replacement" loader
+                if (dom.stage1 && !dom.stage1.classList.contains('d-none')) dom.stage1.classList.add('d-none');
+            } else {
+                dom.loader.classList.add('d-none');
+                dom.btnAnalizar.disabled = false;
+                // Do NOT unhide stage1 here. setStage() determines what is visible.
+            }
+        };
+
+        const render = () => {
+            return globalThis.TEMPLATES?.importacion || '';
+        };
+
+        const mount = (container) => {
+            if (document.getElementById('modalImportacion')) {
+                init();
+                return;
+            }
+            _cacheDom();
+            _addEventListeners();
+        };
+
+        const _cacheDom = () => {
+            dom.dropZone = document.getElementById('drop-zone');
+            dom.fileInput = document.getElementById('file-input');
+            dom.fileInfo = document.getElementById('file-info');
+            dom.filenameDisplay = document.getElementById('filename-display');
+            dom.btnAnalizar = document.getElementById('btn-analizar');
+            dom.btnAnalizarPdf = document.getElementById('btn-analizar-pdf'); // Fix: Cache new button
+            dom.loader = document.getElementById('import-loader');
+            dom.loaderMsg = document.getElementById('loader-msg');
+            dom.previewContainer = document.getElementById('preview-container');
+            dom.previewBody = document.getElementById('preview-body');
+            dom.previewSummary = document.getElementById('preview-summary');
+
+            // Wizard Elements Cache
+            dom.stage1 = document.getElementById('stage-1-upload');
+            dom.stage3 = document.getElementById('confirmation-stage');
+            dom.stage5 = document.getElementById('summary-stage');
+            dom.confirmCount = document.getElementById('confirm-count');
+            dom.btnStartImport = document.getElementById('btn-start-import');
+            dom.previewTitle = document.getElementById('preview-title');
+            dom.summaryTotal = document.getElementById('summary-total');
+            dom.summarySuccess = document.getElementById('summary-success');
+            dom.summaryErrors = document.getElementById('summary-errors');
+            dom.modalFooter = document.getElementById('import-modal-footer'); // Cache Footer
+
+            // New elements
+            dom.errorReportContainer = document.getElementById('error-report-container');
+            dom.errorReportMsg = document.getElementById('error-report-msg');
+            dom.btnDownloadErrors = document.getElementById('btn-download-errors');
+            dom.btnConfirmar = document.getElementById('btn-confirmar-importacion'); // New
+        };
+
+
+
+        const openModal = async () => {
+            let modalEl = document.getElementById('modalImportacion');
+
+            // Si el modal no existe en el DOM, cargarlo dinámicamente
+            if (!modalEl) {
+                console.log('Modal de importación no encontrado, inyectando HTML dinámicamente...');
+                try {
+                    const html = await globalThis.fetchTemplates('importacion_modal');
+                    if (html) {
+                        const div = document.createElement('div');
+                        div.innerHTML = html;
+                        // El modal suele ser el primer elemento
+                        const newModal = div.querySelector('#modalImportacion');
+                        if (newModal) {
+                            document.body.appendChild(newModal);
+                            modalEl = newModal;
+                            init(); // Re-inicializar listeners
+                        }
+                    }
+                } catch (e) {
+                    console.error('Error cargando plantilla del modal:', e);
+                    alert('Error al cargar la interfaz de importación.');
+                    return;
+                }
+            }
+
+            // Ensure DOM is cached if not already
+            if (!dom.previewContainer) init();
+
+            reset();
+
+            // Re-verificar referencia por si acaso
+            modalEl = document.getElementById('modalImportacion');
+
+            if (modalEl) {
+                const modal = new bootstrap.Modal(modalEl);
+                modal.show();
+            } else {
+                console.error('Modal de importación no encontrado en el DOM (Fatal)');
+                alert('No se pudo inicializar el módulo de importación.');
+            }
+        };
+
+        return {
+            render,
+            mount,
+            init,
+            setStage, // Expose for Back buttons
+            reset,
+            analizar,
+            openModal
+        };
+    })();
+
+    /**
+     * Componente Comunicados
+     * Muestra una tabla detallada de todos los comunicados.
+     */
+    globalThis.Comunicados = (() => {
+        'use strict';
+        console.log('🚀 Iniciando ejecución de componente Comunicados');
+
+        // Estado local del componente
+        let state = {
+            comunicados: [],
+            catalogs: { estados: [], distritosRiego: [], siniestros: [] },
+            loading: false,
+            error: null,
+            isEditing: false,
+            filters: {
+                search: '',
+                status: 'all',
+                year: 'all',
+                stateFilter: null // Nuevo filtro para el mapa
+            },
+            filters: {
+                search: '',
+                status: 'all',
+                year: 'all',
+                stateFilter: null // Nuevo filtro para el mapa
+            },
+            sort: {
+                column: 'fecha',
+                direction: 'desc'
+            },
+            viewMode: 'list' // 'list' or 'map'
+        };
+
+        // Referencias al DOM
+        let dom = {};
+        let modalInstance = null;
+        let comunicadoActual = null;
+
+        /**
+         * Utilidad local para escapar HTML
+         */
+        function escapeHtml(s) {
+            return String(s ?? '').replace(/[&<>"']/g, m => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            }[m]));
+        }
+
+        /**
+         * Renderiza el spinner inicial
+         */
+        function _renderSpinnerInicial(container) {
+            container.innerHTML = `
+                <section class="card shadow-sm">
+                    <div class="card-body text-center p-5">
+                        <div class="spinner-border text-primary" role="status"></div>
+                        <p class="mt-2">Cargando vista...</p>
+                    </div>
+                </section>
+            `;
+        }
+
+        /**
+         * Carga el HTML del componente desde el servidor
+         */
+        async function _mount(container) {
+            console.log('=== PASO 2: Cargar HTML del componente Comunicados ===');
+            _renderSpinnerInicial(container);
+
+            try {
+                await new Promise((resolve, reject) => {
+                    google.script.run
+                        .withSuccessHandler(html => {
+                            container.innerHTML = html;
+                            console.log('✅ PASO 2 completado');
+                            resolve(html);
+                        })
+                        .withFailureHandler(error => {
+                            reject(error);
+                        })
+                        .include('comunicados');
+                });
+            } catch (error) {
+                console.error('❌ PASO 2 falló:', error);
+                throw error;
+            }
+        }
+
+        /**
+         * Cachea referencias a elementos del DOM
+         */
+        function _cacheDomElements() {
+            dom.loader = document.getElementById('comunicados-loader');
+            dom.tableContainer = document.getElementById('comunicados-table-container');
+            dom.tbody = document.getElementById('lista-comunicados-body');
+            dom.errorAlert = document.getElementById('comunicados-error');
+            dom.emptyState = document.getElementById('comunicados-empty');
+            dom.totalBadge = document.getElementById('total-comunicados-badge');
+            dom.btnRecargar = document.getElementById('btnRecargarComunicados');
+
+            // Elementos del modal
+            dom.modal = document.getElementById('modalDetalleComunicado');
+            dom.modalLoader = document.getElementById('modal-comunicado-loader');
+            dom.modalContent = document.getElementById('modal-comunicado-content');
+            dom.modalError = document.getElementById('modal-comunicado-error');
+            dom.btnGuardar = document.getElementById('btnGuardarComunicado');
+            dom.btnEditar = document.getElementById('btnEditarComunicado');
+
+            // Inputs del modal
+            dom.inputDistrito = document.getElementById('detalle-distrito');
+            dom.inputSiniestro = document.getElementById('detalle-siniestro');
+            dom.avisoDistrito = document.getElementById('aviso-nuevo-distrito');
+            dom.avisoSiniestro = document.getElementById('aviso-nuevo-siniestro');
+
+            // Referencias a avisos para validación
+            dom.avisoFenomeno = document.getElementById('aviso-nuevo-fenomeno');
+            dom.avisoFi = document.getElementById('aviso-nuevo-fi');
+            dom.avisoFondo = document.getElementById('aviso-nuevo-fondo');
+
+            if (dom.btnRecargar) {
+                dom.btnRecargar.addEventListener('click', () => {
+                    _loadComunicados();
+                });
+            }
+
+            if (dom.btnGuardar) {
+                dom.btnGuardar.addEventListener('click', () => {
+                    _guardarCambios();
+                });
+            }
+
+            if (dom.btnEditar) {
+                dom.btnEditar.addEventListener('click', () => {
+                    _toggleEdicion(true);
+                });
+            }
+
+            // Listeners para detectar nuevos registros
+            // Configurados aquí en _cacheDomElements para que se ejecuten siempre
+            if (dom.inputDistrito) {
+                dom.inputDistrito.addEventListener('input', () => {
+                    console.log('📝 INPUT evento en distrito');
+                    _verificarNuevoRegistro('distrito');
+                });
+            }
+            if (dom.inputSiniestro) {
+                dom.inputSiniestro.addEventListener('input', () => {
+                    console.log('📝 INPUT evento en siniestro');
+                    _verificarNuevoRegistro('siniestro');
+                    _actualizarDetallesSiniestro();
+                });
+            }
+
+
+            // Inicializar instancia del modal
+            if (dom.modal && typeof bootstrap !== 'undefined') {
+                modalInstance = new bootstrap.Modal(dom.modal);
+
+                // Poblar listas desplegables cuando el modal se muestra (garantiza que DOM esté listo)
+                dom.modal.addEventListener('shown.bs.modal', () => {
+                    console.log('🔔 Modal mostrado, poblando combobox híbridos...');
+                    _poblarCombobox('distrito', state.catalogs.distritosRiego, 'distritoRiego');
+                    _poblarCombobox('siniestro', state.catalogs.siniestros, 'siniestro');
+                    _setupComboboxFilter('distrito', state.catalogs.distritosRiego, 'distritoRiego');
+                    _setupComboboxFilter('siniestro', state.catalogs.siniestros, 'siniestro');
+                });
+
+                dom.modal.addEventListener('hidden.bs.modal', () => {
+                    _toggleEdicion(false); // Resetear al cerrar
+                });
+            }
+
+            // Dashboard & Filters Refs
+            dom.dashboard = document.getElementById('dashboard-container');
+            dom.statTotal = document.getElementById('stat-total');
+            dom.statSinSiniestro = document.getElementById('stat-sin-siniestro');
+            dom.statNuevosSiniestros = document.getElementById('stat-nuevos-siniestros');
+            dom.statMesActual = document.getElementById('stat-mes-actual');
+
+            dom.filterSearch = document.getElementById('filter-search');
+            dom.filterStatus = document.getElementById('filter-status');
+            dom.filterYear = document.getElementById('filter-year');
+            dom.btnClearFilters = document.getElementById('btn-clear-filters');
+
+            // Delete Modal Elements
+            dom.modalDeleteList = document.getElementById('modalConfirmDeleteListado');
+            dom.btnConfirmDeleteList = document.getElementById('btn-confirm-delete-list');
+
+            if (dom.btnConfirmDeleteList) {
+                dom.btnConfirmDeleteList.addEventListener('click', _handleDeleteConfirm);
+            }
+            if (dom.modalDeleteList && typeof bootstrap !== 'undefined') {
+                dom.modalInstanceDelete = new bootstrap.Modal(dom.modalDeleteList);
+            }
+
+            // Listeners Filtros
+            if (dom.filterSearch) {
+                dom.filterSearch.addEventListener('input', (e) => _handleFilterChange('search', e.target.value));
+            }
+            if (dom.filterStatus) {
+                dom.filterStatus.addEventListener('change', (e) => _handleFilterChange('status', e.target.value));
+            }
+            if (dom.filterYear) {
+                dom.filterYear.addEventListener('change', (e) => _handleFilterChange('year', e.target.value));
+            }
+            if (dom.btnClearFilters) {
+                dom.btnClearFilters.addEventListener('click', () => {
+                    // Reset inputs
+                    dom.filterSearch.value = '';
+                    dom.filterStatus.value = 'all';
+                    dom.filterYear.value = 'all';
+                    // Reset state
+                    state.filters = { search: '', status: 'all', year: 'all', stateFilter: null };
+                    _renderTable();
+                });
+            }
+
+            // Map Toggles & Elements
+            dom.toggleList = document.getElementById('view-list');
+            dom.toggleMap = document.getElementById('view-map');
+            dom.mapContainer = document.getElementById('map-section-container');
+            // dom.svgMap = document.getElementById('svg-map-mexico'); // No longer needed for SVG map
+            // dom.mapTooltip = document.getElementById('map-tooltip'); // No longer needed for SVG map
+
+            if (dom.toggleList) {
+                dom.toggleList.addEventListener('change', () => _switchView('list'));
+            }
+            if (dom.toggleMap) {
+                dom.toggleMap.addEventListener('change', () => _switchView('map'));
+            }
+
+            // Google Charts Integracion
+            if (dom.mapContainer && !document.getElementById('gcharts-loader')) {
+                const script = document.createElement('script');
+                script.id = 'gcharts-loader';
+                script.src = 'https://www.gstatic.com/charts/loader.js';
+                script.onload = () => {
+                    google.charts.load('current', {
+                        'packages': ['geochart'],
+                        // Optional: 'apiKey': 'YOUR_KEY_HERE' if high usage, but usually fine for free tier
+                    });
+                    google.charts.setOnLoadCallback(() => {
+                        state.googleChartsLoaded = true;
+                        console.log('Google Charts loaded.');
+                    });
+                };
+                document.head.appendChild(script);
+            }
+        }
+
+        function _switchView(mode) {
+            state.viewMode = mode;
+            if (mode === 'map') {
+                if (dom.tableContainer) dom.tableContainer.classList.add('d-none');
+                if (dom.mapContainer) {
+                    dom.mapContainer.classList.remove('d-none');
+                    _drawMap(); // Draw Map
+                }
+            } else {
+                if (dom.mapContainer) dom.mapContainer.classList.add('d-none');
+                if (dom.tableContainer) dom.tableContainer.classList.remove('d-none');
+            }
+        }
+
+        /**
+         * Dibuja el mapa usando Google Charts
+         */
+        function _drawMap() {
+            const container = document.getElementById('geochart-container');
+            const loader = document.getElementById('map-loader');
+
+            if (!container || !state.googleChartsLoaded || !google.visualization) {
+                if (loader) loader.textContent = 'Cargando librería de mapas...';
+                // Retry if library not ready
+                if (!state.googleChartsLoaded) setTimeout(_drawMap, 500);
+                return;
+            }
+
+            if (loader) loader.classList.add('d-none');
+
+            // 1. Prepare Data
+            const counts = {};
+            state.comunicados.forEach(c => {
+                let nombre = (c.estado || '').trim();
+                // Google Charts expects standard names
+                if (nombre.includes('Veracruz')) nombre = 'Veracruz';
+                if (nombre.includes('Michoacán')) nombre = 'Michoacán';
+                if (nombre.includes('México') && !nombre.includes('Ciudad')) nombre = 'State of Mexico'; // Special case
+                if (nombre.includes('CDMX') || nombre.includes('Ciudad de México')) nombre = 'Mexico City';
+
+                if (nombre) {
+                    counts[nombre] = (counts[nombre] || 0) + 1;
+                }
+            });
+
+            const chartData = [['State', 'Comunicados']];
+            Object.keys(counts).forEach(k => {
+                chartData.push([k, counts[k]]);
+            });
+
+            if (chartData.length === 1) {
+                chartData.push(['Mexico', 0]); // Empty map fallback
+            }
+
+            const data = google.visualization.arrayToDataTable(chartData);
+
+            // 2. Options
+            const options = {
+                region: 'MX', // Mexico
+                resolution: 'provinces',
+                displayMode: 'regions',
+                colorAxis: { colors: ['#cff4fc', '#0d6efd', '#0a58ca'] }, // Light blue to Dark blue
+                backgroundColor: 'transparent',
+                datalessRegionColor: '#f8f9fa',
+                defaultColor: '#f5f5f5',
+                tooltip: { textStyle: { color: '#444' }, showColorCode: true }
+            };
+
+            // 3. Draw
+            const chart = new google.visualization.GeoChart(container);
+
+            // Interaction
+            google.visualization.events.addListener(chart, 'select', () => {
+                const selection = chart.getSelection();
+                if (selection.length > 0) {
+                    const item = selection[0];
+                    if (item.row != null) {
+                        const selectedState = data.getValue(item.row, 0);
+                        console.log('Selected State:', selectedState);
+
+                        // Map Google name back to our filter format
+                        let filterName = selectedState;
+                        if (selectedState === 'State of Mexico') filterName = 'Estado de México';
+                        if (selectedState === 'Mexico City') filterName = 'Ciudad de México';
+
+                        // Filter
+                        state.filters.stateFilter = filterName;
+                        dom.toggleList.click(); // Switch to list
+                        _renderTable();
+                    }
+                }
+            });
+
+            chart.draw(data, options);
+        }
+
+        // Removed old SVG functions _setupMapInteractions, _resetMapActiveState, _updateMapStats
+
+        /**
+         * Verifica si el valor ingresado es nuevo o existe en el catálogo
+         */
+        function _verificarNuevoRegistro(tipo) {
+            let input, aviso, valoresUnicos;
+
+            // Configurar según el tipo de campo
+            switch (tipo) {
+                case 'distrito':
+                    input = dom.inputDistrito;
+                    aviso = dom.avisoDistrito;
+                    valoresUnicos = (state.catalogs.distritosRiego || []).map(d =>
+                        String(d.distritoRiego || d.nombre || '').toLowerCase().trim()
+                    );
+                    break;
+                case 'siniestro':
+                    input = dom.inputSiniestro;
+                    aviso = dom.avisoSiniestro;
+                    valoresUnicos = (state.catalogs.siniestros || []).map(s =>
+                        String(s.siniestro || s.nombre || '').toLowerCase().trim()
+                    );
+                    break;
+                case 'fenomeno':
+                    input = dom.inputFenomeno;
+                    aviso = dom.avisoFenomeno;
+                    valoresUnicos = [...new Set((state.catalogs.siniestros || [])
+                        .map(s => String(s.fenomeno || '').trim())
+                        .filter(f => f)
+                        .map(f => f.toLowerCase())
+                    )];
+                    break;
+                case 'fi':
+                    input = dom.inputFi;
+                    aviso = dom.avisoFi;
+                    valoresUnicos = [...new Set((state.catalogs.siniestros || [])
+                        .map(s => String(s.fi || '').trim())
+                        .filter(f => f)
+                        .map(f => f.toLowerCase())
+                    )];
+                    break;
+                case 'fondo':
+                    input = dom.inputFondo;
+                    aviso = dom.avisoFondo;
+                    valoresUnicos = [...new Set((state.catalogs.siniestros || [])
+                        .map(s => String(s.fondo || '').trim())
+                        .filter(f => f)
+                        .map(f => f.toLowerCase())
+                    )];
+                    break;
+                default:
+                    return;
+            }
+
+            if (!input || !aviso) {
+                console.log(`⚠️ _verificarNuevoRegistro(${tipo}): input o aviso no encontrado`, { input, aviso });
+                return;
+            }
+
+            const valor = input.value.trim();
+            if (!valor) {
+                aviso.classList.add('d-none');
+                return;
+            }
+
+            const existe = valoresUnicos.includes(valor.toLowerCase());
+
+            if (tipo === 'siniestro' || tipo === 'distrito') {
+                console.log(`🔍 Verificando ${tipo}:`, {
+                    valor,
+                    existe,
+                    valoresUnicos: valoresUnicos.slice(0, 5),
+                    totalEnCatalogo: valoresUnicos.length
+                });
+            }
+
+            if (!existe) {
+                aviso.classList.remove('d-none');
+                console.log(`✅ Mostrando aviso para ${tipo} nuevo`);
+            } else {
+                aviso.classList.add('d-none');
+                console.log(`ℹ️ ${tipo} existe en catálogo, ocultando aviso`);
+            }
+        }
+
+        /**
+         * Actualiza los campos readonly de siniestro cuando se selecciona uno existente
+         * Y habilita fenómeno/fi/fondo si es un siniestro NUEVO
+         */
+        function _actualizarDetallesSiniestro() {
+            const valor = dom.inputSiniestro.value.trim();
+
+            const campoFenomeno = document.getElementById('detalle-fenomeno');
+            const campoFi = document.getElementById('detalle-fi');
+            const campoFondo = document.getElementById('detalle-fondo');
+
+            if (!valor) {
+                // Si está vacío, limpiar y dejar readonly
+                if (campoFenomeno) {
+                    campoFenomeno.value = '';
+                    campoFenomeno.setAttribute('readonly', 'true');
+                    campoFenomeno.classList.remove('bg-white');
+                    campoFenomeno.classList.add('bg-light');
+                }
+                if (campoFi) {
+                    campoFi.value = '';
+                    campoFi.setAttribute('readonly', 'true');
+                    campoFi.classList.remove('bg-white');
+                    campoFi.classList.add('bg-light');
+                }
+                if (campoFondo) {
+                    campoFondo.value = '';
+                    campoFondo.setAttribute('readonly', 'true');
+                    campoFondo.classList.remove('bg-white');
+                    campoFondo.classList.add('bg-light');
+                }
+                // Ocultar advertencias
+                if (dom.avisoFenomeno) dom.avisoFenomeno.classList.add('d-none');
+                if (dom.avisoFi) dom.avisoFi.classList.add('d-none');
+                if (dom.avisoFondo) dom.avisoFondo.classList.add('d-none');
+                return;
+            }
+
+            const siniestroEncontrado = state.catalogs.siniestros.find(s =>
+                String(s.siniestro || s.nombre || '').toLowerCase() === valor.toLowerCase()
+            );
+
+            if (siniestroEncontrado) {
+                // SINIESTRO EXISTE → Auto-completar y dejar readonly
+                if (campoFenomeno) {
+                    campoFenomeno.value = siniestroEncontrado.fenomeno || '';
+                    campoFenomeno.setAttribute('readonly', 'true');
+                    campoFenomeno.classList.remove('bg-white');
+                    campoFenomeno.classList.add('bg-light');
+                }
+                if (campoFi) {
+                    campoFi.value = siniestroEncontrado.fi || '';
+                    campoFi.setAttribute('readonly', 'true');
+                    campoFi.classList.remove('bg-white');
+                    campoFi.classList.add('bg-light');
+                }
+                if (campoFondo) {
+                    campoFondo.value = siniestroEncontrado.fondo || '';
+                    campoFondo.setAttribute('readonly', 'true');
+                    campoFondo.classList.remove('bg-white');
+                    campoFondo.classList.add('bg-light');
+                }
+                // Ocultar advertencias
+                if (dom.avisoFenomeno) dom.avisoFenomeno.classList.add('d-none');
+                if (dom.avisoFi) dom.avisoFi.classList.add('d-none');
+                if (dom.avisoFondo) dom.avisoFondo.classList.add('d-none');
+            } else {
+                // SINIESTRO NUEVO → Limpiar, habilitar para edición y mostrar advertencias
+                if (campoFenomeno) {
+                    campoFenomeno.value = '';
+                    campoFenomeno.removeAttribute('readonly');
+                    campoFenomeno.classList.remove('bg-light');
+                    campoFenomeno.classList.add('bg-white');
+                    campoFenomeno.placeholder = 'Ingrese el tipo de fenómeno (ej: Granizo, Helada, Inundación...)';
+                }
+                if (campoFi) {
+                    campoFi.value = '';
+                    campoFi.removeAttribute('readonly');
+                    campoFi.classList.remove('bg-light');
+                    campoFi.classList.add('bg-white');
+                    campoFi.placeholder = 'Ingrese el FI correspondiente al siniestro';
+                }
+                if (campoFondo) {
+                    campoFondo.value = '';
+                    campoFondo.removeAttribute('readonly');
+                    campoFondo.classList.remove('bg-light');
+                    campoFondo.classList.add('bg-white');
+                    campoFondo.placeholder = 'Ingrese el fondo asegurador (ej: FONDEN, CADENA...)';
+                }
+                // Mostrar advertencias
+                if (dom.avisoFenomeno) dom.avisoFenomeno.classList.remove('d-none');
+                if (dom.avisoFi) dom.avisoFi.classList.remove('d-none');
+                if (dom.avisoFondo) dom.avisoFondo.classList.remove('d-none');
+            }
+        }
+
+        function _toggleEdicion(habilitar) {
+            state.isEditing = habilitar;
+            const inputs = document.querySelectorAll('#form-detalle-comunicado input:not([readonly]), #form-detalle-comunicado select, #form-detalle-comunicado textarea');
+            inputs.forEach(input => {
+                // Excepciones: campos que siempre son readonly (fenomeno, fondo, fi se llenan auto)
+                if (['detalle-fenomeno', 'detalle-fondo', 'detalle-fi'].includes(input.id)) return;
+                input.disabled = !habilitar;
+            });
+
+            // Ya no hay botones separados de dropdown, los inputs manejan el dropdown directamente
+
+            if (dom.btnEditar) {
+                if (habilitar) dom.btnEditar.classList.add('d-none');
+                else dom.btnEditar.classList.remove('d-none');
+            }
+
+            if (dom.btnGuardar) {
+                if (habilitar) dom.btnGuardar.classList.remove('d-none');
+                else dom.btnGuardar.classList.add('d-none');
+            }
+        }
+
+        /**
+         * Muestra el estado de carga
+         */
+        function _renderLoading() {
+            if (dom.loader) dom.loader.classList.remove('d-none');
+            if (dom.tableContainer) dom.tableContainer.classList.add('d-none');
+            if (dom.errorAlert) dom.errorAlert.classList.add('d-none');
+            if (dom.emptyState) dom.emptyState.classList.add('d-none');
+        }
+
+        /**
+         * Carga los catálogos
+         */
+        async function _loadCatalogs() {
+            console.log('Iniciando carga de catálogos...');
+            try {
+                const response = await serverCall('fetchComunicadoCatalogs');
+                console.log('Respuesta cruda de catálogos:', response);
+
+                // serverCall devuelve response.data directamente si success es true.
+                // Por lo tanto, 'response' aquí ES el objeto de datos.
+
+                if (response && response.debugLogs) {
+                    console.log('--- LOGS DEL SERVIDOR (fetchComunicadoCatalogs) ---');
+                    response.debugLogs.forEach(log => console.log(`SERVER: ${log}`));
+                    console.log('-------------------------------------------------');
+                }
+
+                // Verificamos si tenemos los arrays esperados
+                if (response && (response.estados || response.distritosRiego)) {
+                    state.catalogs = response;
+                    console.log('Catálogos asignados al estado:', state.catalogs);
+                    console.log(`Estados cargados: ${state.catalogs.estados ? state.catalogs.estados.length : 0}`);
+
+                    // Intentar poblar inmediatamente si el DOM está listo
+                    _poblarSelectEstados();
+                    _poblarDatalists();
+                } else {
+                    console.error('Respuesta de catálogos inválida o sin éxito:', response);
+                }
+            } catch (error) {
+                console.error('Error cargando catálogos:', error);
+            }
+        }
+
+        function _poblarSelectEstados() {
+            const select = document.getElementById('detalle-estado');
+            if (!select) {
+                console.warn('Select de estados NO encontrado en el DOM al intentar poblar.');
+                return;
+            }
+
+            if (!state.catalogs.estados || state.catalogs.estados.length === 0) {
+                console.warn('No hay estados en el catálogo para poblar.');
+                console.log('Estado del catálogo:', state.catalogs);
+                return;
+            }
+
+            console.log(`Poblando select de estados con ${state.catalogs.estados.length} opciones.`);
+
+            select.innerHTML = '<option value="">Seleccione un estado...</option>';
+            state.catalogs.estados.forEach(est => {
+                const option = document.createElement('option');
+                const id = est.id !== undefined ? est.id : (est.idEstado || est.ID || est.id_estado || est.clave || est.Clave);
+                const nombre = est.estado || est.nombre || est.Estado || est.entidad || est.Entidad;
+
+                if (id !== null && id !== undefined && String(id).trim() !== '') {
+                    option.value = String(id);
+                    option.textContent = nombre || 'Sin nombre';
+                    select.appendChild(option);
+                } else {
+                    console.warn('Estado sin ID válido omitido:', est);
+                }
+            });
+        }
+
+        function _poblarDatalists() {
+            // Poblar los combobox híbridos
+            _poblarCombobox('distrito', state.catalogs.distritosRiego, 'distritoRiego');
+            _poblarCombobox('siniestro', state.catalogs.siniestros, 'siniestro');
+
+            // Configurar el filtrado en tiempo real
+            _setupComboboxFilter('distrito', state.catalogs.distritosRiego, 'distritoRiego');
+            _setupComboboxFilter('siniestro', state.catalogs.siniestros, 'siniestro');
+        }
+
+        function _poblarCombobox(tipo, catalogo, campoNombre) {
+            const dropdownList = document.getElementById(`dropdown-${tipo}-list`);
+            if (!dropdownList || !catalogo) return;
+
+            dropdownList.innerHTML = '';
+            catalogo.forEach(item => {
+                const valor = String(item[campoNombre] || item.nombre || '');
+                if (!valor) return; // Saltar si está vacío
+
+                const li = document.createElement('li');
+                li.innerHTML = `<a class="dropdown-item" href="#" data-value="${escapeHtml(valor)}">${escapeHtml(valor)}</a>`;
+
+                li.querySelector('a').addEventListener('click', (e) => {
+                    e.preventDefault();
+                    const input = document.getElementById(`detalle-${tipo}`);
+                    input.value = valor;
+
+                    // Trigger change para actualizar detalles de siniestro si aplica
+                    if (tipo === 'siniestro') {
+                        _actualizarDetallesSiniestro();
+                    }
+                    _verificarNuevoRegistro(tipo);
+                });
+
+                dropdownList.appendChild(li);
+            });
+        }
+
+        function _setupComboboxFilter(tipo, catalogo, campoNombre) {
+            const input = document.getElementById(`detalle-${tipo}`);
+            const dropdownList = document.getElementById(`dropdown-${tipo}-list`);
+
+            console.log(`🔧 _setupComboboxFilter para ${tipo}:`, { input: !!input, dropdownList: !!dropdownList });
+
+            if (!input || !dropdownList) return;
+
+            // Evitar agregar listeners duplicados
+            if (input.dataset.filterConfigured === 'true') {
+                console.log(`⚠️ Filtro para ${tipo} ya configurado, saltando...`);
+                return;
+            }
+            input.dataset.filterConfigured = 'true';
+            console.log(`✅ Configurando listener para ${tipo}`);
+
+            input.addEventListener('input', () => {
+                console.log(`📝 Input event en ${tipo}: "${input.value}"`);
+
+                const searchTerm = input.value.toLowerCase();
+                const items = dropdownList.querySelectorAll('.dropdown-item');
+                let hasVisibleItems = false;
+
+                items.forEach(item => {
+                    const text = item.textContent.toLowerCase();
+                    if (text.includes(searchTerm)) {
+                        item.parentElement.style.display = '';
+                        hasVisibleItems = true;
+                    } else {
+                        item.parentElement.style.display = 'none';
+                    }
+                });
+
+                // NOTA: Las validaciones se manejan en _cacheDomElements
+            });
+        }
+
+        /**
+         * Maneja cambios en los filtros
+         */
+        function _handleFilterChange(key, value) {
+            state.filters[key] = key === 'search' ? value.toLowerCase() : value;
+            _renderTable(); // Re-renderizar tabla con nuevos filtros
+        }
+
+        /**
+         * Filtra los datos según el estado de los filtros
+         */
+        function _filterData() {
+            let data = [...state.comunicados];
+
+            // 1. Filtro Texto (Search)
+            if (state.filters.search) {
+                const term = state.filters.search;
+                data = data.filter(item => {
+                    const combinado = [
+                        item.comunicado,
+                        item.descripcion,
+                        item.contratista,
+                        item.estado,
+                        item.siniestro
+                    ].join(' ').toLowerCase();
+                    return combinado.includes(term);
+                });
+            }
+
+            // 2. Filtro Estado (Status)
+            if (state.filters.status !== 'all') {
+                data = data.filter(item => {
+                    const tieneSiniestro = item.siniestro && item.siniestro.trim() !== '';
+                    if (state.filters.status === 'con_siniestro') return tieneSiniestro;
+                    if (state.filters.status === 'sin_siniestro') return !tieneSiniestro;
+                    return true;
+                });
+            }
+
+            // 3. Filtro Año
+            if (state.filters.year !== 'all') {
+                data = data.filter(item => {
+                    if (!item.fecha) return false;
+                    const f = String(item.fecha); // Esperamos string YYYY-MM-DD o similar
+                    return f.includes(state.filters.year);
+                });
+            }
+
+            // 4. Filtro Mapa (Estado)
+            if (state.filters.stateFilter) {
+                data = data.filter(item => {
+                    const st = (item.estado || '').toLowerCase();
+                    const filter = state.filters.stateFilter.toLowerCase();
+                    return st.includes(filter) || filter.includes(st);
+                });
+            }
+
+            return data;
+        }
+
+        /**
+         * Calcula estadísticas para el dashboard
+         */
+        function _calculateStats(data) {
+            if (!dom.dashboard) return;
+
+            // Total
+            const total = data.length;
+
+            // Sin Siniestro (Importantes)
+            const sinSiniestro = data.filter(d => !d.siniestro || d.siniestro.trim() === '').length;
+
+            // Nuevos Siniestros (Lógica simulada: si el contratista o description dicen 'Nuevo' o si status es 'En Proceso'?)
+            // Ajustamos: Contamos siniestros que NO están en catálogo (si tuviéramos esa info en el item) logicamente
+            // Por ahora usaremos "En Proceso" si existiera campo estado, o simplemente "Sin Siniestro" como proxy de atención.
+            // Usemos lógica de fecha para "Nuevos" este mes en otra card.
+            // Para esta card usaremos items con 'estado' vacio o nulo si existe?
+            // Vamos a contar items CON siniestro pero sin Estimación (campo monto supervisión = 0 tal vez?)
+            const nuevosSiniestros = data.filter(d => d.siniestro && (!d.presupuesto || parseFloat(d.presupuesto) === 0)).length;
+
+
+            // Este Mes (Recientes)
+            const hoy = new Date();
+            const mesActual = hoy.getMonth() + 1; // 1-12
+            const anyoActual = hoy.getFullYear();
+            const esteMes = data.filter(d => {
+                const f = new Date(d.fecha); // Asumiendo formato parseable
+                return !isNaN(f) && f.getMonth() + 1 === mesActual && f.getFullYear() === anyoActual;
+            }).length;
+
+            // Render DOM
+            dom.statTotal.textContent = total;
+            dom.statSinSiniestro.textContent = sinSiniestro;
+            dom.statNuevosSiniestros.textContent = nuevosSiniestros;
+            dom.statMesActual.textContent = esteMes;
+
+            // Mostrar el dashboard si hay datos
+            if (total > 0) {
+                dom.dashboard.classList.remove('d-none');
+            }
+        }
+
+        /**
+         * Carga los comunicados desde el servidor
+         */
+        async function _loadComunicados() {
+            state.loading = true;
+            _renderLoading();
+
+            try {
+                if (state.catalogs.estados.length === 0) {
+                    await _loadCatalogs();
+                }
+
+                const comunicados = await serverCall('readAllComunicados');
+                state.comunicados = comunicados || [];
+                _calculateStats(state.comunicados); // Actualizar Dashboard
+                if (state.viewMode === 'map') _drawMap(); // Redraw if map active
+                _renderTable(); // Render tabla (filtrada)
+            } catch (error) {
+                console.error('Error cargando comunicados:', error);
+                state.error = error.message;
+                _renderError(error.message);
+            } finally {
+                state.loading = false;
+                if (dom.loader) dom.loader.classList.add('d-none');
+            }
+        }
+
+        /**
+         * Maneja el cambio de ordenamiento
+         */
+        function _handleSort(column) {
+            if (state.sort.column === column) {
+                // Toggle direction
+                state.sort.direction = state.sort.direction === 'asc' ? 'desc' : 'asc';
+            } else {
+                // New column, default to asc (except for date maybe? logic implies default asc usually)
+                state.sort.column = column;
+                state.sort.direction = 'asc';
+            }
+            _renderTable();
+        }
+
+        /**
+         * Actualiza los iconos de ordenamiento en la cabecera
+         */
+        function _updateSortIcons() {
+            // Reset all icons
+            const headers = ['descripcion', 'fecha', 'estado', 'contratista', 'presupuesto', 'montoSupervision'];
+            headers.forEach(key => {
+                const icon = document.getElementById(`sort-icon-${key}`);
+                if (icon) {
+                    icon.className = 'bi bi-arrow-down-up small text-muted ms-1'; // Default neutral
+                }
+            });
+
+            // Set active icon
+            const activeIcon = document.getElementById(`sort-icon-${state.sort.column}`);
+            if (activeIcon) {
+                if (state.sort.direction === 'asc') {
+                    activeIcon.className = 'bi bi-arrow-up text-primary ms-1';
+                } else {
+                    activeIcon.className = 'bi bi-arrow-down text-primary ms-1';
+                }
+            }
+        }
+
+        /**
+         * Renderiza la tabla de comunicados
+         */
+        /**
+         * Renderiza la tabla de comunicados
+         */
+        function _renderTable() {
+            if (!state.comunicados || state.comunicados.length === 0) {
+                if (dom.emptyState) dom.emptyState.classList.remove('d-none');
+                if (dom.totalBadge) dom.totalBadge.textContent = '0';
+                return;
+            }
+
+            if (dom.tableContainer) dom.tableContainer.classList.remove('d-none');
+
+            // Actualizar badge total (siempre muestra el total real o el filtrado? Mejor el filtrado para feedback visual)
+            const filteredData = _filterData();
+            if (dom.totalBadge) dom.totalBadge.textContent = filteredData.length;
+
+            // Ordenar por fecha descendente (más recientes primero)
+            const { column, direction } = state.sort;
+            const comunicadosOrdenados = [...filteredData].sort((a, b) => {
+                let valA = a[column];
+                let valB = b[column];
+
+                // Handle null/undefined
+                if (valA == null) valA = '';
+                if (valB == null) valB = '';
+
+                // Numeric sorting for money fields
+                if (['presupuesto', 'montoSupervision'].includes(column)) {
+                    valA = parseFloat(valA) || 0;
+                    valB = parseFloat(valB) || 0;
+                } else {
+                    // String sorting (case insensitive)
+                    valA = String(valA).toLowerCase();
+                    valB = String(valB).toLowerCase();
+                }
+
+                if (valA < valB) return direction === 'asc' ? -1 : 1;
+                if (valA > valB) return direction === 'asc' ? 1 : -1;
+                return 0;
+            });
+
+            _updateSortIcons();
+
+            const html = comunicadosOrdenados.map(com => `
+                <tr>
+                    <!-- Referencia y Comunicado Corto eliminados. Descripción es ahora la primera columna 'Comunicado' -->
+                    <td class="ps-4 fw-semibold text-primary text-truncate" style="max-width: 350px;" title="${escapeHtml(com.descripcion || '')}">
+                        ${escapeHtml(com.descripcion || '')}
+                    </td>
+                    <td class="text-nowrap small">${escapeHtml(com.fecha || '')}</td>
+                    <td class="small">${escapeHtml(com.estado || '')}</td>
+                    <td class="small text-truncate" style="max-width: 200px;" title="${escapeHtml(com.contratista || '')}">${escapeHtml(com.contratista || '')}</td>
+                    <td class="small font-monospace text-end text-primary fw-bold" title="Total Obra + Supervisión">${_formatCurrency(com.presupuesto)}</td>
+                    <td class="small font-monospace text-end text-muted">${_formatCurrency(com.montoSupervision)}</td>
+                    <td class="text-end pe-4">
+                        <button class="btn btn-sm btn-outline-primary me-1" onclick="Comunicados.abrirModal(${com.id || ''})" title="Edición rápida">
+                            <i class="bi bi-eye"></i> Ver
+                        </button>
+                        <button class="btn btn-sm btn-primary" onclick="Comunicados.verDetalle(${com.id || ''})" title="Gestión completa">
+                            <i class="bi bi-gear-fill"></i> Gestión
+                        </button>
+                        <button class="btn btn-sm btn-outline-danger ms-1" onclick="Comunicados.confirmarEliminar(${com.id || ''})" title="Eliminar">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                    </td>
+                </tr>
+            `).join('');
+
+            if (dom.tbody) dom.tbody.innerHTML = html;
+        }
+
+        /**
+         * Abre el detalle del comunicado en MODAL (Vista Rápida)
+         */
+        function abrirModal(idComunicado) {
+            if (!idComunicado) return;
+            const com = state.comunicados.find(c => String(c.id) === String(idComunicado));
+            if (!com) {
+                console.warn('Comunicado no encontrado en memoria:', idComunicado);
+                return;
+            }
+
+            comunicadoActual = com;
+            _poblarFormulario(com);
+
+            // Asegurar modo lectura al abrir
+            _toggleEdicion(false);
+
+            // FIX: Asegurar que se muestra el contenido y se oculta el loader
+            if (dom.modalLoader) dom.modalLoader.classList.add('d-none');
+            if (dom.modalContent) dom.modalContent.classList.remove('d-none');
+            if (dom.modalError) dom.modalError.classList.add('d-none');
+
+            if (modalInstance) {
+                modalInstance.show();
+            } else {
+                console.error('Instancia del modal no inicializada');
+            }
+        }
+
+        /**
+         * Formatea moneda
+         */
+        function _formatCurrency(val) {
+            const num = parseFloat(val) || 0;
+            return '$' + num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        }
+
+        /**
+         * Muestra un mensaje de error
+         */
+        function _renderError(message) {
+            if (dom.errorAlert) {
+                dom.errorAlert.textContent = message;
+                dom.errorAlert.classList.remove('d-none');
+            }
+        }
+
+        /**
+         * Formatea una fecha para el input date (YYYY-MM-DD)
+         */
+        function _formatearFechaInput(fecha) {
+            if (!fecha) return '';
+            try {
+                if (typeof fecha === 'string') {
+                    if (fecha.includes('/')) {
+                        const partes = fecha.split('/');
+                        if (partes.length === 3) {
+                            const dia = partes[0].padStart(2, '0');
+                            const mes = partes[1].padStart(2, '0');
+                            const anio = partes[2];
+                            return `${anio}-${mes}-${dia}`;
+                        }
+                    }
+                    if (fecha.includes('T')) {
+                        return fecha.split('T')[0];
+                    }
+                    return fecha;
+                }
+                if (fecha instanceof Date) {
+                    return fecha.toISOString().split('T')[0];
+                }
+            } catch (e) {
+                console.error('Error formateando fecha:', fecha, e);
+            }
+            return '';
+        }
+
+        /**
+         * Navega a la vista de detalle del comunicado (Gestión Completa)
+         */
+        async function verDetalle(idComunicado) {
+            if (!idComunicado) return;
+            // Guardar ID en sesión para que la nueva vista lo recupere
+            sessionStorage.setItem('currentComunicadoId', String(idComunicado));
+            // Navegar a la nueva ruta
+            location.hash = '#/comunicado-detalle';
+        }
+
+        /**
+         * Pobla el formulario del modal con los datos del comunicado
+         */
+        function _poblarFormulario(com) {
+            // Campos básicos
+            const setVal = (id, val) => {
+                const el = document.getElementById(id);
+                if (el) el.value = val || '';
+            };
+
+            setVal('detalle-comunicado', com.comunicado);
+            setVal('detalle-fecha', _formatearFechaInput(com.fecha));
+            setVal('detalle-descripcion', com.descripcion);
+
+            // Estado (Select)
+            setVal('detalle-estado', com.idEstado);
+
+            // Combobox Híbridos
+            setVal('detalle-distrito', com.distrito);
+            setVal('detalle-siniestro', com.siniestro);
+
+            // Siniestro Detalles (Fenomeno, FI, Fondo)
+            setVal('detalle-fenomeno', com.fenomeno);
+            setVal('detalle-fi', com.fi);
+            setVal('detalle-fondo', com.fondo);
+
+            // Forzar actualización visual de readonly/bg-color para siniestro
+            _actualizarDetallesSiniestro();
+        }
+
+        /**
+         * Guarda los cambios del comunicado
+         */
+        async function _guardarCambios() {
+            if (!comunicadoActual) return;
+
+            dom.btnGuardar.disabled = true;
+            dom.btnGuardar.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Guardando...';
+
+            try {
+                const updates = {
+                    comunicado: document.getElementById('detalle-comunicado').value,
+                    fecha: document.getElementById('detalle-fecha').value,
+                    idEstado: document.getElementById('detalle-estado').value,
+                    descripcion: document.getElementById('detalle-descripcion').value,
+                    distrito: document.getElementById('detalle-distrito').value,
+                    siniestro: document.getElementById('detalle-siniestro').value,
+                    fenomeno: document.getElementById('detalle-fenomeno').value,
+                    fi: document.getElementById('detalle-fi').value,
+                    fondo: document.getElementById('detalle-fondo').value
+                };
+
+                console.log('💾 Guardando comunicado con datos:', updates);
+
+                await serverCall('updateComunicado', comunicadoActual.id, updates);
+
+                if (modalInstance) modalInstance.hide();
+                await _loadComunicados();
+
+                // Usar SweetAlert2 si está disponible (globalThis.Swal)
+                const swal = globalThis.Swal;
+                if (swal) {
+                    swal.fire({
+                        icon: 'success',
+                        title: 'Actualizado',
+                        text: 'Comunicado actualizado correctamente',
+                        timer: 1500,
+                        showConfirmButton: false
+                    });
+                } else {
+                    alert('Comunicado actualizado correctamente');
+                }
+
+            } catch (error) {
+                console.error('Error guardando cambios:', error);
+                dom.modalError.textContent = error.message;
+                dom.modalError.classList.remove('d-none');
+            } finally {
+                dom.btnGuardar.disabled = false;
+                dom.btnGuardar.innerHTML = '<i class="bi bi-save"></i> Guardar Cambios';
+            }
+        }
+
+        /**
+         * Lógica de Eliminación (Listado)
+         */
+        let itemsToDeleteId = null;
+
+        function confirmarEliminar(id) {
+            console.log('Solicitud de eliminación para:', id);
+            if (!id) return;
+            itemsToDeleteId = id;
+
+            if (dom.modalInstanceDelete) {
+                dom.modalInstanceDelete.show();
+            } else {
+                // Fallback
+                if (confirm('¿Confirma que desea eliminar este comunicado y TODOS sus datos asociados?\nEsta acción no se puede deshacer.')) {
+                    _handleDeleteConfirm();
+                }
+            }
+        }
+
+        async function _handleDeleteConfirm() {
+            if (!itemsToDeleteId) return;
+
+            const btn = dom.btnConfirmDeleteList;
+            const originalText = btn ? btn.innerHTML : '';
+            if (btn) {
+                btn.disabled = true;
+                btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Eliminando...';
+            }
+
+            try {
+                const res = await serverCall('deleteComunicado', itemsToDeleteId);
+                console.log('Delete result:', res);
+
+                if (dom.modalInstanceDelete) dom.modalInstanceDelete.hide();
+
+                // Mostrar éxito
+                const swal = globalThis.Swal;
+                if (swal) {
+                    swal.fire({
+                        icon: 'success',
+                        title: 'Eliminado',
+                        text: 'El comunicado y todos sus datos han sido eliminados.',
+                        timer: 1500,
+                        showConfirmButton: false
+                    });
+                } else {
+                    alert('Comunicado eliminado correctamente.');
+                }
+
+                // Recargar tabla
+                _loadComunicados();
+
+            } catch (error) {
+                console.error('Error eliminando:', error);
+                alert('Error al eliminar: ' + error.message);
+            } finally {
+                itemsToDeleteId = null;
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerHTML = originalText || 'Eliminar';
+                }
+            }
+        }
+
+        /**
+         * Función de inicialización principal
+         */
+        const init = async (container) => {
+            try {
+                await _mount(container);
+                _cacheDomElements();
+                await _loadComunicados(); // Esto cargará catálogos también
+
+                // Inicializar módulo de importación si está disponible (Modal)
+                if (globalThis.Importacion) {
+                    Importacion.mount();
+                }
+
+                console.log('✅ Componente Comunicados listo');
+            } catch (error) {
+                console.error('❌ FALLO CRÍTICO EN LA CARGA de Comunicados:', error);
+                container.innerHTML = `<div class="alert alert-danger">Error fatal al cargar: ${error.message}</div>`;
+            }
+        };
+
+        const mount = async (container) => init(container);
+
+        // Exportar componente
+        return {
+            init,
+            mount,
+            abrirModal,
+            verDetalle,
+            confirmarEliminar,
+            recargar: _loadComunicados,
+            ordenar: _handleSort
+        };
+
+    })();
+</script>

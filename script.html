@@ -1,0 +1,577 @@
+<script>
+
+    // =========================================================================
+    // ÁREA DE UTILIDADES Y CONFIGURACIÓN
+    // =========================================================================
+
+    // --- 1.1: Declaraciones de Estado Global ---
+    let appRoot;
+    let appLoader;
+    let componentScriptAnchor;
+
+    // ============================================================
+    // 🔧 MODO DESARROLLO
+    // ============================================================
+    const DEV_MODE = true;
+    // ============================================================
+
+    // Control de logging basado en DOMContentLoaded
+    let isDOMReady = false;
+    let logQueue = [];
+
+    /**
+     * Wrapper para console.log que solo imprime si DEV_MODE está activo
+     */
+    function devLog(...args) {
+        if (!DEV_MODE) return;
+        if (isDOMReady) {
+            console.log(...args);
+        }
+    }
+
+    // Activar logging cuando el DOM esté listo
+    document.addEventListener('DOMContentLoaded', () => {
+        isDOMReady = true;
+        logQueue.forEach(args => console.log(...args));
+        logQueue = [];
+    }, { once: true });
+
+    // --- 1.2: Caches Globales ---
+    const TEMPLATES = Object.create(null);
+    globalThis.TEMPLATES = TEMPLATES; // Exponer globalmente para componentes
+    const loadedScripts = new Set();
+
+    // --- 1.3: Utilidad de Saneamiento ---
+    function escapeHtml(s) {
+        if (!s) return '';
+        return String(s)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
+    }
+
+    // --- 1.4: Utilidades DOM ---
+    function removeById(id) {
+        const el = document.getElementById(id);
+        if (el) el.remove();
+    }
+
+    function removeComponentScript() {
+        removeById('componentScript');
+    }
+
+    function extractScriptContent(html) {
+        const div = document.createElement('div');
+        div.innerHTML = html;
+        const script = div.querySelector('script');
+
+        // DEBUG EXTRACCION
+        if (!script) {
+            console.error('❌ extractScriptContent: No se encontró etiqueta <script> en el fragmento HTML.');
+            devLog('Fragmento recibido (primeros 100 caracteres):', html.substring(0, 100));
+            return '';
+        }
+        const content = script.textContent;
+        devLog(`✅ Contenido extraído de <script>. Longitud: ${content.length}`);
+        return content;
+    }
+
+    function setAppLoading(isLoading) {
+        console.log(`🟡 setAppLoading llamado con isLoading=${isLoading}`);
+        if (appLoader) {
+            console.log('🟡 appLoader encontrado, aplicando cambios...');
+            if (isLoading) {
+                // Resetear mensaje a genérico antes de mostrar
+                const loaderTitle = document.getElementById('app-loader-title');
+                const loaderMessage = document.getElementById('app-loader-message');
+                if (loaderTitle) loaderTitle.textContent = 'Cargando...';
+                if (loaderMessage) loaderMessage.textContent = 'Por favor espera un momento.';
+
+                // Mostrar loader
+                appLoader.classList.remove('d-none');
+                appLoader.style.opacity = '1';
+                appLoader.style.visibility = 'visible';
+            } else {
+                // Ocultar loader con fade suave
+                appLoader.style.opacity = '0';
+                // Esperar a que complete la transición antes de ocultar completamente
+                setTimeout(() => {
+                    appLoader.classList.add('d-none');
+                    appLoader.style.visibility = 'hidden';
+                }, 250); // Mismo timing que --transition-base
+                console.log('✅ Loader ocultado correctamente');
+            }
+        } else {
+            console.error('❌ appLoader NO encontrado en setAppLoading');
+        }
+    }
+
+    function injectComponentScript(code) {
+        if (!code) {
+            console.error('❌ injectComponentScript: code es null/vacío');
+            return;
+        }
+        removeComponentScript();
+        const scriptEl = document.createElement('script');
+        scriptEl.id = 'componentScript';
+
+        const extracted = extractScriptContent(code);
+        if (!extracted) {
+            console.error('❌ injectComponentScript: El contenido extraído está vacío.');
+            return;
+        }
+
+        devLog(`Inyectando script de componente (Longitud final: ${extracted.length})`);
+        scriptEl.textContent = extracted;
+        (componentScriptAnchor?.parentNode || document.body || document.documentElement).appendChild(scriptEl);
+    }
+
+    function loadServerFragment(name) {
+        return new Promise((resolve, reject) => {
+            google.script.run
+                .withSuccessHandler(result => {
+                    if (result && result[name]) {
+                        resolve(result[name]);
+                    } else {
+                        resolve('');
+                    }
+                })
+                .withFailureHandler(reject)
+                .getTemplates([name]);
+        });
+    }
+
+    // --- 1.5: Componentes Estáticos ---
+    // Home component moved to dynamic module (dashboard.js.html)
+
+    const About = {
+        render: () => `
+            <div class="card mt-4">
+                <div class="card-body">
+                    <h5 class="card-title">Acerca de</h5>
+                    <p class="card-text">Versión 1.0.0</p>
+                    <p class="card-text">Desarrollado para gestión eficiente de comunicados.</p>
+                </div>
+            </div>
+        `
+    };
+
+    const NotFound = {
+        render: () => `
+            <div class="alert alert-warning mt-4">
+                <h4 class="alert-heading">404 - Página no encontrada</h4>
+                <p>La ruta solicitada no existe.</p>
+                <hr>
+                <p class="mb-0"><a href="#/">Volver al inicio</a></p>
+            </div>
+        `
+    };
+
+    // --- 1.6: Configuración de Rutas ---
+    const staticRoutes = {
+        // '#/': Home,  <-- Ahora es dinámica
+        '#/about': About
+    };
+
+    const lazyRouteConfigs = {
+        '#/': {
+            script: 'dashboard.js',
+            template: 'home',
+            global: 'Dashboard'
+        },
+        '#/cuentas': {
+            script: 'cuentas.js',
+            template: 'cuentas',
+            global: 'Cuentas'
+        },
+        '#/comunicados': {
+            script: 'comunicados.js',
+            template: 'comunicados',
+            global: 'Comunicados'
+        },
+        '#/comunicado-detalle': {
+            script: 'comunicado_detalle.js',
+            template: 'comunicado_detalle',
+            global: 'ComunicadoDetalle'
+        },
+        '#/catalogos': {
+            script: 'catalogos.js',
+            template: 'catalogos',
+            global: 'Catalogos'
+        },
+        '#/importaciones': {
+            script: 'importaciones.js',
+            template: 'importaciones',
+            global: 'Importaciones'
+        }
+
+    };
+
+    // --- 1.7: Utilerías de Comunicación (Google) ---
+    if (!globalThis.fetchTemplates) {
+        globalThis.fetchTemplates = function fetchTemplates(name) {
+            if (!name) return Promise.resolve(null);
+            if (TEMPLATES[name]) return Promise.resolve(TEMPLATES[name]);
+            return new Promise((resolve, reject) => {
+                google.script.run
+                    .withSuccessHandler(result => {
+                        const template = result && result[name] ? result[name] : null;
+                        if (template) {
+                            TEMPLATES[name] = template;
+                        }
+                        resolve(template);
+                    })
+                    .withFailureHandler(reject)
+                    .getTemplates([name]);
+            });
+        };
+    }
+
+    if (!globalThis.runServer) {
+        globalThis.runServer = function runServer(functionName, ...args) {
+            return new Promise((resolve, reject) => {
+                const runner = google.script.run
+                    .withSuccessHandler(resolve)
+                    .withFailureHandler(reject);
+                if (typeof runner[functionName] === 'function') {
+                    runner[functionName](...args);
+                } else {
+                    reject(new Error(`Función de servidor "${functionName}" no encontrada.`));
+                }
+            });
+        };
+    }
+
+    if (!globalThis.serverCall) {
+        globalThis.serverCall = function serverCall(funcName, ...args) {
+            devLog(`Invocando serverCall a ${funcName} con argumentos: `, args);
+            return new Promise((resolve, reject) => {
+                google.script.run
+                    .withSuccessHandler(response => {
+                        devLog(`serverCall ${funcName}: respuesta recibida`, response);
+                        if (response && response.success) {
+                            resolve(response.data);
+                            return;
+                        }
+                        const isNullish = response === null || response === undefined;
+                        if (isNullish) {
+                            console.error(`serverCall ${funcName}: la función devolvió una respuesta vacía.`);
+                            reject(new Error(`La función ${funcName} devolvió una respuesta vacía.`));
+                            return;
+                        }
+                        let message = '';
+                        if (response && typeof response === 'object') {
+                            message = response.message || response.error || '';
+                            if (!message) {
+                                try {
+                                    message = `Respuesta inesperada: ${JSON.stringify(response)} `;
+                                } catch (jsonError) {
+                                    message = 'Respuesta inesperada sin contenido legible.';
+                                }
+                            }
+                        }
+                        const finalMessage = message ? `Error en ${funcName}: ${message} ` : `Error en la operación: ${funcName}.`;
+                        reject(new Error(finalMessage));
+                    })
+                    .withFailureHandler(error => {
+                        console.error(`serverCall ${funcName}: fallo en la invocación`, error);
+                        const message = error?.message ? `${error.message} (función ${funcName})` : `Error inesperado al invocar ${funcName} `;
+                        reject(new Error(message));
+                    })
+                [funcName](...args);
+            });
+        };
+    }
+
+    if (!globalThis.serverApi) {
+        globalThis.serverApi = {
+            readCuentas() {
+                return new Promise((resolve, reject) => {
+                    google.script.run
+                        .withSuccessHandler(resolve)
+                        .withFailureHandler(reject)
+                        .readCuentas();
+                });
+            },
+            readAllComunicados() {
+                return globalThis.serverCall('readAllComunicados');
+            }
+        };
+    }
+
+    // =========================================================================
+    // LÓGICA PRINCIPAL (7 PASOS)
+    // =========================================================================
+
+    function app_Init() {
+        devLog('--- PASO 1: Inicio de la Aplicación ---');
+        appRoot = document.getElementById('app');
+        appLoader = document.getElementById('app-loader');
+        componentScriptAnchor = document.getElementById('componentScript');
+
+        console.log('🔍 Verificando elementos:');
+        console.log('  - appRoot:', appRoot ? '✅ Encontrado' : '❌ NO encontrado');
+        console.log('  - appLoader:', appLoader ? '✅ Encontrado' : '❌ NO encontrado');
+        console.log('  - componentScriptAnchor:', componentScriptAnchor ? '✅ Encontrado' : '❌ NO encontrado');
+
+        devLog('✅ PASO 1 completado');
+    }
+
+
+
+    /**
+     * Carga un script JS dinámicamente si no está cargado aún.
+     * @param {string} scriptName Nombre del archivo script (ej: 'comunicados.js')
+     */
+    async function loadDynamicScript(scriptName) {
+        if (loadedScripts.has(scriptName)) {
+            devLog(`Script ${scriptName} ya estaba cargado.`);
+            return true;
+        }
+
+        devLog(`Cargando script dinámico: ${scriptName}`);
+        try {
+            const code = await loadServerFragment(scriptName);
+            if (!code || code.length < 10) {
+                console.error(`⚠️ Script dinámico ${scriptName} parece vacío o muy corto.`);
+                return false;
+            }
+            injectComponentScript(code);
+            loadedScripts.add(scriptName);
+            // Dar tiempo al navegador para parsear y ejecutar
+            await new Promise(r => setTimeout(r, 100));
+            devLog(`✅ Script dinámico ${scriptName} cargado correctamente.`);
+            return true;
+        } catch (err) {
+            console.error(`❌ Fallo al cargar script dinámico ${scriptName}`, err);
+            return false;
+        }
+    }
+
+    // Exponer globalmente
+    globalThis.loadDynamicScript = loadDynamicScript;
+
+    async function app_ResolveRoute(hash) {
+        devLog(`--- PASO 2: Resolviendo Ruta[${hash}]--- `);
+        if (staticRoutes[hash]) {
+            devLog('✅ PASO 2 completado (Ruta Estática)');
+            return staticRoutes[hash];
+        }
+        if (lazyRouteConfigs[hash]) {
+            const config = lazyRouteConfigs[hash];
+            devLog(`Ruta dinámica detectada. Config: `, config);
+            if (config.script && !loadedScripts.has(config.script)) {
+                try {
+                    const code = await loadServerFragment(config.script);
+                    devLog(`Script cargado para ${hash}. Longitud: ${code ? code.length : 0}`);
+                    if (!code || code.length < 10) {
+                        console.error(`⚠️ Script ${config.script} parece vacío o muy corto.`);
+                    }
+                    injectComponentScript(code);
+                    loadedScripts.add(config.script);
+                    // Give the browser a moment to execute the script
+                    await new Promise(r => setTimeout(r, 100)); // Increased timeout
+
+                    // DEBUG: Verificar si se definió
+                    if (globalThis[config.global] || window[config.global]) {
+                        devLog(`✅ Global ${config.global} detectado después de carga.`);
+                    } else {
+                        console.error(`❌ Global ${config.global} NO detectado después de carga y espera.`);
+                        // Intento de fallback: buscar si está en window explícitamente y asignar a globalThis
+                        if (window[config.global]) globalThis[config.global] = window[config.global];
+                    }
+
+                } catch (err) {
+                    console.error(`Fallo al cargar script para ${hash} `, err);
+                    return NotFound;
+                }
+            }
+            const component = globalThis[config.global];
+            if (component) {
+                devLog('✅ PASO 2 completado (Ruta Dinámica)');
+                return component;
+            } else {
+                console.error(`Script ${config.script} cargado, pero global.${config.global} no se encontró.`);
+                return NotFound;
+            }
+        }
+        devLog('✅ PASO 2 completado (Ruta No Encontrada)');
+        return NotFound;
+    }
+
+    async function app_AcquireTemplate(hash) {
+        devLog(`--- PASO 3: Adquiriendo Plantilla[${hash}]--- `);
+        const config = lazyRouteConfigs[hash];
+        if (config && config.template && !TEMPLATES[config.template]) {
+            try {
+                await fetchTemplates(config.template);
+                devLog('✅ PASO 3 completado (Plantilla descargada)');
+            } catch (err) {
+                if (DEV_MODE) console.error(`❌ PASO 3 Fallo al cargar plantilla ${config.template} `, err);
+            }
+        } else {
+            devLog('✅ PASO 3 completado (Estática o en Caché)');
+        }
+    }
+
+    function app_RenderTemplate(component) {
+        devLog('--- PASO 4: Renderizando Plantilla ---');
+        if (appRoot.__mounted && typeof appRoot.__mounted.unmount === 'function') {
+            try { appRoot.__mounted.unmount(appRoot); } catch (e) { console.error('unmount error', e); }
+        }
+        removeById('component-script');
+        removeById('component-style');
+        const renderFn = typeof component.renderizar === 'function' ? component.renderizar : component.render;
+        if (typeof renderFn === 'function') {
+            appRoot.innerHTML = renderFn.call(component);
+        } else {
+            appRoot.innerHTML = '<section class="card"><h1>Error: Componente sin render()</h1></section>';
+        }
+        appRoot.__mounted = component;
+        devLog('✅ PASO 4 completado');
+    }
+
+    async function app_MountComponent(component) {
+        devLog('--- PASO 5: Montando Componente ---');
+        if (typeof component.mount === 'function') {
+            try {
+                await component.mount(appRoot);
+            } catch (e) {
+                console.error('Error en mount():', e);
+            }
+        }
+        devLog('✅ PASO 5 completado');
+    }
+
+    function setActiveNav() {
+        const hash = location.hash || '#/';
+        // Buscar enlaces en el nuevo sidebar (.sidebar-link) y en el antiguo (.nav a)
+        document.querySelectorAll('.sidebar-link, .nav a').forEach(a => {
+            a.classList.toggle('active', a.getAttribute('href') === hash);
+        });
+    }
+
+    async function app_PostMountTasks(component) {
+        devLog('--- PASO 6: Tareas Post-Montaje ---');
+        const afterRenderFn = typeof component.despuesDeRenderizar === 'function' ? component.despuesDeRenderizar : component.afterRender;
+        if (typeof afterRenderFn === 'function') {
+            try {
+                const result = afterRenderFn.call(component);
+                if (result && typeof result.then === 'function') {
+                    await result;
+                }
+            } catch (e) { console.error('afterRender error', e); }
+        }
+        devLog('✅ PASO 6 completado');
+    }
+
+    function app_AppReady() {
+        devLog('--- PASO 7: Aplicación Lista ---');
+        setAppLoading(false);
+        devLog('✅ PASO 7 completado');
+    }
+
+    // --- Función Orquestadora ---
+    let currentNavigationId = 0; // ID para cancelar navegaciones anteriores
+
+    async function navigate(hash) {
+        // Incrementar ID para esta navegación
+        const thisNavigationId = ++currentNavigationId;
+
+        devLog(`\n\n ==== Navegando a: ${hash} (nav-id: ${thisNavigationId}) ====`);
+
+        // ✅ MEJORADO: Activar la navegación INMEDIATAMENTE para feedback visual instantáneo
+        setActiveNav();
+
+        setAppLoading(true);
+
+        try {
+            // Verificar si esta navegación sigue siendo válida
+            const isCancelled = () => currentNavigationId !== thisNavigationId;
+
+            const component = await app_ResolveRoute(hash);
+            if (isCancelled()) {
+                devLog(`⏹️ Navegación ${thisNavigationId} cancelada (ResolveRoute)`);
+                return;
+            }
+
+            await app_AcquireTemplate(hash);
+            if (isCancelled()) {
+                devLog(`⏹️ Navegación ${thisNavigationId} cancelada (AcquireTemplate)`);
+                return;
+            }
+
+            app_RenderTemplate(component);
+
+            await app_MountComponent(component);
+            if (isCancelled()) {
+                devLog(`⏹️ Navegación ${thisNavigationId} cancelada (MountComponent)`);
+                return;
+            }
+
+            await app_PostMountTasks(component);
+
+            if (isInitialLoad) {
+                app_AppReady();
+            } else {
+                setAppLoading(false); // Ocultar AQUÍ, al final
+                devLog('--- Navegación completada ---');
+            }
+        } catch (error) {
+            // Solo mostrar error si esta navegación sigue siendo la activa
+            if (currentNavigationId === thisNavigationId) {
+                console.error('Error en navegación:', error);
+                setAppLoading(false);
+                appRoot.innerHTML = `<div class="alert alert-danger">Error al cargar la vista: ${error.message}</div>`;
+            }
+        }
+    }
+
+    // Bandera para evitar doble navegación en la carga inicial
+    let isInitialLoad = true;
+
+    // Escuchar cambios de navegación
+    window.addEventListener('hashchange', () => {
+        if (isInitialLoad) {
+            isInitialLoad = false;
+            return;
+        }
+        navigate(location.hash).catch(err => console.error(err));
+    });
+
+    // Iniciar la carga de la página por primera vez
+    document.addEventListener('DOMContentLoaded', () => {
+        devLog('Evento: DOMContentLoaded. Iniciando carga...');
+        app_Init();
+
+        // Safety timeout: Force hide loader after 5 seconds if still loading
+        setTimeout(() => {
+            if (isInitialLoad) {
+                console.warn('⚠️ Safety timeout triggered: Forcing loader hide.');
+                setAppLoading(false);
+                if (appRoot && appRoot.innerHTML.trim() === '') {
+                    appRoot.innerHTML = '<div class="alert alert-warning">La aplicación tardó demasiado en cargar. Intente recargar la página.</div>';
+                }
+                isInitialLoad = false;
+            }
+        }, 5000);
+
+        if (!location.hash) {
+            location.hash = '#/';
+        }
+        navigate(location.hash)
+            .then(() => {
+                isInitialLoad = false;
+            })
+            .catch(err => {
+                console.error('Error crítico en carga inicial:', err);
+                setAppLoading(false);
+                if (appRoot) {
+                    appRoot.innerHTML = `<div class="alert alert-danger">Error crítico: ${err.message}</div>`;
+                }
+                isInitialLoad = false;
+            });
+    });
+</script>

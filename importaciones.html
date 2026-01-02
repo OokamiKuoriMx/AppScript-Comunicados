@@ -1,0 +1,196 @@
+<div class="container-fluid fade-in">
+    <!-- Header Section -->
+    <div class="row mb-4">
+        <div class="col-12">
+            <h2 class="fw-bold mb-1 text-gradient">Centro de Importación</h2>
+            <p class="text-muted mb-0">Seleccione el tipo de archivo que desea procesar de manera masiva.</p>
+        </div>
+    </div>
+
+    <!-- Cards Container -->
+    <div class="row g-4 justify-content-center">
+
+        <!-- Opción 1: Comunicados -->
+        <div class="col-md-5 col-lg-4">
+            <div class="card h-100 border-0 shadow-lg hover-card card-import-option"
+                onclick="Importaciones.abrirComunicados()">
+                <div class="card-body text-center p-5">
+                    <div class="icon-circle mb-4 bg-primary bg-opacity-10 text-primary">
+                        <i class="bi bi-file-earmark-text-fill display-4"></i>
+                    </div>
+                    <h4 class="fw-bold mb-3">Comunicados</h4>
+                    <p class="text-muted mb-4">
+                        Importe masivamente comunicados, siniestros y referencias desde archivos Excel o CSV.
+                    </p>
+                    <button class="btn btn-outline-primary rounded-pill px-4">
+                        <i class="bi bi-upload me-2"></i>Iniciar Carga
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Opción 2: Facturas -->
+        <div class="col-md-5 col-lg-4">
+            <div class="card h-100 border-0 shadow-lg hover-card card-import-option"
+                onclick="Importaciones.abrirFacturas()">
+                <div class="card-body text-center p-5">
+                    <div class="icon-circle mb-4 bg-success bg-opacity-10 text-success">
+                        <i class="bi bi-receipt display-4"></i>
+                    </div>
+                    <h4 class="fw-bold mb-3">Facturas</h4>
+                    <p class="text-muted mb-4">
+                        Cargue facturas y asócielas automáticamente a comunicados existentes mediante UUID.
+                    </p>
+                    <button class="btn btn-outline-success rounded-pill px-4">
+                        <i class="bi bi-upload me-2"></i>Iniciar Carga
+                    </button>
+                </div>
+            </div>
+        </div>
+
+    </div>
+</div>
+
+<!-- Modal específico para Facturas (El de Comunicados reutiliza el existente global) -->
+<div class="modal fade" id="modalImportacionFacturas" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+        <div class="modal-content border-0 shadow-lg">
+
+            <!-- HEADER FACTURAS -->
+            <div class="modal-header bg-gradient-success text-white border-0 py-3">
+                <div class="d-flex align-items-center w-100 justify-content-between">
+                    <div>
+                        <h5 class="modal-title fw-bold mb-0">
+                            <i class="bi bi-receipt-cutoff me-2"></i>Importación de Facturas
+                        </h5>
+                        <p class="mb-0 small opacity-75 mt-1">Carga de metadatos de facturación.</p>
+                    </div>
+                    <div class="d-flex gap-2">
+                        <button class="btn btn-sm btn-outline-light" onclick="ImportacionFacturas.reset()">
+                            <i class="bi bi-arrow-clockwise me-1"></i> Reiniciar
+                        </button>
+                        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"
+                            aria-label="Close"></button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- BODY FACTURAS -->
+            <div class="modal-body p-4 bg-light">
+
+                <!-- ÁREA DE CARGA -->
+                <div id="drop-zone-facturas"
+                    class="upload-zone text-center p-5 border-2 border-dashed rounded bg-white mb-4 transition-hover shadow-sm">
+                    <i class="bi bi-cloud-arrow-up text-success" style="font-size: 3rem;"></i>
+                    <h5 class="mt-3 fw-bold text-muted">Arrastra tu archivo de Facturas (CSV/Excel)</h5>
+                    <p class="text-muted small">Columnas requeridas: FOLIO, FECHA, MONTO, UUID, PROVEEDOR,
+                        REF_COMUNICADO</p>
+                    <input type="file" id="file-input-facturas" class="d-none" accept=".csv, .txt, .xlsx, .xls">
+                    <button class="btn btn-success mt-2 px-4 rounded-pill"
+                        onclick="document.getElementById('file-input-facturas').click()">
+                        Seleccionar Archivo
+                    </button>
+                    <div id="file-info-facturas" class="mt-3 d-none">
+                        <span class="badge bg-success text-white px-3 py-2 shadow-sm">
+                            <i class="bi bi-file-earmark-check me-2"></i><span
+                                id="filename-display-facturas">archivo.csv</span>
+                        </span>
+                    </div>
+                </div>
+
+                <div class="d-flex justify-content-center mb-4">
+                    <button id="btn-analizar-facturas" class="btn btn-lg btn-success shadow px-5 rounded-pill" disabled
+                        onclick="ImportacionFacturas.analizar()">
+                        <i class="bi bi-search me-2"></i> Analizar Facturas
+                    </button>
+                </div>
+
+                <!-- LOADER -->
+                <div id="import-loader-facturas" class="text-center py-5 d-none">
+                    <div class="spinner-border text-success" style="width: 3rem; height: 3rem;" role="status"></div>
+                    <p class="mt-3 text-muted fs-5 animate-pulse">Procesando facturas y validando UUIDs...</p>
+                </div>
+
+                <!-- RESULTADOS -->
+                <div id="preview-container-facturas" class="d-none">
+                    <div class="alert alert-info border-0 shadow-sm d-flex align-items-center bg-white mb-3">
+                        <i class="bi bi-info-circle-fill fs-4 me-3 text-success"></i>
+                        <div id="preview-summary-facturas" class="text-dark">Resumen...</div>
+                    </div>
+
+                    <div class="table-responsive shadow-sm rounded border bg-white"
+                        style="max-height: 400px; overflow-y: auto;">
+                        <table class="table table-hover align-middle mb-0 small table-striped">
+                            <thead class="bg-light sticky-top">
+                                <tr>
+                                    <th>Folio</th>
+                                    <th>UUID (Corto)</th>
+                                    <th>Fecha</th>
+                                    <th>Comunicado Ref</th>
+                                    <th class="text-end">Monto</th>
+                                    <th class="text-center">Estado</th>
+                                    <th>Detalles</th>
+                                </tr>
+                            </thead>
+                            <tbody id="preview-body-facturas"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- FOOTER FACTURAS -->
+            <div class="modal-footer bg-white border-top-0">
+                <button type="button" class="btn btn-secondary rounded-pill px-4"
+                    data-bs-dismiss="modal">Cerrar</button>
+                <button type="button" id="btn-confirmar-facturas" class="btn btn-success rounded-pill px-4 d-none">
+                    <i class="bi bi-check-circle-fill me-2"></i>Confirmar Carga
+                </button>
+            </div>
+
+        </div>
+    </div>
+</div>
+
+<style>
+    .text-gradient {
+        background: linear-gradient(45deg, #0f172a, #334155);
+        -webkit-background-clip: text;
+        background-clip: text;
+        -webkit-text-fill-color: transparent;
+    }
+
+    .bg-gradient-success {
+        background: linear-gradient(45deg, #198754, #20c997);
+    }
+
+    .icon-circle {
+        width: 100px;
+        height: 100px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin: 0 auto;
+        transition: transform 0.3s ease;
+    }
+
+    .card-import-option {
+        cursor: pointer;
+        transition: transform 0.3s ease, box-shadow 0.3s ease;
+    }
+
+    .card-import-option:hover {
+        transform: translateY(-5px);
+        box-shadow: 0 1rem 3rem rgba(0, 0, 0, 0.15) !important;
+    }
+
+    .card-import-option:hover .icon-circle {
+        transform: scale(1.1);
+    }
+
+    .upload-zone.dragover {
+        border-color: #198754 !important;
+        background-color: #e8f5e9 !important;
+    }
+</style>

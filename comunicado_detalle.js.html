@@ -1,0 +1,1127 @@
+<script>
+    /**
+     * Componente ComunicadoDetalle
+     * Vista detallada y completa para la gestión de un comunicado individual.
+     * VERSIÓN: 3.1 - Full Refactor & Fix
+     */
+    console.log('📦 ComunicadoDetalle.js cargado - Versión 3.1');
+    globalThis.ComunicadoDetalle = (() => {
+        'use strict';
+
+        // --- ESTADO LOCAL ---
+        let state = {
+            id: null,
+            data: null,
+            catalogs: {},
+            loading: false,
+            saving: false,
+            editingPresupuestoIdx: null
+        };
+
+        // --- REFERENCIAS DOM ---
+        let dom = {};
+
+        // --- CONSTANTES ---
+        const IVA_RATE = 0.16;
+
+        /**
+         * Inicializa el componente
+         */
+        async function init(container) {
+            console.log('Iniciando ComunicadoDetalle v3.2...');
+
+            _setGlobalLoader(true, 'Preparando entorno...');
+
+            const storedId = sessionStorage.getItem('currentComunicadoId');
+            if (!storedId) {
+                console.warn('ID no encontrado. Volviendo al listado.');
+                location.hash = '#/comunicados';
+                return;
+            }
+            state.id = storedId;
+
+            try {
+                await _mount(container);
+                _cacheDom();
+                _bindEvents();
+
+                _setGlobalLoader(true, 'Sincronizando datos...');
+                await _loadData();
+
+            } catch (error) {
+                console.error('Error crítico:', error);
+                container.innerHTML = `<div class="alert alert-danger p-4">
+                    <h4>Error de Carga</h4><p>${error.message}</p>
+                    <button class="btn btn-outline-danger" onclick="location.reload()">Recargar</button>
+                </div>`;
+            } finally {
+                _setGlobalLoader(false);
+            }
+        }
+
+        const mount = async (container) => init(container);
+
+        async function _mount(container) {
+            container.innerHTML = '';
+            let content = globalThis.TEMPLATES?.['comunicado_detalle'];
+            if (!content) {
+                const response = await serverCall('getTemplates', ['comunicado_detalle']);
+                content = response?.comunicado_detalle;
+            }
+            if (!content) throw new Error('Plantilla no encontrada.');
+            container.innerHTML = content;
+        }
+
+        function _cacheDom() {
+            dom.headerTitle = document.getElementById('header-titulo');
+            dom.headerSubtitle = document.getElementById('header-subtitulo');
+            dom.btnVolver = document.getElementById('btn-volver-listado');
+            dom.btnGuardar = document.getElementById('btn-guardar-todo');
+            dom.btnEliminar = document.getElementById('btn-eliminar-comunicado');
+            dom.btnConfirmDelete = document.getElementById('btn-confirm-delete-detalle');
+
+            const modalEl = document.getElementById('modalConfirmDeleteDetalle');
+            if (modalEl) {
+                dom.modalDelete = new bootstrap.Modal(modalEl);
+            } else {
+                console.warn('Modal ConfirmDeleteDetalle no encontrado. Posible desactualización de plantilla.');
+            }
+
+            // General
+            dom.genId = document.getElementById('gen-id');
+            // Referencia - Antes era gen-cuenta o gen-referencia
+            dom.genCuenta = document.getElementById('gen-cuenta') || document.getElementById('gen-referencia');
+            dom.genAjustador = document.getElementById('gen-ajustador');
+            dom.genAseguradora = document.getElementById('gen-aseguradora'); // Nuevo
+            dom.genFecha = document.getElementById('gen-fecha');
+            dom.genFechaDocumento = document.getElementById('gen-fecha-documento'); // Nuevo
+            dom.genComunicado = document.getElementById('gen-comunicado');
+            dom.genDescripcion = document.getElementById('gen-descripcion');
+
+            // Ubicación
+            dom.genEstado = document.getElementById('gen-estado');
+            dom.genDistrito = document.getElementById('gen-distrito');
+            dom.genSiniestro = document.getElementById('gen-siniestro');
+            dom.genFenomeno = document.getElementById('gen-fenomeno');
+            dom.genFi = document.getElementById('gen-fi');
+            dom.genFondo = document.getElementById('gen-fondo');
+            dom.dropdownSiniestro = document.getElementById('dropdown-gen-siniestro-list');
+            dom.dropdownDistrito = document.getElementById('dropdown-gen-distrito-list');
+
+            dom.avisos = {
+                siniestro: document.getElementById('aviso-gen-siniestro'),
+                distrito: document.getElementById('aviso-gen-distrito'),
+                ajustador: document.getElementById('aviso-gen-ajustador'),
+                aseguradora: document.getElementById('aviso-gen-aseguradora')
+            };
+
+            // Dropdowns
+            dom.dropdownSiniestro = document.getElementById('dropdown-gen-siniestro-list');
+            dom.dropdownDistrito = document.getElementById('dropdown-gen-distrito-list');
+            dom.dropdownAjustador = document.getElementById('dropdown-gen-ajustador-list');
+            dom.dropdownAseguradora = document.getElementById('dropdown-gen-aseguradora-list');
+
+            // Financiero
+            dom.financiero = {
+                body: document.getElementById('lista-estimaciones-body'),
+                btnAdd: document.getElementById('btn-add-estimacion'),
+                resumen: {
+                    autorizado: document.getElementById('fin-autorizado'),
+                    ejercido: document.getElementById('fin-ejercido'),
+                    porEjercer: document.getElementById('fin-por-ejercer')
+                }
+            };
+
+            // Presupuesto
+            dom.presupuesto = {
+                body: document.getElementById('tabla-presupuesto-body'),
+                btnAdd: document.getElementById('btn-add-actualizacion'),
+                totalLabel: document.getElementById('presupuesto-total-autorizado')
+            };
+
+            // Equipo
+            dom.equipo = {
+                listContratistas: document.getElementById('lista-contratistas'),
+                listSupervisores: document.getElementById('lista-supervisores'),
+                btnAddContratista: document.getElementById('btn-add-contratista'),
+                btnAddSupervisor: document.getElementById('btn-add-supervisor')
+            };
+
+            // Tickets
+            dom.tickets = {
+                list: document.getElementById('lista-tickets'),
+                btnAdd: document.getElementById('btn-add-ticket')
+            };
+        }
+
+        // --- HANDLERS (New) ---
+        function _handleDeleteClick() {
+            dom.modalDelete?.show();
+        }
+
+        async function _confirmDelete() {
+            const id = state.id;
+            if (!id) return;
+
+            const btn = dom.btnConfirmDelete;
+            const originalText = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = 'Eliminando...';
+
+            try {
+                // Call backend deleteComunicado (CASCADE)
+                await serverCall('deleteComunicado', id);
+
+                dom.modalDelete.hide();
+                globalThis.showToast?.('Comunicado eliminado correctamente.', 'success');
+
+                // Redirect back to list
+                setTimeout(() => {
+                    location.hash = '#/comunicados';
+                }, 500);
+
+            } catch (error) {
+                console.error("Delete Error:", error);
+                alert('Error al eliminar: ' + error.message);
+                btn.disabled = false;
+                btn.innerHTML = originalText;
+            }
+        }
+
+        function _forceUppercase(input) {
+            const start = input.selectionStart;
+            const end = input.selectionEnd;
+            input.value = input.value.toUpperCase();
+            input.setSelectionRange(start, end);
+        }
+
+        function _bindEvents() {
+            dom.btnVolver?.addEventListener('click', () => location.hash = '#/comunicados');
+            dom.btnGuardar?.addEventListener('click', _guardarTodo);
+
+            // Delete Handlers (Fix)
+            dom.btnEliminar?.addEventListener('click', _handleDeleteClick);
+            dom.btnConfirmDelete?.addEventListener('click', _confirmDelete);
+
+            dom.presupuesto.btnAdd?.addEventListener('click', _addActualizacionPresupuesto);
+            dom.financiero.btnAdd?.addEventListener('click', _addEstimacion);
+            dom.equipo.btnAddContratista?.addEventListener('click', () => _addEquipo('contratista'));
+            dom.equipo.btnAddSupervisor?.addEventListener('click', () => _addEquipo('supervisor'));
+            dom.tickets.btnAdd?.addEventListener('click', _addTicket);
+
+            // Force Uppercase for standard inputs
+            [dom.genComunicado, dom.genDescripcion, dom.genFenomeno, dom.genFi, dom.genFondo].forEach(el => {
+                if (el) el.addEventListener('input', () => _forceUppercase(el));
+            });
+        }
+
+        async function _loadData() {
+            try {
+                const catalogsResponse = await serverCall('fetchComunicadoCatalogs');
+
+                if (catalogsResponse) {
+                    state.catalogs = catalogsResponse;
+                    _poblarCatalogosUI();
+                } else {
+                    console.warn('fetchComunicadoCatalogs retornó nulo o indefinido');
+                }
+
+                const dataResponse = await serverCall('getComunicadoCompleto', state.id);
+                if (dataResponse) {
+                    state.data = _sanitizeData(dataResponse);
+                    _renderData();
+                }
+            } catch (e) {
+                console.error(e);
+                _showAlert('Error de Carga', e.message, 'error');
+            }
+        }
+
+        function _sanitizeData(d) {
+            return {
+                ...d,
+                presupuesto: d.presupuesto || [],
+                equipo: d.equipo || [],
+                tickets: d.tickets || [],
+                financiero: Array.isArray(d.financiero) ? d.financiero : (d.financiero?.estimaciones || [])
+            };
+        }
+
+        function _poblarCatalogosUI() {
+            try {
+                console.log('Inicio _poblarCatalogosUI. Catalogs:', state.catalogs ? Object.keys(state.catalogs) : 'null');
+
+                if (dom.genEstado && state.catalogs.estados) {
+                    try {
+                        dom.genEstado.innerHTML = '<option value="">Seleccione...</option>';
+                        state.catalogs.estados.forEach(est => {
+                            const opt = document.createElement('option');
+                            opt.value = est.id;
+                            opt.textContent = est.estado || est.nombre;
+                            dom.genEstado.appendChild(opt);
+                        });
+                    } catch (e) {
+                        console.error('Error poblando estados:', e);
+                    }
+                }
+
+                try {
+                    _setupCombobox(dom.genSiniestro, dom.dropdownSiniestro, state.catalogs.siniestros || [], 'siniestro',
+                        (item) => { dom.genSiniestro.value = item.siniestro; _onSiniestroChange(item); },
+                        dom.avisos.siniestro,
+                        (val, match) => {
+                            if (match) _onSiniestroChange(match);
+                            else _onSiniestroChange(null);
+                        }
+                    );
+                } catch (e) { console.error('Error setupCombobox Siniestro:', e); }
+
+                try {
+                    _setupCombobox(dom.genDistrito, dom.dropdownDistrito, state.catalogs.distritosRiego || [], 'distritoRiego',
+                        (item) => dom.genDistrito.value = item.distritoRiego,
+                        dom.avisos.distrito
+                    );
+                } catch (e) { console.error('Error setupCombobox Distrito:', e); }
+
+                try {
+                    _setupCombobox(dom.genAjustador, dom.dropdownAjustador, state.catalogs.ajustadores || [], 'nombreAjustador',
+                        (item) => {
+                            dom.genAjustador.value = item.nombreAjustador || item.nombre;
+                        },
+                        dom.avisos.ajustador
+                    );
+                    console.log('Catalogos UI poblados. Ajustadores:', state.catalogs.ajustadores?.length);
+                } catch (e) { console.error('Error setupCombobox Ajustador:', e); }
+
+                try {
+                    _setupCombobox(dom.genAseguradora, dom.dropdownAseguradora, state.catalogs.aseguradoras || [], 'aseguradora',
+                        (item) => {
+                            dom.genAseguradora.value = item.aseguradora || item.nombre;
+                        },
+                        dom.avisos.aseguradora
+                    );
+                } catch (e) { console.error('Error setupCombobox Aseguradora:', e); }
+
+            } catch (err) {
+                console.error('Error FATAL en _poblarCatalogosUI:', err);
+            }
+        }
+
+        function _renderData() {
+            const d = state.data;
+
+            // Header
+            dom.headerTitle.textContent = d.comunicado || 'Nuevo Comunicado';
+            // Mapeo: Referencia (antes Cuenta)
+            const referencia = d.referencia || d.cuenta?.referencia || d.cuenta?.cuenta || 'Sin Referencia';
+            dom.headerSubtitle.textContent = `ID: ${d.id} | Ref: ${referencia}`;
+
+            // Datos Generales
+            dom.genId.value = d.id || '';
+
+            // Referencia (buscar por ID original o alternativo)
+            const inputReferencia = dom.genCuenta || document.getElementById('gen-referencia');
+            if (inputReferencia) {
+                inputReferencia.value = referencia;
+            }
+
+            // AJUSTADOR (Solo Lectura - Heredado de Cuenta)
+            // Backend ahora envía d.ajustador = { id, nombre }
+
+
+            if (dom.genAjustador) {
+                // Prioridad: 1. Ajustador del objeto datosGenerales (enriquecido y populado en 'ajustador')
+                //            2. Ajustador heredado de la cuenta/referencia (si existiera)
+                //            3. Ajustador por nombre directo
+                let nombreAjustadorReal = '';
+
+                if (d.ajustador && d.ajustador.nombreAjustador) {
+                    nombreAjustadorReal = d.ajustador.nombreAjustador;
+                } else if (d.ajustadorNombre) {
+                    nombreAjustadorReal = d.ajustadorNombre;
+                }
+
+                dom.genAjustador.value = nombreAjustadorReal;
+            }
+
+            // Mapeo corregido por feedback: Fecha de Registro -> fechaAsignacion, Fecha Documento -> fecha (original)
+            dom.genFecha.value = _formatDateISO(d.fechaAsignacion || d.fechaCreacion); // "Fecha de Registro"
+            if (dom.genFechaDocumento) dom.genFechaDocumento.value = _formatDateISO(d.fecha); // "Fecha del Documento"
+            dom.genComunicado.value = d.comunicado || '';
+            dom.genDescripcion.value = d.descripcion || '';
+            if (d.idEstado) dom.genEstado.value = d.idEstado;
+            _setComboboxValue(dom.genDistrito, d.distrito, 'distritoRiego');
+            _setComboboxValue(dom.genSiniestro, d.siniestro, 'siniestro');
+
+            // Aseguradora
+            if (dom.genAseguradora) {
+                const asegNombre = d.siniestroDetalle?.aseguradora || 'Sin Aseguradora';
+                dom.genAseguradora.value = asegNombre;
+            }
+
+            // Datos del Siniestro Detallados
+            if (dom.genFenomeno) dom.genFenomeno.value = d.siniestroDetalle?.fenomeno || '';
+            if (dom.genFondo) dom.genFondo.value = d.siniestroDetalle?.fondo || '';
+            if (dom.genFi) dom.genFi.value = d.siniestroDetalle?.fi || ''; // Ahora "Fecha Incidencia"
+            if (d.siniestro) _onSiniestroChange(d.siniestro);
+
+            _renderPresupuesto();
+            _renderEquipo();
+            _renderFinanciero();
+            _renderTickets();
+
+            // Mostrar contenido principal
+            const content = document.getElementById('detalle-content');
+            if (content) content.classList.remove('d-none');
+        }
+
+        // --- FINANCIERO (Unificado) ---
+        function _renderFinanciero() {
+            const tbody = dom.financiero.body;
+            if (!tbody) return;
+            tbody.innerHTML = '';
+            const items = state.data.financiero || [];
+
+            if (items.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="8" class="text-center py-4 text-muted"><small>No hay estimaciones definidas.</small></td></tr>`;
+            } else {
+                items.forEach((item, index) => {
+                    const tr = document.createElement('tr');
+                    const ejecutado = parseFloat(item.montoEjecutado) || 0;
+                    const amortizacion = parseFloat(item.amortizacion) || 0;
+                    const subtotal = ejecutado - amortizacion;
+                    const iva = subtotal * IVA_RATE;
+                    const total = subtotal + iva;
+
+                    tr.innerHTML = `
+                        <td><input type="text" class="form-control form-control-sm" value="${item.numero || ''}" placeholder="#" onchange="ComunicadoDetalle.updateFinanciero(${index}, 'numero', this.value)"></td>
+                        <td><input type="date" class="form-control form-control-sm" value="${_formatDateISO(item.fecha)}" onchange="ComunicadoDetalle.updateFinanciero(${index}, 'fecha', this.value)"></td>
+                        <td><input type="text" class="form-control form-control-sm text-end currency-input" value="${_formatCurrency(item.montoEjecutado)}" onchange="ComunicadoDetalle.updateFinanciero(${index}, 'montoEjecutado', this.value)"></td>
+                        <td><input type="text" class="form-control form-control-sm text-end currency-input text-danger" value="${_formatCurrency(item.amortizacion)}" onchange="ComunicadoDetalle.updateFinanciero(${index}, 'amortizacion', this.value)"></td>
+                        <td><div class="form-control form-control-sm text-end bg-light fw-bold">${_formatCurrency(subtotal)}</div></td>
+                        <td><div class="form-control form-control-sm text-end bg-light text-muted">${_formatCurrency(iva)}</div></td>
+                        <td><input type="text" class="form-control form-control-sm text-end fw-bold text-success" value="${_formatCurrency(item.totalFacturado || total)}" readonly></td>
+                        <td><input type="text" class="form-control form-control-sm" value="${item.folioFactura || ''}" placeholder="Folio XML" onchange="ComunicadoDetalle.updateFinanciero(${index}, 'folioFactura', this.value)"></td>
+                        <td class="text-center"><button class="btn btn-link text-danger btn-sm p-0" onclick="ComunicadoDetalle.removeFinanciero(${index})"><i class="bi bi-trash"></i></button></td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+            }
+            _attachCurrencyFormatters();
+            _updateResumenFinanciero();
+        }
+
+        function _addEstimacion() {
+            state.data.financiero.push({ numero: '', fecha: new Date().toISOString(), montoEjecutado: 0, amortizacion: 0 });
+            _renderFinanciero();
+        }
+
+        function _updateResumenFinanciero() {
+            const items = state.data.financiero || [];
+            const presItems = state.data.presupuesto || [];
+
+            // Calcular Autorizado usando la lógica maestra "Presupuesto Vigente"
+            let autorizado = 0;
+
+            if (presItems.length > 0) {
+                // Ordenar por si acaso (aunque suelen venir ordenados)
+                // Usamos el último elemento como el Vigente
+                const last = presItems[presItems.length - 1];
+
+                // Determinar Importe Obra (Precedencia: Capturado > Calculado)
+                const mCapturado = parseFloat(last.montoCapturado);
+                const hasCapturado = !isNaN(mCapturado) && last.montoCapturado !== '' && last.montoCapturado !== null;
+                const importeObra = hasCapturado ? mCapturado : (parseFloat(last.monto) || 0);
+
+                // Determinar Supervisión
+                const supervision = parseFloat(last.montoSupervision) || 0;
+
+                // Gran Total Vigente
+                autorizado = importeObra + supervision;
+
+                // Actualizar Label en Header de Tabla Presupuesto si existe
+                if (dom.presupuesto.totalLabel) {
+                    dom.presupuesto.totalLabel.textContent = _formatCurrency(autorizado);
+                }
+            } else {
+                if (dom.presupuesto.totalLabel) {
+                    dom.presupuesto.totalLabel.textContent = _formatCurrency(0);
+                }
+            }
+
+            const ejercido = items.reduce((sum, item) => sum + (parseFloat(item.montoEjecutado) || 0), 0);
+            const saldo = autorizado - ejercido; // Saldo real de obra
+
+            if (dom.financiero.resumen.autorizado) dom.financiero.resumen.autorizado.textContent = _formatCurrency(autorizado);
+            if (dom.financiero.resumen.ejercido) dom.financiero.resumen.ejercido.textContent = _formatCurrency(ejercido);
+            if (dom.financiero.resumen.porEjercer) {
+                dom.financiero.resumen.porEjercer.textContent = _formatCurrency(saldo);
+                dom.financiero.resumen.porEjercer.className = `fs-5 fw-bold ${saldo < 0 ? 'text-danger' : 'text-success'}`;
+            }
+        }
+
+        // --- EQUIPO ---
+        // --- EQUIPO ---
+        function _renderEquipo() {
+            if (!dom.equipo.listContratistas) return;
+            dom.equipo.listContratistas.innerHTML = '';
+            dom.equipo.listSupervisores.innerHTML = '';
+
+            const equipo = state.data.equipo || [];
+
+            // Helper para renderizar items
+            const renderItem = (item, type, container) => {
+                const realIndex = equipo.indexOf(item);
+                const div = document.createElement('div');
+                div.className = 'list-group-item d-flex justify-content-between align-items-start mb-2 shadow-sm border p-3';
+
+                // IDs únicos para combobox
+                const inputId = `eq-input-${realIndex}`;
+                const dropId = `eq-drop-${realIndex}`;
+                const alertId = `eq-alert-${realIndex}`;
+
+                // HTML Diferente para Contratista (Combobox) vs Supervisor (Texto simple)
+                // Nota: Podríamos extender Supervisor a catálogo de usuarios más adelante
+                const isContratista = type === 'contratista';
+
+                div.innerHTML = `
+                    <div class="flex-grow-1 me-3">
+                        ${isContratista ? `
+                            <div class="mb-2 position-relative">
+                                <label class="form-label small text-muted mb-0">Empresa / Contratista</label>
+                                <input type="text" class="form-control form-control-sm fw-bold" id="${inputId}"
+                                    placeholder="Buscar o escribir nombre..." value="${item.nombre || ''}" autocomplete="off"
+                                    data-bs-toggle="dropdown" aria-expanded="false">
+                                <ul class="dropdown-menu w-100 shadow" id="${dropId}" style="max-height: 200px; overflow-y: auto;"></ul>
+                                <div id="${alertId}" class="form-text text-warning d-none small mt-1">
+                                    <i class="bi bi-exclamation-triangle-fill me-1"></i> Nueva Empresa (Se creará al guardar)
+                                </div>
+                            </div>
+                        ` : `
+                            <div class="mb-2">
+                                <label class="form-label small text-muted mb-0">Nombre del Supervisor</label>
+                                <input type="text" class="form-control form-control-sm fw-bold" 
+                                    placeholder="Nombre completo..." value="${item.nombre || ''}"
+                                    onchange="ComunicadoDetalle.updateEquipo(${realIndex}, 'nombre', this.value)">
+                            </div>
+                        `}
+                        
+                        <div>
+                            <input type="text" class="form-control form-control-sm border-0 text-muted small bg-light" placeholder="Detalles, Cargo o Notas adicionales..." 
+                                value="${item.detalles || ''}" onchange="ComunicadoDetalle.updateEquipo(${realIndex}, 'detalles', this.value)">
+                        </div>
+                    </div>
+                    <button class="btn btn-outline-danger btn-sm border-0 mt-3" onclick="ComunicadoDetalle.removeEquipo(${realIndex})" title="Quitar asignación">
+                        <i class="bi bi-x-lg"></i>
+                    </button>
+                `;
+                container.appendChild(div);
+
+                // Inicializar Combobox si es Contratista
+                if (isContratista) {
+                    // Usamos setTimeout para asegurar que el DOM está listo
+                    setTimeout(() => {
+                        const input = document.getElementById(inputId);
+                        const dropdown = document.getElementById(dropId);
+                        const alertEl = document.getElementById(alertId);
+
+                        if (input && dropdown) {
+                            // Configurar combobox con catálogo de empresas
+                            _setupCombobox(
+                                input,
+                                dropdown,
+                                state.catalogs.empresas || [],
+                                'razonSocial', // Campo a mostrar
+                                (seleccion) => {
+                                    // Al seleccionar
+                                    item.nombre = seleccion.razonSocial;
+                                    // Podríamos guardar ID si la estructura lo soporta: item.idEmpresa = seleccion.id;
+                                    ComunicadoDetalle.updateEquipo(realIndex, 'nombre', seleccion.razonSocial);
+                                },
+                                alertEl,
+                                (val) => {
+                                    // Al escribir manual
+                                    item.nombre = val;
+                                    ComunicadoDetalle.updateEquipo(realIndex, 'nombre', val);
+                                }
+                            );
+                        }
+                    }, 0);
+                }
+            };
+
+            equipo.filter(e => e.tipo === 'contratista').forEach(e => renderItem(e, 'contratista', dom.equipo.listContratistas));
+            equipo.filter(e => e.tipo === 'supervisor').forEach(e => renderItem(e, 'supervisor', dom.equipo.listSupervisores));
+
+            if (dom.equipo.listContratistas.children.length === 0) dom.equipo.listContratistas.innerHTML = '<div class="text-center text-muted small py-4 border rounded bg-light">Sin contratistas asignados.</div>';
+            if (dom.equipo.listSupervisores.children.length === 0) dom.equipo.listSupervisores.innerHTML = '<div class="text-center text-muted small py-4 border rounded bg-light">Sin supervisores asignados.</div>';
+        }
+
+        function _addEquipo(tipo) {
+            state.data.equipo.push({ tipo, nombre: '', detalles: '' });
+            _renderEquipo();
+        }
+
+        // --- TICKETS ---
+        function _renderTickets() {
+            if (!dom.tickets.list) return;
+            dom.tickets.list.innerHTML = '';
+            const tickets = state.data.tickets || [];
+
+            if (tickets.length === 0) {
+                dom.tickets.list.innerHTML = '<div class="text-center text-muted py-3">No hay tickets registrados.</div>';
+                return;
+            }
+
+            tickets.forEach((t, idx) => {
+                const div = document.createElement('div');
+                div.className = 'card mb-2 shadow-sm border-0';
+                div.innerHTML = `
+                    <div class="card-body p-2 d-flex gap-2 align-items-center">
+                        <input type="text" class="form-control form-control-sm" style="width:100px" placeholder="# Ticket" value="${t.numero || ''}" onchange="ComunicadoDetalle.updateTicket(${idx},'numero',this.value)">
+                        <input type="date" class="form-control form-control-sm" style="width:130px" value="${_formatDateISO(t.fecha)}" onchange="ComunicadoDetalle.updateTicket(${idx},'fecha',this.value)">
+                        <input type="text" class="form-control form-control-sm flex-grow-1" placeholder="Asunto / Descripción" value="${t.asunto || ''}" onchange="ComunicadoDetalle.updateTicket(${idx},'asunto',this.value)">
+                        <select class="form-select form-select-sm" style="width:120px" onchange="ComunicadoDetalle.updateTicket(${idx},'estado',this.value)">
+                            <option value="Abierto" ${t.estado === 'Abierto' ? 'selected' : ''}>Abierto</option>
+                            <option value="Cerrado" ${t.estado === 'Cerrado' ? 'selected' : ''}>Cerrado</option>
+                            <option value="Pendiente" ${t.estado === 'Pendiente' ? 'selected' : ''}>Pendiente</option>
+                        </select>
+                         <button class="btn btn-sm text-danger" onclick="ComunicadoDetalle.removeTicket(${idx})"><i class="bi bi-trash"></i></button>
+                    </div>
+                `;
+                dom.tickets.list.appendChild(div);
+            });
+        }
+
+        function _addTicket() {
+            state.data.tickets.push({ numero: '', fecha: new Date().toISOString(), asunto: '', estado: 'Abierto' });
+            _renderTickets();
+        }
+
+        // --- PUBLIC HELPERS (Exports) ---
+        function updateFinanciero(index, field, value) {
+            const item = state.data.financiero[index];
+            if (!item) return;
+            if (['montoEjecutado', 'amortizacion'].includes(field)) {
+                item[field] = parseFloat(String(value).replace(/,/g, '')) || 0;
+            } else {
+                item[field] = value;
+            }
+            // Recálculo del Total Facturado
+            const sub = (parseFloat(item.montoEjecutado) || 0) - (parseFloat(item.amortizacion) || 0);
+            item.totalFacturado = sub * (1 + IVA_RATE);
+            _renderFinanciero();
+        }
+
+        function removeFinanciero(index) {
+            if (confirm('¿Eliminar registro financiero?')) {
+                state.data.financiero.splice(index, 1);
+                _renderFinanciero();
+            }
+        }
+
+        function updatePresupuesto(idx, field, val) {
+            const item = state.data.presupuesto[idx];
+            if (field === 'montoCapturado' || field === 'montoSupervision') {
+                // Permitir vacío para capturado
+                if (val === '') {
+                    item[field] = field === 'montoCapturado' ? null : 0;
+                } else {
+                    item[field] = parseFloat(val.replace(/,/g, '')) || 0;
+                }
+            } else if (field === 'monto') {
+                // Legacy or if manually editing calc (shouldn't happen due to readonly)
+                item[field] = parseFloat(val.replace(/,/g, '')) || 0;
+            } else {
+                item[field] = val;
+            }
+            _renderPresupuesto();
+        }
+        function removePresupuesto(idx) {
+            const items = state.data.presupuesto;
+
+            // Reglas de Seguridad
+            if (idx === 0) {
+                _showAlert('Acción No Permitida', 'No se puede eliminar el presupuesto de Origen.', 'warning');
+                return;
+            }
+            if (idx !== items.length - 1) {
+                _showAlert('Acción No Permitida', 'Solo se puede eliminar la última revisión para mantener la integridad de la secuencia.', 'warning');
+                return;
+            }
+
+            if (!confirm('¿Estás seguro de eliminar esta revisión?\n\nADVERTENCIA: Esta acción eliminará permanentemente la revisión y todo su desglose de conceptos asociado.')) {
+                return;
+            }
+
+            state.data.presupuesto.splice(idx, 1);
+            _renderPresupuesto();
+        }
+
+        function updateEquipo(idx, field, val) { state.data.equipo[idx][field] = val; }
+        function removeEquipo(idx) { state.data.equipo.splice(idx, 1); _renderEquipo(); }
+
+        function updateTicket(idx, field, val) { state.data.tickets[idx][field] = val; }
+        function removeTicket(idx) { state.data.tickets.splice(idx, 1); _renderTickets(); }
+
+        // --- AUXILIARES ---
+        function _attachCurrencyFormatters() {
+            document.querySelectorAll('.currency-input').forEach(input => {
+                input.addEventListener('blur', (e) => {
+                    const val = parseFloat(e.target.value.replace(/,/g, '')) || 0;
+                    e.target.value = _formatCurrency(val, false);
+                });
+                input.addEventListener('focus', (e) => {
+                    e.target.value = e.target.value.replace(/,/g, '').replace('$', '');
+                    e.target.select();
+                });
+            });
+        }
+        function _formatCurrency(val, withSymbol = true) {
+            const num = parseFloat(val) || 0;
+            return (withSymbol ? '$' : '') + num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        }
+        function _formatDateISO(dateStr) {
+            if (!dateStr) return '';
+            try { return new Date(dateStr).toISOString().split('T')[0]; } catch (e) { return ''; }
+        }
+        function _setComboboxValue(input, obj, prop) {
+            const val = (obj && typeof obj === 'object') ? obj[prop] : (obj || '');
+            input.value = val || '';
+        }
+
+        function _showAlert(title, text, icon = 'info') {
+            if (typeof Swal !== 'undefined') {
+                Swal.fire({
+                    title: title,
+                    text: text,
+                    icon: icon,
+                    confirmButtonColor: '#0d6efd'
+                });
+            } else {
+                alert(`${title}\n${text}`);
+            }
+        }
+
+        function _setupCombobox(input, dropdown, items, keyProp, onSelect, alertElement = null, onInputHandler = null) {
+            if (!input || !dropdown) return;
+            const safeItems = Array.isArray(items) ? items : [];
+
+            // Referencia a instancia bootstrap
+
+            let dropdownInstance = null;
+
+            const getDropdownInstance = () => {
+                if (dropdownInstance) return dropdownInstance;
+                if (window.bootstrap && window.bootstrap.Dropdown) {
+                    try {
+                        dropdownInstance = bootstrap.Dropdown.getInstance(input) || new bootstrap.Dropdown(input, { autoClose: 'outside' });
+                    } catch (e) { console.warn('Bootstrap error:', e); }
+                }
+                return dropdownInstance;
+            };
+
+            const renderList = (filter = '') => {
+                dropdown.innerHTML = '';
+                const term = (filter || '').toLowerCase();
+                const filtered = term
+                    ? safeItems.filter(i => {
+                        const val = i[keyProp] || i.nombre || '';
+                        return String(val).toLowerCase().includes(term);
+                    })
+                    : safeItems;
+
+                const displayItems = filtered.slice(0, 50);
+
+                if (displayItems.length === 0) {
+                    dropdown.innerHTML = '<li class="dropdown-item text-muted disabled">Sin resultados</li>';
+                } else {
+                    displayItems.forEach(item => {
+                        const li = document.createElement('li');
+                        const a = document.createElement('a');
+                        a.className = 'dropdown-item';
+                        a.href = '#';
+                        a.textContent = item[keyProp] || item.nombre || 'Sin Nombre';
+                        a.onclick = (e) => {
+                            e.preventDefault();
+                            onSelect(item);
+                            const instance = getDropdownInstance();
+                            if (instance) instance.hide();
+                            else dropdown.classList.remove('show');
+
+                            // Ocultar alerta al seleccionar existente
+                            if (alertElement) alertElement.classList.add('d-none');
+                        };
+                        li.appendChild(a);
+                        dropdown.appendChild(li);
+                    });
+                }
+            };
+
+            const showDropdown = () => {
+                renderList(input.value);
+                const instance = getDropdownInstance();
+                if (instance) {
+                    instance.show();
+                } else {
+                    // Fallback sin bootstrap
+                    dropdown.classList.add('show');
+                    dropdown.style.display = 'block';
+                }
+            };
+
+            input.addEventListener('input', () => {
+                // Force Uppercase
+                _forceUppercase(input);
+
+                const instance = getDropdownInstance();
+                if (instance) instance.show();
+                else { dropdown.classList.add('show'); dropdown.style.display = 'block'; }
+
+                renderList(input.value);
+
+                const val = input.value.trim().toLowerCase();
+                let exactMatchItem = null;
+                if (val) {
+                    exactMatchItem = safeItems.find(i => String(i[keyProp] || i.nombre || '').toLowerCase() === val);
+                }
+
+                if (alertElement) {
+                    if (!val) {
+                        alertElement.classList.add('d-none');
+                    } else {
+                        alertElement.classList.toggle('d-none', !!exactMatchItem);
+                    }
+                }
+
+                if (onInputHandler) {
+                    onInputHandler(input.value, exactMatchItem);
+                }
+            });
+
+            input.addEventListener('focus', showDropdown);
+            input.addEventListener('click', showDropdown);
+
+            input.addEventListener('blur', () => {
+                setTimeout(() => {
+                    const instance = getDropdownInstance();
+                    if (instance) instance.hide();
+                    else { dropdown.classList.remove('show'); dropdown.style.display = 'none'; }
+                }, 200);
+            });
+        }
+
+        function _onSiniestroChange(itemOrString) {
+            const fields = [dom.genFenomeno, dom.genFi, dom.genFondo];
+            const isObj = typeof itemOrString === 'object' && itemOrString !== null;
+            if (isObj) {
+                dom.genFenomeno.value = itemOrString.fenomeno || '';
+                dom.genFi.value = itemOrString.fi || '';
+                dom.genFondo.value = itemOrString.fondo || '';
+
+                // Logic to set Aseguradora from Siniestro
+                if (dom.genAseguradora) {
+                    let asegName = itemOrString.aseguradora || '';
+                    if (!asegName && itemOrString.idAseguradora && state.catalogs.aseguradoras) {
+                        const match = state.catalogs.aseguradoras.find(a => String(a.id) === String(itemOrString.idAseguradora));
+                        if (match) asegName = match.aseguradora || match.nombre || '';
+                    }
+                    dom.genAseguradora.value = asegName;
+                    // Keep custom aseguradora editable even if derived? User said "fields linked", 
+                    // usually implying read-only, but for Aseguradora they said "leave blank to choose".
+                    // If populated, maybe we leave it enabled? I'll leave it enabled as per previous logic (it wasn't in 'fields' array).
+                }
+
+                // Habilitar campos siempre, para permitir correcciones
+                fields.forEach(f => { if (f) f.disabled = false; });
+                if (dom.avisos.siniestro) dom.avisos.siniestro.classList.add('d-none');
+            } else {
+                fields.forEach(f => { if (f) { f.disabled = false; f.value = ''; } });
+                if (dom.genAseguradora) {
+                    dom.genAseguradora.value = '';
+                    dom.genAseguradora.disabled = false;
+                }
+            }
+        }
+
+        function _renderPresupuesto() {
+            const tbody = dom.presupuesto.body;
+            if (!tbody) return;
+            tbody.innerHTML = '';
+            const items = state.data.presupuesto || [];
+
+            if (items.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted">Sin presupuesto.</td></tr>';
+            } else {
+                items.forEach((item, idx) => {
+                    const tr = document.createElement('tr');
+
+                    const isOrigin = idx === 0;
+                    const isLast = idx === items.length - 1;
+
+                    // Lógica
+                    const mCalculado = parseFloat(item.monto) || 0;
+                    const mCapturado = parseFloat(item.montoCapturado);
+                    const hasCapturado = item.montoCapturado !== null && item.montoCapturado !== '' && item.montoCapturado !== undefined;
+                    const mSupervision = parseFloat(item.montoSupervision) || 0;
+                    const montoTotal = _formatCurrency((hasCapturado ? mCapturado : mCalculado) + mSupervision);
+
+                    // Estilos
+                    // Si hay manual: Input blanco con borde primario
+                    // Si no: Input gris (readonly)
+                    const inputVal = hasCapturado ? _formatCurrency(mCapturado, false) : _formatCurrency(mCalculado);
+                    const inputClass = hasCapturado ? 'fw-bold bg-white border-primary' : 'bg-light text-muted';
+                    const inputReadonly = hasCapturado ? '' : 'readonly';
+                    const iconBtn = hasCapturado ? '<i class="bi bi-arrow-counterclockwise"></i>' : '<i class="bi bi-pencil-fill"></i>';
+                    const btnClass = hasCapturado ? 'btn-outline-danger' : 'btn-outline-secondary';
+                    const btnTitle = hasCapturado ? 'Revertir a calculado' : 'Corregir manualmente';
+                    const btnAction = hasCapturado ? `ComunicadoDetalle.toggleManualInput(${idx}, false)` : `ComunicadoDetalle.toggleManualInput(${idx}, true)`;
+
+                    tr.innerHTML = `
+                           <td class="ps-4 align-middle">${idx === 0 ? '<span class="badge bg-secondary">Origen</span>' : `<input class="form-control form-control-sm text-center fw-bold" style="width: 80px;" value="${item.revision || ''}" onchange="ComunicadoDetalle.updatePresupuesto(${idx},'revision',this.value)">`}</td>
+                           <td class="align-middle"><input type="date" class="form-control form-control-sm" value="${_formatDateISO(item.fecha)}" onchange="ComunicadoDetalle.updatePresupuesto(${idx},'fecha',this.value)"></td>
+                           
+                           <!-- Columna Importe Obra: Diseño Integrado -->
+                           <td class="align-middle">
+                                <div class="input-group input-group-sm">
+                                    <span class="input-group-text ${hasCapturado ? 'bg-warning text-dark border-warning' : 'bg-light text-muted'}">
+                                        ${hasCapturado ? 'Man' : 'Calc'}
+                                    </span>
+                                    <input type="text" class="form-control text-end font-monospace ${inputClass}" 
+                                           id="input-obra-${idx}"
+                                           value="${inputVal}" 
+                                           ${inputReadonly}
+                                           onchange="ComunicadoDetalle.updatePresupuesto(${idx}, 'montoCapturado', this.value)"
+                                           placeholder="$0.00">
+                                    <button class="btn ${btnClass}" type="button" onclick="${btnAction}" title="${btnTitle}">
+                                        ${iconBtn}
+                                    </button>
+                                </div>
+                                ${hasCapturado ? `<div class="form-text text-end mt-0" style="font-size: 0.7rem;"><span class="text-decoration-line-through text-muted me-1">${_formatCurrency(mCalculado)}</span> <span class="text-primary">Manual</span></div>` : ''}
+                           </td>
+
+                           <!-- Columna Supervisión -->
+                           <td class="align-middle">
+                               <div class="input-group input-group-sm">
+                                   <input type="text" class="form-control text-end font-monospace" value="${_formatCurrency(mSupervision, false)}" placeholder="0.00" onchange="ComunicadoDetalle.updatePresupuesto(${idx},'montoSupervision',this.value)">
+                                   <button class="btn btn-outline-secondary" type="button" onclick="ComunicadoDetalle.calcularSupervision(${idx})" title="Calc 5%">5%</button>
+                               </div>
+                           </td>
+
+                           <td class="text-center align-middle">
+                               <div class="d-flex justify-content-center gap-2">
+                                   <button class="btn btn-sm btn-outline-primary d-flex align-items-center gap-1" onclick="ComunicadoDetalle.abrirEditorPresupuesto(${idx})" title="Ver Desglose">
+                                       <i class="bi bi-list-columns-reverse"></i>
+                                   </button>
+                                   ${(!isOrigin && isLast)
+                            ? `<button class="btn btn-sm btn-outline-danger border-0" onclick="ComunicadoDetalle.removePresupuesto(${idx})" title="Eliminar"><i class="bi bi-trash"></i></button>`
+                            : `<span class="text-muted d-flex align-items-center" title="${isOrigin ? 'El origen es permanente' : 'Solo se puede eliminar la última revisión'}"><i class="bi bi-lock-fill"></i></span>`
+                        }
+                               </div>
+                           </td>
+                       `;
+                    tbody.appendChild(tr);
+                });
+            }
+
+            // Actualizar Footer con Desglose Separado
+            let obra = 0;
+            let supervision = 0;
+
+            if (items.length > 0) {
+                const last = items[items.length - 1];
+                const mCapturado = parseFloat(last.montoCapturado);
+                const hasCapturado = !isNaN(mCapturado) && last.montoCapturado !== '' && last.montoCapturado !== null;
+
+                obra = hasCapturado ? mCapturado : (parseFloat(last.monto) || 0);
+                supervision = parseFloat(last.montoSupervision) || 0;
+            }
+
+            // Buscar elementos y actualizar
+            const footerObra = document.getElementById('footer-total-obra');
+            const footerSup = document.getElementById('footer-total-sup');
+
+            if (footerObra) footerObra.textContent = _formatCurrency(obra);
+            if (footerSup) footerSup.textContent = _formatCurrency(supervision);
+
+            _updateResumenFinanciero(); // Actualiza el total vigente en header
+            _attachCurrencyFormatters();
+        }
+        function _addActualizacionPresupuesto() {
+            state.data.presupuesto.push({ revision: '', fecha: new Date().toISOString(), monto: 0 });
+            _renderPresupuesto();
+        }
+
+        function toggleManualInput(idx, activate) {
+            const item = state.data.presupuesto[idx];
+
+            if (activate) {
+                // Activar manual: Si está vacío, copiamos el calculado como sugerencia, o lo dejamos vacío.
+                // UX decision: Copiar el calculado facilita la "corrección" menor.
+                // Pero el user pidió "Corregir monto PDF". A veces es totalmente diferente.
+                // Dejemoslo vacío o en 0 para que escriba.
+                // Si ya había algo (casos raros), se respeta.
+                if (item.montoCapturado === undefined || item.montoCapturado === null || item.montoCapturado === '') {
+                    // Inicializar con 0 explícitamente para que hasCapturado sea true
+                    // hasCapturado chequea: !isNaN && !== '' && !== null
+                    item.montoCapturado = 0;
+                }
+
+                // Hack para foco: renderizamos y luego buscamos el input
+                _renderPresupuesto();
+                setTimeout(() => {
+                    const input = document.getElementById(`input-obra-${idx}`);
+                    if (input) input.focus();
+                }, 50);
+
+            } else {
+                // Desactivar manual -> Revertir a calculado
+                item.montoCapturado = null;
+                _renderPresupuesto();
+            }
+        }
+
+        function calcularSupervision(idx) {
+            const item = state.data.presupuesto[idx];
+            // Regla de verdad: Capturado > Calculado
+            const mCapturado = parseFloat(item.montoCapturado);
+            const hasCapturado = !isNaN(mCapturado) && item.montoCapturado !== '' && item.montoCapturado !== null;
+
+            const base = hasCapturado ? mCapturado : (parseFloat(item.monto) || 0);
+
+            item.montoSupervision = base * 0.05;
+            _renderPresupuesto();
+        }
+
+        // --- MODAL DESGLOSE PRESUPUESTO ---
+        function abrirEditorPresupuesto(idx) {
+            state.editingPresupuestoIdx = idx;
+            const item = state.data.presupuesto[idx];
+            if (!item.lineas) item.lineas = [];
+
+            _renderModalLines();
+            _recalcularTotalModal(); // Inicializar total
+
+            const modalEl = document.getElementById('modalPresupuestoDetalle');
+            const modal = new bootstrap.Modal(modalEl);
+            modal.show();
+        }
+
+        function _renderModalLines() {
+            const tbody = document.getElementById('modal-presupuesto-lines-body');
+            tbody.innerHTML = '';
+            const lines = state.data.presupuesto[state.editingPresupuestoIdx].lineas;
+
+            lines.forEach((l, i) => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td><input type="text" class="form-control form-control-sm" value="${l.descripcion || ''}" placeholder="Descripción" onchange="ComunicadoDetalle.updateLineaPresupuesto(${i}, 'descripcion', this.value)"></td>
+                    <td><input type="text" class="form-control form-control-sm" value="${l.categoria || ''}" placeholder="Categoría" onchange="ComunicadoDetalle.updateLineaPresupuesto(${i}, 'categoria', this.value)"></td>
+                    <td><input type="text" class="form-control form-control-sm text-end currency-input" value="${_formatCurrency(l.importe)}" onchange="ComunicadoDetalle.updateLineaPresupuesto(${i}, 'importe', this.value)"></td>
+                    <td><button class="btn btn-sm text-danger" onclick="ComunicadoDetalle.removeLineaPresupuesto(${i})"><i class="bi bi-trash"></i></button></td>
+                `;
+                tbody.appendChild(tr);
+            });
+            _attachCurrencyFormatters();
+        }
+
+        function addLineaPresupuesto() {
+            state.data.presupuesto[state.editingPresupuestoIdx].lineas.push({ descripcion: '', categoria: '', importe: 0 });
+            _renderModalLines();
+        }
+
+        function removeLineaPresupuesto(lineIdx) {
+            state.data.presupuesto[state.editingPresupuestoIdx].lineas.splice(lineIdx, 1);
+            _renderModalLines();
+            _recalcularTotalModal();
+        }
+
+        function updateLineaPresupuesto(lineIdx, field, val) {
+            const line = state.data.presupuesto[state.editingPresupuestoIdx].lineas[lineIdx];
+            if (field === 'importe') {
+                line[field] = parseFloat(val.replace(/,/g, '')) || 0;
+                _recalcularTotalModal();
+            } else {
+                line[field] = val;
+            }
+        }
+
+        function _recalcularTotalModal() {
+            const lines = state.data.presupuesto[state.editingPresupuestoIdx].lineas;
+            const total = lines.reduce((sum, l) => sum + (parseFloat(l.importe) || 0), 0);
+
+            // Actualizar total visual en modal
+            document.getElementById('modal-total-revision').textContent = _formatCurrency(total);
+
+            // Actualizar modelo del padre y tabla principal
+            state.data.presupuesto[state.editingPresupuestoIdx].monto = total;
+            _renderPresupuesto();
+        }
+
+        async function _guardarTodo() {
+            if (state.saving) return;
+            state.saving = true;
+            dom.btnGuardar.disabled = true;
+            dom.btnGuardar.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Guardando...';
+            try {
+                const payload = {
+                    comunicado: dom.genComunicado.value,
+                    // 'fecha' en DB es la Fecha del Documento
+                    fecha: dom.genFechaDocumento ? dom.genFechaDocumento.value : null,
+                    // 'fechaAsignacion' en DB es la Fecha de Registro
+                    fechaAsignacion: dom.genFecha.value,
+                    descripcion: dom.genDescripcion.value,
+                    idEstado: dom.genEstado.value,
+                    distrito: dom.genDistrito.value,
+                    siniestro: dom.genSiniestro.value,
+                    fenomeno: dom.genFenomeno.value,
+                    fi: dom.genFi.value,
+                    fondo: dom.genFondo.value,
+                    presupuesto: state.data.presupuesto,
+                    equipo: state.data.equipo,
+                    financiero: state.data.financiero,
+                    tickets: state.data.tickets,
+                    ajustador: dom.genAjustador.value,
+                    aseguradora: dom.genAseguradora.value // Include Aseguradora
+                };
+                await serverCall('updateComunicado', state.id, payload);
+                _showAlert('Éxito', 'Guardado exitosamente.', 'success');
+                await _loadData();
+            } catch (error) {
+                console.error(error);
+                _showAlert('Error al Guardar', error.message, 'error');
+            } finally {
+                state.saving = false;
+                dom.btnGuardar.disabled = false;
+                dom.btnGuardar.innerHTML = '<i class="bi bi-save"></i> Guardar Cambios';
+            }
+        }
+
+        function _setGlobalLoader(isLoading, msg) {
+            const l = document.getElementById('app-loader');
+            if (l) {
+                l.classList.toggle('d-none', !isLoading);
+                const m = document.getElementById('app-loader-message');
+                if (m) m.textContent = msg;
+            }
+        }
+
+        return {
+            init,
+            mount: (container) => init(container), // Alias para mount
+            render: () => '<div id="comunicado-detalle-container"></div>', // Método render requerido
+            updateFinanciero, removeFinanciero,
+            updatePresupuesto, removePresupuesto,
+            updateEquipo, removeEquipo,
+            updateTicket, removeTicket,
+            // Exportar funciones del modal
+            abrirEditorPresupuesto,
+            addLineaPresupuesto,
+            removeLineaPresupuesto,
+            updateLineaPresupuesto,
+            calcularSupervision,
+            toggleManualInput
+        };
+
+    })();
+</script>

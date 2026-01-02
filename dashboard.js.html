@@ -1,0 +1,162 @@
+<script>
+    (function () {
+        // Namespace global para el Dashboard
+        globalThis.Dashboard = {
+            render: function () {
+                // El contenido HTML ya se cargó vía template 'home'
+                // Solo retornamos el HTML (que ya tenemos en memoria si usáramos cache, 
+                // pero aquí el framework espera que 'render' devuelva el string HTML).
+                // Pero espera... el framework actual llama a loadServerFragment para el script.
+                // Y para el template usa fetchTemplates.
+
+                // Si este script se carga, significa que se usó lazyRouteConfigs.
+                // El render debe devolver el HTML del template.
+                return TEMPLATES['home'] || '<div class="alert alert-danger">Error: Plantilla home no cargada</div>';
+            },
+
+            mount: function (el) {
+                console.log('--- Montando Dashboard ---');
+                this.initDashboard();
+            },
+
+            initDashboard: function () {
+                // 1. Set Date
+                const dateEl = document.getElementById('current-date');
+                if (dateEl) {
+                    const options = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
+                    dateEl.innerText = new Date().toLocaleDateString('es-ES', options);
+                }
+
+                // 2. Fetch Stats
+                // Usamos globalThis.runServer si está disponible, o google.script.run directo
+                const runner = (globalThis.runServer)
+                    ? globalThis.runServer
+                    : (fn, ...args) => new Promise((resolve, reject) => {
+                        google.script.run
+                            .withSuccessHandler(resolve)
+                            .withFailureHandler(reject)
+                        [fn](...args);
+                    });
+
+                google.script.run
+                    .withSuccessHandler((response) => {
+                        if (response.success) {
+                            // Animate Numbers
+                            this.animateValue('stat-total', 0, response.stats.totalComunicados, 800);
+                            this.animateValue('stat-pendientes', 0, response.stats.pendientes, 800);
+                            this.animateValue('stat-completados', 0, response.stats.completados, 800);
+
+                            // Render Table
+                            this.renderRecentTable(response.recentActivity);
+                        } else {
+                            console.error("Error fetching dashboard stats:", response.message);
+                            this.setSafeText('stat-total', "-");
+                            this.renderErrorTable();
+                        }
+                    })
+                    .withFailureHandler((err) => {
+                        console.error('Fallo al obtener stats', err);
+                        this.renderErrorTable();
+                    })
+                    .getDashboardStats();
+            },
+
+            animateValue: function (id, start, end, duration) {
+                const obj = document.getElementById(id);
+                if (!obj) return;
+
+                if (start === end) { obj.innerText = end; return; }
+                const range = end - start;
+                let current = start;
+                const increment = end > start ? 1 : -1;
+                const stepTime = Math.abs(Math.floor(duration / range));
+
+                const timer = setInterval(() => {
+                    current += increment;
+                    obj.innerText = current;
+                    if (current == end) {
+                        clearInterval(timer);
+                    }
+                }, stepTime);
+            },
+
+            formatCurrency: function (amount) {
+                if (amount === null || amount === undefined || isNaN(amount)) return '$0.00';
+                return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(amount);
+            },
+
+            renderRecentTable: function (items) {
+                const tbody = document.getElementById('recent-activity-body');
+                if (!tbody) return;
+
+                tbody.innerHTML = '';
+
+                if (!items || items.length === 0) {
+                    tbody.innerHTML = `<tr><td colspan="4" class="text-center py-4 text-muted">No hay actividad reciente</td></tr>`;
+                    return;
+                }
+
+                items.forEach(item => {
+                    const statusBadge = item.status == 1
+                        ? '<span class="badge bg-warning text-dark bg-opacity-25 border border-warning rounded-pill">En Seguimiento</span>'
+                        : '<span class="badge bg-success bg-opacity-25 text-success border border-success rounded-pill">Completado</span>';
+
+                    // La fecha ya viene formateada del servidor (YYYY-MM-DD), la usamos directo para evitar problemas de timezone/parsing
+                    const fechaFmt = item.fecha || '-';
+
+                    const row = `
+                        <tr>
+                            <td class="ps-4 fw-medium text-dark">
+                                <div class="d-flex flex-column">
+                                    <span class="text-truncate" style="max-width: 250px;" title="${this.escapeHtml(item.descripcion)}">
+                                        ${this.escapeHtml(item.descripcion || 'Sin Descripción')}
+                                    </span>
+                                    <span class="small text-muted">
+                                        <span class="fw-bold text-primary">${this.escapeHtml(item.titulo)}</span> 
+                                        <span class="mx-1">•</span> 
+                                        ${this.formatCurrency(item.presupuesto)}
+                                    </span>
+                                </div>
+                            </td>
+                            <td class="text-muted small">${fechaFmt}</td>
+                            <td>${statusBadge}</td>
+                            <td class="pe-4 text-end">
+                                <button class="btn btn-sm btn-icon btn-light rounded-circle text-primary" onclick="Dashboard.viewDetails('${item.id}')">
+                                    <i class="bi bi-eye"></i>
+                                </button>
+                            </td>
+                        </tr>
+                    `;
+                    tbody.insertAdjacentHTML('beforeend', row);
+                });
+            },
+
+            renderErrorTable: function () {
+                const tbody = document.getElementById('recent-activity-body');
+                if (tbody) tbody.innerHTML = `<tr><td colspan="4" class="text-center py-4 text-danger">Error cargando datos</td></tr>`;
+            },
+
+            setSafeText: function (id, text) {
+                const el = document.getElementById(id);
+                if (el) el.innerText = text;
+            },
+
+            viewDetails: function (id) {
+                if (!id) return;
+                console.log('Navegando a detalle de:', id);
+                sessionStorage.setItem('currentComunicadoId', id);
+                location.hash = '#/comunicado-detalle';
+            },
+
+            escapeHtml: function (text) {
+                if (!text) return '';
+                return String(text)
+                    .replace(/&/g, "&amp;")
+                    .replace(/</g, "&lt;")
+                    .replace(/>/g, "&gt;")
+                    .replace(/"/g, "&quot;")
+                    .replace(/'/g, "&#039;");
+            }
+        };
+    })();
+</script>

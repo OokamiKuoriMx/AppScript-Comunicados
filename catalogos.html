@@ -1,0 +1,358 @@
+<div class="container-fluid p-4">
+    <style>
+        /* =================================================================================
+           PREMIUM DATAGRID / SHEET DESIGN SYSTEM
+           ================================================================================= */
+
+        :root {
+            --sheet-border-color: #e2e8f0;
+            --sheet-header-bg: #f8fafc;
+            --sheet-header-text: #475569;
+            --sheet-row-hover: #f1f5f9;
+            --sheet-readonly-bg: #f8fafc;
+            --sheet-readonly-text: #64748b;
+            --sheet-accent: #3b82f6;
+            /* Azul moderno */
+            --sheet-accent-light: #eff6ff;
+            --sheet-modified: #fffbeb;
+            /* Amber - Cambios */
+            --sheet-modified-text: #b45309;
+            --font-family-mono: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+        }
+
+        .sheet-container {
+            border-radius: 8px;
+            border: 1px solid var(--sheet-border-color);
+            background: #fff;
+            position: relative;
+            /* Scrollbar styling for this container */
+            scrollbar-width: thin;
+            scrollbar-color: #cbd5e1 transparent;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            /* Manage overflow internally */
+        }
+
+        /* Contenedor escroleable independiente para la tabla */
+        .sheet-scroll-area {
+            overflow: auto;
+            max-height: 75vh;
+            width: 100%;
+        }
+
+        .sheet-table {
+            margin-bottom: 0;
+            font-size: 13px;
+            /* Slightly larger for readability */
+            border-collapse: separate;
+            border-spacing: 0;
+            width: max-content;
+            min-width: 100%;
+            table-layout: fixed;
+            font-family: var(--bs-body-font-family);
+        }
+
+        /* --- HEADERS --- */
+        .sheet-table th {
+            background-color: var(--sheet-header-bg);
+            color: var(--sheet-header-text);
+            position: sticky;
+            top: 0;
+            z-index: 20;
+            /* Higher than content */
+            border-bottom: 1px solid var(--sheet-border-color);
+            border-right: 1px solid var(--sheet-border-color);
+            padding: 10px 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            font-size: 0.7rem;
+            letter-spacing: 0.03em;
+            user-select: none;
+            box-shadow: 0 1px 0 rgba(0, 0, 0, 0.05);
+            /* Subtle separation */
+        }
+
+        /* Highlight header on hover to indicate interactability (e.g. sort/resize implied) */
+        .sheet-table th:hover {
+            background-color: #f1f5f9;
+        }
+
+        /* --- CELLS --- */
+        .sheet-table td {
+            padding: 0;
+            border-bottom: 1px solid var(--sheet-border-color);
+            border-right: 1px solid var(--sheet-border-color);
+            height: 38px;
+            /* Comfortable touch target */
+            background-color: #fff;
+            position: relative;
+        }
+
+        /* Row Hover Effect */
+        .sheet-table tr:hover td {
+            background-color: var(--sheet-row-hover);
+        }
+
+        /* --- INPUTS & SELECTS (The "Seamless" Look) --- */
+        .sheet-input,
+        .sheet-select {
+            width: 100%;
+            height: 100%;
+            border: 2px solid transparent;
+            /* Prepare for focus state */
+            padding: 0 10px;
+            font-size: 13px;
+            background: transparent;
+            outline: none;
+            color: #1e293b;
+            transition: all 0.15s ease;
+            border-radius: 0;
+        }
+
+        /* Focus State: Excel-like highlight */
+        .sheet-input:focus,
+        .sheet-select:focus {
+            background: #fff;
+            border-color: var(--sheet-accent);
+            box-shadow: inset 0 0 0 1px var(--sheet-accent);
+            z-index: 5;
+            /* Bring to front */
+            position: relative;
+        }
+
+        /* Select specific */
+        .sheet-select {
+            cursor: pointer;
+            /* Custom drop arrow logic could go here, or stick to native for reliability */
+        }
+
+        /* --- READ ONLY FIELDS --- */
+        /* Applied via wrapper or class on input */
+        .sheet-input[readonly] {
+            background-color: var(--sheet-readonly-bg);
+            color: var(--sheet-readonly-text);
+            font-weight: 500;
+            cursor: default;
+        }
+
+        /* Special highlighting for certain read-only columns (IDs, References) */
+        .sheet-input[readonly].text-primary {
+            color: var(--sheet-accent) !important;
+            background-color: var(--sheet-accent-light) !important;
+        }
+
+        /* --- MODIFIED STATE --- */
+        .cell-modified,
+        .cell-modified .sheet-input,
+        .cell-modified .sheet-select {
+            background-color: var(--sheet-modified) !important;
+            color: var(--sheet-modified-text);
+        }
+
+        /* Triangle indicator for modified cells (Excel style) */
+        .cell-modified::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            right: 0;
+            width: 0;
+            height: 0;
+            border-style: solid;
+            border-width: 0 8px 8px 0;
+            border-color: transparent #f59e0b transparent transparent;
+            z-index: 6;
+        }
+
+        /* --- FILTER ROW --- */
+        .filter-row th {
+            top: 38px;
+            /* Height of first header row approx */
+            padding: 4px;
+            background-color: #fff;
+            border-bottom: 2px solid var(--sheet-border-color);
+            z-index: 19;
+        }
+
+        .sheet-filter-input {
+            width: 100%;
+            padding: 4px 8px;
+            font-size: 11px;
+            border: 1px solid #cbd5e1;
+            border-radius: 4px;
+            background: #f8fafc;
+            color: #334155;
+            transition: 0.2s;
+        }
+
+        .sheet-filter-input:focus {
+            background: #fff;
+            border-color: var(--sheet-accent);
+            outline: none;
+            box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1);
+        }
+
+        /* --- FLOATING ACTION BAR --- */
+        #batch-save-bar {
+            position: fixed;
+            bottom: 30px;
+            left: 50%;
+            transform: translateX(-50%) translateY(100px);
+            /* Start hidden below */
+            background: #1e293b;
+            color: white;
+            padding: 12px 24px;
+            border-radius: 12px;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3);
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            z-index: 1050;
+            transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        /* Class to show bar triggered by JS */
+        #batch-save-bar[style*="display: flex"] {
+            transform: translateX(-50%) translateY(0);
+        }
+
+        /* --- COLUMN WIDTHS (Optimized) --- */
+        /* 1. Referencia (Important) */
+        .sheet-table th:nth-child(1) {
+            min-width: 140px;
+            width: 140px;
+        }
+
+        /* 2. Ajustador */
+        .sheet-table th:nth-child(2) {
+            min-width: 180px;
+            width: 180px;
+        }
+
+        /* 3. Comunicado (Code) */
+        .sheet-table th:nth-child(3) {
+            min-width: 100px;
+            width: 100px;
+        }
+
+        /* 4. Siniestro */
+        .sheet-table th:nth-child(4) {
+            min-width: 250px;
+            width: 250px;
+        }
+
+        /* 5. Aseguradora */
+        .sheet-table th:nth-child(5) {
+            min-width: 160px;
+            width: 160px;
+        }
+
+        /* 6. Fecha */
+        .sheet-table th:nth-child(6) {
+            min-width: 110px;
+            width: 110px;
+        }
+
+        /* 7. Descripcion */
+        .sheet-table th:nth-child(7) {
+            min-width: 300px;
+            width: auto;
+        }
+
+        /* Flex remaining space if possible, else auto */
+        /* 8. Distrito */
+        .sheet-table th:nth-child(8) {
+            min-width: 140px;
+            width: 140px;
+        }
+
+        /* 9. Estado */
+        .sheet-table th:nth-child(9) {
+            min-width: 120px;
+            width: 120px;
+        }
+    </style>
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h2 class="h3 mb-2 text-gray-800">
+                <i class="bi bi-database text-primary me-2"></i>Catálogos
+            </h2>
+            <p class="text-muted mb-0">Gestión de tablas auxiliares del sistema.</p>
+        </div>
+        <div class="d-flex gap-2">
+            <select id="cat-selector" class="form-select w-auto fw-bold text-primary border-primary">
+                <option value="aseguradoras">Aseguradoras</option>
+                <option value="ajustadores">Ajustadores</option>
+                <option value="distritosRiego">Distritos de Riego</option>
+                <option value="siniestros">Siniestros</option>
+                <option value="datosGenerales">Comunicados (Maestro)</option>
+            </select>
+            <button id="btn-add" class="btn btn-primary">
+                <i class="bi bi-plus-lg me-1"></i> Nuevo Registro
+            </button>
+        </div>
+    </div>
+
+    <div class="card shadow-sm border-0">
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0" id="cat-table">
+                    <thead class="bg-light text-secondary" id="cat-thead">
+                        <!-- Header Content Injected Here -->
+                    </thead>
+                    <tbody id="cat-tbody">
+                        <!-- Dynamic Data -->
+                    </tbody>
+                </table>
+            </div>
+            <div id="loader-overlay"
+                class="d-none position-absolute top-0 start-0 w-100 h-100 d-flex justify-content-center align-items-center bg-white bg-opacity-75"
+                style="z-index: 5;">
+                <div class="spinner-border text-primary" role="status"></div>
+            </div>
+        </div>
+        <div class="card-footer bg-white py-3 border-top-0 d-flex justify-content-between text-muted small">
+            <span id="cat-count">0 registros</span>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Genérico Edición -->
+<div class="modal fade" id="modal-catalogo" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header border-0 pb-0">
+                <h5 class="modal-title fw-bold text-primary" id="modal-title">Editar Registro</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <form id="form-catalogo">
+                    <input type="hidden" id="field-id">
+                    <div id="dynamic-fields" class="row g-3">
+                        <!-- Campos dinámicos -->
+                    </div>
+                </form>
+                <div id="modal-error" class="alert alert-danger mt-3 d-none small"></div>
+            </div>
+            <div class="modal-footer border-0 pt-0">
+                <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancelar</button>
+                <button type="button" class="btn btn-primary" id="btn-save">
+                    <i class="bi bi-save me-1"></i> Guardar
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Barra Flotante de Guardado -->
+<div id="batch-save-bar" style="display: none;">
+    <span id="batch-changes-count">0 cambios</span>
+    <button id="btn-batch-save" class="btn btn-sm btn-success rounded-pill px-3">
+        <i class="bi bi-save me-1"></i> Guardar Todo
+    </button>
+    <button id="btn-batch-cancel" class="btn btn-sm btn-outline-light rounded-pill px-3">
+        Deshacer
+    </button>
+</div>

@@ -1,0 +1,1522 @@
+﻿<script>
+    /**
+     * =================================================================
+     * COMPONENTE DE GESTIÃ“N DE CUENTAS Y COMUNICADOS
+     * =================================================================
+     * Arquitectura en 7 Pasos Secuenciales para Carga Coordinada
+     * 
+     * REGLA: Cada paso DEBE completarse antes de que el siguiente comience.
+     * Los pasos son atÃ³micos e inmediatos.
+     * 
+     * FLUJO DE CARGA:
+     * PASO 1: Crear estado inicial
+     * PASO 2: Cargar HTML del componente
+     * PASO 3: Inicializar DOM y event listeners
+     * PASO 4: Cargar catÃ¡logos y cuentas en paralelo (Promise.all = 1 paso atÃ³mico)
+     * PASO 5: Seleccionar primera cuenta
+     * PASO 6: Cargar comunicados de la primera cuenta
+     * PASO 7: Componente listo para usar
+     * 
+     * NOTA: Las funciones _load* son subfunciones/utilidades, NO pasos principales.
+     * 
+     * @version 4.0 (7 pasos secuenciales)
+     */
+    globalThis.Cuentas = (() => {
+        'use strict';
+
+        // =========================================================================
+        // ESTADO GLOBAL Y UTILIDADES
+        // =========================================================================
+
+        let state = _estadoInicial();
+
+        // Utilidad para llamadas al servidor
+        const idsAreEqual = (a, b) => {
+            if (a == null || b == null) return false;
+            return String(a).trim() === String(b).trim();
+        };
+
+        // Utilidad para verificar si un valor tiene contenido
+        const hasValue = (value) => {
+            if (value == null) return false;
+            return String(value).trim() !== '';
+        };
+
+        // DefiniciÃ³n de fuentes de datos para comboboxes
+        const COMBO_SOURCES = {
+            estado: { catalog: 'estados', labelKeys: ['nombre', 'estado'] },
+            distrito: { catalog: 'distritosRiego', labelKeys: ['distritoRiego', 'nombre'] },
+            siniestro: { catalog: 'siniestros', labelKeys: ['nombre', 'siniestro'] },
+            ajustador: { catalog: 'ajustadores', labelKeys: ['codigo', 'nombreAjustador', 'nombre', 'ajustador'] },
+            // Combos para Alta Express (usan los mismos catÃ¡logos)
+            express_ajustador: { catalog: 'ajustadores', labelKeys: ['codigo', 'nombreAjustador', 'nombre', 'ajustador'] },
+            express_nombreCuenta: { catalog: 'referencias', labelKeys: ['referencia', 'cuenta', 'nombre'] },
+            express_estado: { catalog: 'estados', labelKeys: ['nombre', 'estado'] },
+            express_distrito: { catalog: 'distritosRiego', labelKeys: ['distritoRiego', 'nombre'] },
+            express_siniestro: { catalog: 'siniestros', labelKeys: ['nombre', 'siniestro'] },
+            express_siniestroAseguradora: { catalog: 'aseguradoras', labelKeys: ['aseguradora', 'nombre'] }
+        };
+
+        // =========================================================================
+        // UTILIDADES DE RENDER INICIAL
+        // =========================================================================
+
+        const _renderSpinnerInicial = (container) => {
+            container.innerHTML = `
+            <div class="d-flex justify-content-center align-items-center" style="min-height: 400px;">
+                <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">Cargando...</span>
+                </div>
+            </div>
+        `;
+        };
+
+        const _renderErrorInicial = (container, message) => {
+            container.innerHTML = `
+            <div class="alert alert-danger">
+                <h4>Error al cargar el componente</h4>
+                <p>${message}</p>
+            </div>
+        `;
+        };
+
+        // =========================================================================
+        // FUNCIONES DE RENDERIZADO
+        // =========================================================================
+        const _renderPlaceholder = (elementKey, title, subtitle) => {
+            const element = state.dom[elementKey];
+            if (!element) return;
+            element.innerHTML = `
+            <div class="border rounded p-4 text-center text-muted bg-light-subtle">
+                <p class="mb-1 fw-semibold">${title}</p>
+                <p class="mb-0 small">${subtitle}</p>
+            </div>`;
+        };
+
+        const _renderSpinner = (elementKey, message) => {
+            const element = state.dom[elementKey];
+            if (!element) return;
+            element.innerHTML = `
+            <div class="border rounded p-4 text-center text-muted bg-light-subtle">
+                <div class="spinner-border spinner-border-sm mb-2" role="status"></div>
+                <p class="mb-0 small">${message}</p>
+            </div>`;
+        };
+
+        const _buildErrorTraceDetails = (trace) => {
+            if (!Array.isArray(trace) || !trace.length) {
+                return '';
+            }
+            const items = trace.map(entry => {
+                const level = escapeHtml(entry?.level ?? 'nivel');
+                const name = escapeHtml(entry?.name ?? 'origen');
+                const messageText = escapeHtml(entry?.message ?? 'Sin detalles disponibles');
+                let contextHtml = '';
+                if (entry && typeof entry.context === 'object' && entry.context !== null) {
+                    const pairs = Object.keys(entry.context).map(key => `${escapeHtml(key)}=${escapeHtml(String(entry.context[key] ?? ''))}`);
+                    if (pairs.length) {
+                        contextHtml = `<div class="text-muted small">${pairs.join(', ')}</div>`;
+                    }
+                }
+                return `<li><strong>${level}</strong> Â· ${name}: ${messageText}${contextHtml}</li>`;
+            }).join('');
+            return `<details class="mt-2"><summary>Detalles tÃ©cnicos</summary><ul class="mt-2 small text-start mb-0">${items}</ul></details>`;
+        };
+
+        const _renderError = (elementKey, message, errorTrace = []) => {
+            const element = state.dom[elementKey];
+            if (!element) return;
+            const safeMessage = escapeHtml(message || 'OcurriÃ³ un error inesperado.');
+            const details = _buildErrorTraceDetails(errorTrace);
+            element.innerHTML = `<div class="alert alert-danger">${safeMessage}${details}</div>`;
+        };
+
+        const _renderCuentas = () => {
+            const { dom, cuentas, cuentaSeleccionadaId } = state;
+            if (!dom.listaCuentas) return;
+
+            if (!cuentas.length) {
+                _renderPlaceholder('listaCuentas', 'No hay referencias registradas', 'Agrega una referencia para comenzar.');
+                return;
+            }
+
+            const html = cuentas.map(cuenta => {
+                const cuentaId = cuenta.id;
+                const isActive = idsAreEqual(cuentaId, cuentaSeleccionadaId);
+                const accionesHtml = isActive ? `
+                <div class="btn-group btn-group-sm">
+                    <button type="button" class="btn btn-outline-secondary btn-edit" data-id="${cuenta.id}" title="Editar"><i class="bi bi-pencil"></i></button>
+                    <button type="button" class="btn btn-outline-danger btn-delete" data-id="${cuenta.id}" data-nombre="${escapeHtml(cuenta.referencia)}" title="Eliminar"><i class="bi bi-trash"></i></button>
+                </div>` : '';
+
+                return `
+                <div class="card account-item border ${isActive ? 'border-primary shadow-sm' : ''}" data-id="${cuenta.id}" role="listitem" style="cursor: pointer;">
+                    <div class="card-body d-flex justify-content-between align-items-center gap-3 py-2">
+                        <span class="fw-semibold">${escapeHtml(cuenta.referencia)}</span>
+                        ${accionesHtml}
+                    </div>
+                </div>`;
+            }).join('');
+            dom.listaCuentas.innerHTML = html;
+        };
+
+        const _renderComunicados = () => {
+            const { dom, comunicados, cuentaSeleccionadaId, comunicadoSeleccionadoId } = state;
+            if (!dom.panelComunicados) return;
+
+            if (!hasValue(cuentaSeleccionadaId)) {
+                _renderPlaceholder('panelComunicados', 'Selecciona una referencia', 'AquÃ­ verÃ¡s sus comunicados.');
+                return;
+            }
+            if (!comunicados.length) {
+                _renderPlaceholder('panelComunicados', 'No hay comunicados', 'Agrega un comunicado para esta cuenta.');
+                return;
+            }
+
+            const html = comunicados.map(com => {
+                const comunicadoId = com.id;
+                const isSelected = idsAreEqual(comunicadoId, comunicadoSeleccionadoId);
+                const comunicadoNombre = escapeHtml(com?.comunicado ?? com?.comunicados?.comunicado ?? 'SIN COMUNICADO');
+                const descripcion = escapeHtml(
+                    com?.descripcion
+                    ?? com?.datosGenerales?.descripcion
+                    ?? 'Sin descripciÃ³n'
+                );
+
+                // Mapeo seguro de estatus a etiqueta y color
+                const statusMap = {
+                    '1': { label: 'Activo', class: 'bg-soft-success text-success' },
+                    '0': { label: 'Cerrado', class: 'bg-soft-secondary text-secondary' },
+                    '2': { label: 'Pausado', class: 'bg-soft-warning text-warning' }
+                };
+                const statusKey = String(com?.status ?? com?.comunicado?.status ?? '1');
+                const statusInfo = statusMap[statusKey] || { label: 'Desconocido', class: 'bg-light text-muted border-light' };
+
+                const fecha = escapeHtml(com?.fecha ?? '');
+
+                return `
+                <div class="comunicado-card mb-3 ${isSelected ? 'selected' : ''}" 
+                     data-id="${com.id}" 
+                     role="button" tabindex="0">
+                    <div class="p-3">
+                        <div class="d-flex justify-content-between align-items-start mb-2">
+                            <div class="d-flex align-items-center gap-3">
+                                <div class="icon-box bg-soft-primary">
+                                    <i class="bi bi-file-earmark-text"></i>
+                                </div>
+                                <div>
+                                    <h6 class="mb-0 fw-bold text-dark text-uppercase">${comunicadoNombre}</h6>
+                                    <span class="text-muted small" style="font-size: 0.75rem;">
+                                        <i class="bi bi-calendar3 me-1"></i>${fecha}
+                                    </span>
+                                </div>
+                            </div>
+                            <span class="badge-modern ${statusInfo.class}">${statusInfo.label}</span>
+                        </div>
+                        
+                        <div class="mt-3 mb-3">
+                             <p class="text-muted small mb-0 line-clamp-2" style="line-height: 1.5;">
+                                ${descripcion}
+                            </p>
+                        </div>
+
+                        <div class="d-flex justify-content-between align-items-center pt-2 border-top border-light-subtle">
+                             <div class="d-flex align-items-center gap-2">
+                                <!-- Placeholder para futuros metadatos -->
+                             </div>
+                             <div class="action-btn-group">
+                                 <button type="button" class="btn btn-sm btn-light text-danger btn-delete-comunicado rounded-circle border-0 shadow-sm" 
+                                    data-id="${com.id}" data-nombre="${comunicadoNombre}" 
+                                    title="Eliminar comunicado" style="width: 32px; height: 32px; display: flex; align-items: center; justify-content: center;">
+                                    <i class="bi bi-trash"></i>
+                                 </button>
+                             </div>
+                        </div>
+                    </div>
+                </div>`;
+            }).join('');
+            dom.panelComunicados.innerHTML = html;
+        };
+
+        const _updateTotalCuentasBadge = () => {
+            const { dom } = state;
+            const total = state.cuentas.length;
+
+            if (total > 0) {
+                dom.badgeTotalCuentas.textContent = `${total} ${total === 1 ? 'referencia' : 'referencias'}`;
+                dom.badgeTotalCuentas.hidden = false;
+            } else {
+                dom.badgeTotalCuentas.hidden = true;
+            }
+        };
+
+        const _actualizarSeleccionCuenta = (cuenta, { cargarComunicados = false } = {}) => {
+            state.cuentaSeleccionadaId = cuenta?.id ?? null;
+            devLog('Cuenta seleccionada actualizada a ID:', state.cuentaSeleccionadaId);
+            state.cuentaSeleccionadaNombre = cuenta?.referencia ?? '';
+            devLog('Nombre de cuenta seleccionada:', state.cuentaSeleccionadaNombre);
+            if (state.dom.btnNuevoComunicado) {
+                state.dom.btnNuevoComunicado.disabled = !cuenta;
+            }
+
+            if (state.dom.badgeCuentaSeleccionada) {
+                state.dom.badgeCuentaSeleccionada.textContent = cuenta ? cuenta.referencia : 'Sin referencia';
+                state.dom.badgeCuentaSeleccionada.classList.toggle('text-bg-primary', !!cuenta);
+                state.dom.badgeCuentaSeleccionada.classList.toggle('text-bg-secondary', !cuenta);
+            }
+
+            _renderCuentas();
+
+            if (cargarComunicados) {
+                _loadComunicados(cuenta?.id);
+            }
+        };
+
+        const _actualizarSeleccionComunicado = (comunicado) => {
+            state.comunicadoSeleccionadoId = comunicado?.id ?? null;
+            _renderComunicados();
+        };
+
+        // =========================================================================
+        // MANEJADORES DE EVENTOS (Para interacciÃ³n del usuario DESPUÃ‰S del PASO 7)
+        // =========================================================================
+
+        const _handlePanelCuentasClick = (event) => {
+            const editBtn = event.target.closest('.btn-edit');
+            if (editBtn) {
+                const targetId = editBtn.dataset.id;
+                const cuenta = state.cuentas.find(c => idsAreEqual(c.id, targetId));
+                if (cuenta) _openCuentaModal(cuenta);
+                return;
+            }
+
+            const deleteBtn = event.target.closest('.btn-delete');
+            if (deleteBtn) {
+                _openDeleteModal(deleteBtn.dataset.id, deleteBtn.dataset.nombre);
+                return;
+            }
+            // SelecciÃ³n de cuenta
+            const item = event.target.closest('.account-item');
+            if (item) {
+                const targetId = item.dataset.id;
+                devLog('Seleccionando cuenta ID:', targetId);
+                const cuenta = state.cuentas.find(c => idsAreEqual(c.id, targetId));
+                devLog('Cuenta encontrada:', cuenta);
+                _actualizarSeleccionCuenta(cuenta, { cargarComunicados: true });
+            }
+        };
+
+        const _handlePanelComunicadosClick = (event) => {
+            const deleteBtn = event.target.closest('.btn-delete-comunicado');
+            if (deleteBtn) {
+                // Prevenir que el click se propague a la card y la seleccione
+                event.stopPropagation();
+                _openDeleteComunicadoModal(deleteBtn.dataset.id, deleteBtn.dataset.nombre);
+                return;
+            }
+
+            const item = event.target.closest('.comunicado-item, .comunicado-card');
+            if (item) {
+                const targetId = item.dataset.id;
+                const comunicado = state.comunicados.find(c => idsAreEqual(c.id, targetId));
+                _actualizarSeleccionComunicado(comunicado);
+            }
+        };
+
+        const _handleCuentaClick = (cuentaId) => {
+            const cuenta = state.cuentas.find(c => idsAreEqual(c.id, cuentaId));
+            if (cuenta) {
+                _actualizarSeleccionCuenta(cuenta, { cargarComunicados: true });
+            }
+        };
+
+        const _handleComunicadoClick = (comunicadoId) => {
+            const comunicado = state.comunicados.find(c => idsAreEqual(c.id, comunicadoId));
+            if (comunicado) {
+                _actualizarSeleccionComunicado(comunicado);
+            }
+        };
+
+        const _handleNuevaCuentaClick = () => {
+            _resetCuentaModal();
+            state.modals.cuenta.show();
+        };
+
+        const _handleNuevoComunicadoClick = async () => {
+            if (!hasValue(state.cuentaSeleccionadaId)) return;
+
+            const btn = state.dom.btnNuevoComunicado;
+            _setButtonLoading(btn, true, 'Cargando...');
+
+            try {
+                await _loadCatalogos();
+
+                _resetComunicadoModal();
+                state.dom.modalCuentaSeleccionada.textContent = state.cuentaSeleccionadaNombre;
+                state.dom.comunicadoFecha.value = new Date().toISOString().slice(0, 10);
+
+                _populateCatalogInputs();
+
+                state.modals.comunicado.show();
+
+            } catch (err) {
+                _showModalError(err.message);
+                globalThis.showToast?.('Error al cargar datos para el formulario.', 'error');
+            } finally {
+                _setButtonLoading(btn, false);
+            }
+        };
+
+        const _openCuentaModal = async (cuenta = null) => {
+            const { dom, modals } = state;
+            dom.formCuenta?.classList.remove('was-validated');
+            dom.formCuenta?.reset();
+
+            const modalTitle = dom.modalCuenta ? dom.modalCuenta.querySelector('.modal-title') : null;
+            if (modalTitle) {
+                modalTitle.textContent = cuenta ? 'Editar Referencia' : 'Agregar Referencia';
+            }
+            const cuentaId = hasValue(cuenta?.id) ? cuenta.id : '';
+            const cuentaIdInput = dom.modalCuenta?.querySelector('#cuentaId');
+            const nombreCuentaInput = dom.modalCuenta?.querySelector('#nombreCuenta');
+            if (cuentaIdInput) cuentaIdInput.value = cuentaId;
+            if (nombreCuentaInput) nombreCuentaInput.value = cuenta?.referencia || '';
+
+            // Cargar catÃ¡logos antes de mostrar el modal
+            try {
+                await _loadCatalogos();
+
+                // Poblar el combobox de ajustador
+                const ajustadorCombo = state.combos.ajustador;
+                if (ajustadorCombo?.input && ajustadorCombo?.hidden) {
+                    // Si estamos editando, buscar el ajustador actual
+                    if (cuenta?.idAjustador) {
+                        const ajustadorActual = state.catalogos.ajustadores.find(
+                            a => String(a.id) === String(cuenta.idAjustador)
+                        );
+                        if (ajustadorActual) {
+                            ajustadorCombo.input.value = ajustadorActual.codigo || ajustadorActual.nombreAjustador || ajustadorActual.nombre || ajustadorActual.ajustador || '';
+                            ajustadorCombo.hidden.value = ajustadorActual.id;
+                        } else {
+                            ajustadorCombo.input.value = '';
+                            ajustadorCombo.hidden.value = '';
+                        }
+                    } else {
+                        ajustadorCombo.input.value = '';
+                        ajustadorCombo.hidden.value = '';
+                    }
+                    // Renderizar sugerencias iniciales
+                    _renderComboSuggestions('ajustador', '', { autoOpen: false });
+                }
+            } catch (err) {
+                console.error('Error al cargar catÃ¡logos para modal:', err);
+            }
+
+            modals.cuenta?.show();
+        };
+
+        const _handleSubmitCuenta = async (event) => {
+            event.preventDefault();
+            const { dom, modals } = state;
+            if (!dom.formCuenta?.checkValidity()) {
+                dom.formCuenta?.classList.add('was-validated');
+                return;
+            }
+
+            const id = dom.modalCuenta?.querySelector('#cuentaId')?.value;
+            const nombreInput = dom.modalCuenta?.querySelector('#nombreCuenta');
+
+            // Obtener datos del ajustador
+            const ajustadorCombo = state.combos.ajustador;
+            const ajustadorNombre = ajustadorCombo?.input?.value?.trim().toUpperCase() || '';
+            let ajustadorId = ajustadorCombo?.hidden?.value || '';
+
+            _setButtonLoading(dom.btnGuardarCuenta, true);
+            try {
+                // Si hay nombre de ajustador pero no ID, es un ajustador nuevo
+                if (ajustadorNombre && !ajustadorId) {
+                    devLog('Creando nuevo ajustador:', ajustadorNombre);
+                    const ajustadorResult = await serverCall('ensureCatalogRecord', 'ajustadores', {
+                        codigo: ajustadorNombre
+                    });
+                    if (ajustadorResult?.id) {
+                        ajustadorId = ajustadorResult.id;
+                        // Actualizar catÃ¡logo local si se creÃ³ uno nuevo
+                        if (ajustadorResult.created) {
+                            state.catalogos.ajustadores.push({
+                                id: ajustadorId,
+                                codigo: ajustadorNombre
+                            });
+                        }
+                    }
+                }
+
+                // Preparar el registro completo
+                const record = {
+                    referencia: nombreInput?.value?.toUpperCase(),
+                    idAjustador: ajustadorId || null
+                };
+
+                const operation = id ? 'updateRow' : 'createRow';
+                const args = id ? ['cuentas', id, record] : ['cuentas', record];
+                const savedData = await serverCall(operation, ...args);
+
+                state.cuentaSeleccionadaId = savedData.id;
+                modals.cuenta?.hide();
+                globalThis.showToast?.(id ? 'Referencia actualizada.' : 'Referencia creada.');
+                await _loadCuentas();
+            } catch (error) {
+                alert(`Error al guardar: ${error.message}`);
+            } finally {
+                _setButtonLoading(dom.btnGuardarCuenta, false);
+            }
+        };
+
+        const _openDeleteModal = (id, nombre) => {
+            const { dom, modals } = state;
+            if (dom.deleteAccountName) {
+                dom.deleteAccountName.textContent = nombre;
+            }
+
+            const originalBtn = dom.btnConfirmDelete;
+            if (originalBtn?.parentNode) {
+                const newBtn = originalBtn.cloneNode(true);
+                originalBtn.parentNode.replaceChild(newBtn, originalBtn);
+                state.dom.btnConfirmDelete = newBtn;
+                newBtn.addEventListener('click', () => _confirmDelete(id), { once: true });
+            }
+
+            modals.delete?.show();
+        };
+
+        const _confirmDelete = async (id) => {
+            const { dom, modals } = state;
+            _setButtonLoading(dom.btnConfirmDelete, true, 'Eliminando...');
+            try {
+                // Eliminación en cascada: cuenta + todos sus comunicados y datos asociados
+                await serverCall('deleteCuenta', id);
+                if (idsAreEqual(state.cuentaSeleccionadaId, id)) {
+                    state.cuentaSeleccionadaId = null;
+                    state.comunicados = [];
+                }
+                modals.delete?.hide();
+                globalThis.showToast?.('Referencia y datos asociados eliminados.', 'success');
+                await _loadCuentas();
+            } catch (error) {
+                alert(`Error al eliminar: ${error.message}`);
+            } finally {
+                _setButtonLoading(dom.btnConfirmDelete, false);
+            }
+        };
+
+        const _openDeleteComunicadoModal = (id, nombre) => {
+            const { dom, modals } = state;
+            if (dom.deleteComunicadoName) {
+                dom.deleteComunicadoName.textContent = nombre;
+            }
+
+            const originalBtn = dom.btnConfirmDeleteComunicado;
+            if (originalBtn?.parentNode) {
+                const newBtn = originalBtn.cloneNode(true);
+                originalBtn.parentNode.replaceChild(newBtn, originalBtn);
+                state.dom.btnConfirmDeleteComunicado = newBtn;
+                newBtn.addEventListener('click', () => _confirmDeleteComunicado(id), { once: true });
+            }
+
+            modals.deleteComunicado?.show();
+        };
+
+        const _confirmDeleteComunicado = async (id) => {
+            const { dom, modals } = state;
+            _setButtonLoading(dom.btnConfirmDeleteComunicado, true, 'Eliminando...');
+            try {
+                // Llamada al backend para eliminar en cascada
+                await serverCall('deleteComunicado', id);
+
+                // Si el eliminado estaba seleccionado, limpiar selecciÃ³n
+                if (idsAreEqual(state.comunicadoSeleccionadoId, id)) {
+                    state.comunicadoSeleccionadoId = null;
+                }
+
+                modals.deleteComunicado?.hide();
+                globalThis.showToast?.('Comunicado eliminado correctamente.', 'success');
+
+                // Recargar comunicados de la cuenta actual
+                if (state.cuentaSeleccionadaId) {
+                    await _loadComunicados(state.cuentaSeleccionadaId);
+                }
+            } catch (error) {
+                _showModalError(`Error al eliminar: ${error.message}`);
+                // Si falla, el modal sigue abierto, debemos quitar loading
+            } finally {
+                _setButtonLoading(dom.btnConfirmDeleteComunicado, false, 'SÃ­, eliminar todo');
+            }
+        };
+
+        const _handleSubmitComunicado = async (event) => {
+            event.preventDefault();
+            const { dom, modals } = state;
+            _clearModalAlerts();
+
+            if (!dom.formComunicado?.checkValidity()) {
+                dom.formComunicado?.classList.add('was-validated');
+                return;
+            }
+
+            for (const key of Object.keys(state.combos)) {
+                _handleComboInput(key);
+            }
+
+            const estadoMatch = _matchCatalogRecord('estado', _getComboCatalog('estado'), dom.comunicadoEstado?.value);
+            if (!estadoMatch) {
+                _showModalError('El estado debe coincidir con un valor del catÃ¡logo.');
+                return;
+            }
+
+            const distritoMatch = _matchCatalogRecord('distrito', _getComboCatalog('distrito'), dom.comunicadoDistrito?.value);
+            const siniestroMatch = _matchCatalogRecord('siniestro', _getComboCatalog('siniestro'), dom.comunicadoSiniestro?.value);
+
+            const payload = {
+                idCuenta: state.cuentaSeleccionadaId,
+                comunicado: dom.comunicadoNombre?.value,
+                descripcion: dom.comunicadoDescripcion?.value,
+                fecha: dom.comunicadoFecha?.value,
+                estado: dom.comunicadoEstado?.value,
+                estadoId: estadoMatch?.id || dom.comunicadoEstadoId?.value || '',
+                distrito: dom.comunicadoDistrito?.value,
+                distritoId: distritoMatch?.id || dom.comunicadoDistritoId?.value || '',
+                siniestro: dom.comunicadoSiniestro?.value,
+                siniestroId: siniestroMatch?.id || dom.comunicadoSiniestroId?.value || '',
+                esNuevoSiniestro: state.isNuevoSiniestro,
+                fenomeno: dom.siniestroFenomeno?.value,
+                fi: dom.siniestroFi?.value
+            };
+
+            _setButtonLoading(dom.btnGuardarComunicado, true);
+            try {
+                await serverCall('createComunicado', payload);
+                modals.comunicado?.hide();
+                globalThis.showToast?.('Comunicado guardado.');
+                await _loadComunicados(state.cuentaSeleccionadaId);
+            } catch (error) {
+                _showModalError(error.message);
+            } finally {
+                _setButtonLoading(dom.btnGuardarComunicado, false);
+            }
+        };
+
+        const _handleEditarCuentaClick = (cuentaId) => {
+            const cuenta = state.cuentas.find(c => idsAreEqual(c.id, cuentaId));
+            if (cuenta) {
+                _openCuentaModal(cuenta);
+            }
+        };
+
+        const _handleEliminarCuentaClick = (cuentaId) => {
+            const cuenta = state.cuentas.find(c => idsAreEqual(c.id, cuentaId));
+            if (cuenta) {
+                _openDeleteModal(cuenta.id, cuenta.referencia);
+            }
+        };
+
+        // ===================================
+        // FUNCIONES ALTA EXPRESS
+        // ===================================
+
+        const _openAltaExpressModal = async () => {
+            const { dom } = state;
+            dom.formExpress?.reset();
+            dom.formExpress?.classList.remove('was-validated');
+            try {
+                await _loadCatalogos();
+
+                // Reiniciar combos express
+                // Reiniciar combos express
+                ['express_nombreCuenta', 'express_ajustador', 'express_estado', 'express_distrito', 'express_siniestro', 'express_siniestroAseguradora'].forEach(key => {
+                    const combo = state.combos[key];
+                    if (combo?.input) {
+                        combo.input.value = '';
+                        if (combo.hidden) combo.hidden.value = '';
+                        _renderComboSuggestions(key, '', { autoOpen: false });
+                    }
+                });
+
+                // Limpiar inputs extra manualmente (ya no son combos)
+                if (dom.express_siniestroFenomeno) dom.express_siniestroFenomeno.value = '';
+                if (dom.express_siniestroFi) dom.express_siniestroFi.value = '';
+                if (dom.express_siniestroFondo) dom.express_siniestroFondo.value = '';
+
+                // Ocultar extras de siniestro
+                if (dom.express_wrapperSiniestroExtra) dom.express_wrapperSiniestroExtra.classList.add('d-none');
+            } catch (e) {
+                console.error('Error cargando catÃ¡logos para express:', e);
+            }
+        };
+
+        const _handleSubmitExpress = async (event) => {
+            event.preventDefault();
+            const { dom, modals } = state;
+
+            if (!dom.formExpress?.checkValidity()) {
+                dom.formExpress?.classList.add('was-validated');
+                return;
+            }
+
+            // Construir payload completo para el orquestador del backend
+            const payload = {
+                cuenta: {
+                    id: dom.express_nombreCuentaId?.value || null,
+                    nombre: dom.express_nombreCuenta?.value?.trim().toUpperCase()
+                },
+                ajustador: {
+                    id: dom.express_ajustadorId?.value || null,
+                    nombre: dom.express_ajustador?.value?.trim().toUpperCase()
+                },
+                comunicado: {
+                    nombre: dom.express_comunicadoNombre?.value?.trim().toUpperCase(),
+                    fecha: dom.express_comunicadoFecha?.value,
+                    descripcion: dom.express_comunicadoDescripcion?.value?.trim()
+                },
+                ubicacion: {
+                    estadoId: dom.express_comunicadoEstadoId?.value,
+                    distritoNombre: dom.express_comunicadoDistrito?.value?.trim().toUpperCase()
+                },
+                siniestro: {
+                    nombre: dom.express_comunicadoSiniestro?.value?.trim().toUpperCase(),
+                    fenomeno: dom.express_siniestroFenomeno?.value?.trim().toUpperCase(),
+                    fi: dom.express_siniestroFi?.value?.trim().toUpperCase(),
+                    fondo: dom.express_siniestroFondo?.value?.trim().toUpperCase(),
+                    idAseguradora: dom.express_siniestroAseguradoraId?.value || '',
+                    nombreAseguradora: dom.express_siniestroAseguradora?.value?.trim().toUpperCase()
+                }
+            };
+
+            _setButtonLoading(dom.btnGuardarExpress, true, 'Procesando todo...');
+
+            try {
+                // Llamada Ãºnica a la funciÃ³n maestra
+                const response = await serverCall('procesarAltaExpress', payload);
+
+                modals.express?.hide();
+                globalThis.showToast?.('Alta Express completada exitosamente.', 'success');
+
+                await _loadCuentas();
+
+                // Seleccionar la cuenta creada/usada
+                if (response.data?.idCuenta) {
+                    state.cuentaSeleccionadaId = response.data.idCuenta;
+                    setTimeout(() => {
+                        const fila = dom.listaCuentas?.querySelector(`[data-id="${state.cuentaSeleccionadaId}"]`);
+                        if (fila) fila.click();
+                        else _actualizarSeleccionCuenta(state.cuentas.find(c => idsAreEqual(c.id, state.cuentaSeleccionadaId)), { cargarComunicados: true });
+                    }, 500);
+                }
+
+            } catch (error) {
+                console.error('Error Alta Express:', error);
+                _showModalError('Error al procesar: ' + error.message);
+                // Si falla, no cerramos modal para permitir reintento
+            } finally {
+                _setButtonLoading(dom.btnGuardarExpress, false);
+            }
+        };
+
+        // =========================================================================
+        // FUNCIONES AUXILIARES
+        // =========================================================================
+
+        const _resetCuentaModal = () => {
+            state.dom.formCuenta?.reset();
+            state.dom.formCuenta?.classList.remove('was-validated');
+        };
+
+        const _resetComunicadoModal = () => {
+            state.dom.formComunicado?.reset();
+            state.dom.formComunicado?.classList.remove('was-validated');
+            _clearModalAlerts();
+            _toggleSiniestroExtras(false);
+            Object.keys(state.combos).forEach(_hideComboSuggestions);
+        };
+
+        const _clearModalAlerts = () => {
+            state.dom.alertErrorComunicado?.classList.add('d-none');
+            state.dom.alertInfoComunicado?.classList.add('d-none');
+        };
+
+        const _showModalError = (message) => {
+            const alert = state.dom.alertErrorComunicado;
+            if (alert) {
+                alert.textContent = message;
+                alert.classList.remove('d-none');
+            }
+        };
+
+        const _showModalInfo = (message) => {
+            const alert = state.dom.alertInfoComunicado;
+            if (alert) {
+                alert.textContent = message;
+                alert.classList.remove('d-none');
+            }
+        };
+
+        const _setButtonLoading = (button, isLoading, loadingLabel = 'Guardando...') => {
+            if (!button) return;
+            if (isLoading) {
+                button.dataset.originalContent = button.innerHTML;
+                button.disabled = true;
+                button.innerHTML = `<span class="spinner-border spinner-border-sm me-2"></span>${loadingLabel}`;
+            } else {
+                if (button.dataset.originalContent) {
+                    button.innerHTML = button.dataset.originalContent;
+                }
+                button.disabled = false;
+            }
+        };
+
+        const _toggleSiniestroExtras = (show) => {
+            state.isNuevoSiniestro = show;
+            state.dom.wrapperSiniestroExtra?.classList.toggle('d-none', !show);
+        };
+
+        const _populateCatalogInputs = () => {
+            if (!state.catalogosLoaded) return;
+            Object.keys(state.combos).forEach(key => {
+                const combo = state.combos[key];
+                const isFocused = document.activeElement === combo.input;
+                _renderComboSuggestions(key, combo.input?.value || '', { autoOpen: isFocused });
+            });
+        };
+
+        const _initCombobox = (key) => {
+            const combo = state.combos[key];
+
+            // Mapeo inteligente de claves a IDs del DOM
+            let domKey;
+            if (key.startsWith('express_')) {
+                // LÃ³gica para combos Express
+                if (key === 'express_ajustador') {
+                    domKey = 'express_ajustador';
+                } else if (key === 'express_nombreCuenta') {
+                    domKey = 'express_nombreCuenta';
+                } else if (key === 'express_siniestroAseguradora') {
+                    domKey = 'express_siniestroAseguradora';
+                } else {
+                    // express_estado -> express_comunicadoEstado
+                    const subKey = key.replace('express_', '');
+                    domKey = `express_comunicado${subKey.charAt(0).toUpperCase() + subKey.slice(1)}`;
+                }
+            } else if (key === 'ajustador') {
+                domKey = 'referenciaAjustador';
+            } else {
+                domKey = `comunicado${key.charAt(0).toUpperCase() + key.slice(1)}`;
+            }
+
+            combo.input = state.dom[domKey];
+            combo.hidden = state.dom[`${domKey}Id`];
+            combo.suggestions = state.dom[`${key}Suggestions`];
+            combo.wrapper = combo.input?.closest('.combobox-dropdown');
+
+            if (!combo.input || !combo.suggestions) return;
+
+            if (window.bootstrap?.Dropdown) {
+                combo.dropdownInstance = new bootstrap.Dropdown(combo.input, { autoClose: 'outside' });
+            }
+
+            combo.input.addEventListener('click', (event) => {
+                event.preventDefault();
+                _handleComboInput(key, { fromFocus: true });
+            });
+            combo.input.addEventListener('input', () => _handleComboInput(key));
+            combo.input.addEventListener('focus', () => _handleComboInput(key, { fromFocus: false }));
+            combo.input.addEventListener('blur', () => _handleComboBlur(key));
+            combo.input.addEventListener('keydown', (event) => _handleComboKeyDown(key, event));
+
+            combo.suggestions.addEventListener('mousedown', (event) => event.preventDefault());
+            combo.suggestions.addEventListener('click', (event) => {
+                const target = event.target.closest('.dropdown-item');
+                if (target) {
+                    _selectComboByIndex(key, Number(target.dataset.index));
+                }
+            });
+        };
+
+        const _initComboboxes = () => {
+            Object.keys(COMBO_SOURCES).forEach(key => {
+                state.combos[key] = {
+                    items: [],
+                    activeIndex: -1,
+                    hideTimeout: null
+                };
+                _initCombobox(key);
+            });
+        };
+
+        const _handleComboInput = (key, { fromFocus = false } = {}) => {
+            const combo = state.combos[key];
+            if (!combo) return;
+
+            clearTimeout(combo.hideTimeout);
+
+            // NormalizaciÃ³n suave durante escritura: Solo mayÃºsculas, SIN trim para permitir espacios
+            const input = combo.input;
+            const start = input.selectionStart;
+            const end = input.selectionEnd;
+            const value = input.value.toUpperCase();
+
+            if (input.value !== value) {
+                input.value = value;
+                // Restaurar posiciÃ³n del cursor para no interrumpir escritura
+                try { input.setSelectionRange(start, end); } catch (e) { }
+            }
+
+            _renderComboSuggestions(key, value, { autoOpen: true });
+        };
+
+        const _handleComboBlur = (key) => {
+            const combo = state.combos[key];
+            if (!combo) return;
+
+            combo.hideTimeout = setTimeout(() => _hideComboSuggestions(key), 150);
+
+            const value = combo.input.value;
+            const match = _matchCatalogRecord(key, _getComboCatalog(key), value);
+            _applyComboMatch(key, match, value);
+        };
+
+        const _renderComboSuggestions = (key, filterText = '', { autoOpen = false } = {}) => {
+            const combo = state.combos[key];
+            if (!combo) return;
+
+            const normalizedFilter = normalizeForLookup(filterText);
+            const catalog = _getComboCatalog(key);
+            const items = catalog
+                .filter(item => {
+                    const label = normalizeForLookup(_extractComboLabel(key, item));
+                    return !normalizedFilter || label.includes(normalizedFilter);
+                })
+                .slice(0, 10);
+
+            combo.items = items;
+            combo.activeIndex = items.length > 0 ? 0 : -1;
+
+            if (!items.length) {
+                _hideComboSuggestions(key);
+                return;
+            }
+
+            const html = items.map((item, index) => {
+                const label = _extractComboLabel(key, item);
+                const isActive = index === combo.activeIndex;
+                return `<button type="button" class="dropdown-item ${isActive ? 'active' : ''}" role="option" data-index="${index}">${escapeHtml(label)}</button>`;
+            }).join('');
+
+            combo.suggestions.innerHTML = html;
+
+            if (autoOpen && combo.dropdownInstance) {
+                combo.dropdownInstance.show();
+            }
+        };
+
+        const _hideComboSuggestions = (key) => {
+            const combo = state.combos[key];
+            if (combo?.dropdownInstance) {
+                combo.dropdownInstance.hide();
+            }
+        };
+
+        const _selectComboByIndex = (key, index, { focusInput = true } = {}) => {
+            const combo = state.combos[key];
+            const record = combo?.items?.[index];
+            if (!record || !combo.input) return;
+
+            const label = _extractComboLabel(key, record);
+            combo.input.value = label;
+            _applyComboMatch(key, record, label);
+            _hideComboSuggestions(key);
+            if (focusInput) {
+                combo.input.focus();
+            }
+        };
+
+        const _applyComboMatch = (key, match, value) => {
+            const combo = state.combos[key];
+            const hidden = combo.hidden;
+            if (!hidden) return;
+
+            hidden.value = match?.id ?? '';
+
+            if (key === 'siniestro') {
+                const esNuevo = !match && !!value;
+                _toggleSiniestroExtras(esNuevo);
+                if (esNuevo) {
+                    _showModalInfo('El siniestro no estÃ¡ registrado y se crearÃ¡ uno nuevo.');
+                } else if (state.dom.alertInfoComunicado?.textContent?.includes('siniestro')) {
+                    _clearModalAlerts();
+                }
+            }
+
+            // LÃ³gica visual para nuevos items en Alta Express
+            if (key === 'express_nombreCuenta') {
+                const esNuevo = !match && !!value;
+                const aviso = document.getElementById('aviso-nuevo-express-cuenta');
+                if (aviso) aviso.classList.toggle('d-none', !esNuevo);
+            }
+            if (key === 'express_ajustador') {
+                const esNuevo = !match && !!value;
+                const aviso = document.getElementById('aviso-nuevo-express-ajustador');
+                if (aviso) aviso.classList.toggle('d-none', !esNuevo);
+            }
+
+            if (key === 'express_siniestro') {
+                const esNuevo = !match && !!value;
+                if (state.dom.express_wrapperSiniestroExtra) {
+                    state.dom.express_wrapperSiniestroExtra.classList.toggle('d-none', !esNuevo);
+                }
+
+                const comboAseguradora = state.combos['express_siniestroAseguradora'];
+                if (comboAseguradora) {
+                    if (match && match.idAseguradora) {
+                        const aseg = (state.catalogos.aseguradoras || []).find(a => String(a.id) === String(match.idAseguradora));
+                        if (aseg) {
+                            const label = aseg.aseguradora || aseg.nombre || '';
+                            comboAseguradora.input.value = label;
+                            if (comboAseguradora.hidden) comboAseguradora.hidden.value = aseg.id;
+                        }
+                    } else if (esNuevo) {
+                        comboAseguradora.input.value = '';
+                        if (comboAseguradora.hidden) comboAseguradora.hidden.value = '';
+                    }
+                }
+            }
+        };
+
+        const _handleComboKeyDown = (key, event) => {
+            const combo = state.combos[key];
+            if (!combo) return;
+
+            // Verificar visibilidad usando la clase 'show' en el elemento de sugerencias (menÃº), no en el wrapper
+            // Bootstrap 5 aplica .show al menÃº (.dropdown-menu)
+            const isMenuVisible = combo.suggestions?.classList.contains('show');
+
+            if (!combo.dropdownInstance || !isMenuVisible) {
+                if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                    _renderComboSuggestions(key, combo.input.value, { autoOpen: true });
+                    event.preventDefault();
+                }
+                return;
+            }
+
+            const items = combo.suggestions.querySelectorAll('.dropdown-item');
+            if (!items.length) return;
+
+            let newIndex = combo.activeIndex;
+
+            if (event.key === 'ArrowDown') {
+                newIndex = (newIndex + 1) % items.length;
+            } else if (event.key === 'ArrowUp') {
+                newIndex = (newIndex - 1 + items.length) % items.length;
+            } else if (event.key === 'Enter') {
+                if (combo.activeIndex !== -1) {
+                    event.preventDefault();
+                    _selectComboByIndex(key, combo.activeIndex);
+                }
+                return;
+            } else if (event.key === 'Tab') {
+                // Comportamiento solicitado: 
+                // 1er TAB -> Seleccionar dato (autocompletar) y quedarse en el campo.
+                // 2do TAB (ya con lista cerrada) -> Navegar al siguiente campo.
+
+                let indexToSelect = combo.activeIndex;
+
+                // Si no hay selecciÃ³n activa pero hay opciones, seleccionamos la primera (autocompletado inteligente)
+                if (indexToSelect === -1 && items.length > 0) {
+                    indexToSelect = 0;
+                }
+
+                if (indexToSelect !== -1) {
+                    event.preventDefault(); // Prevenir cambio de foco
+                    _selectComboByIndex(key, indexToSelect, { focusInput: true });
+                }
+                return;
+            } else if (event.key === 'Escape') {
+                _hideComboSuggestions(key);
+                return;
+            } else {
+                return;
+            }
+
+            event.preventDefault();
+
+            if (combo.activeIndex !== -1) items[combo.activeIndex]?.classList.remove('active');
+            items[newIndex]?.classList.add('active');
+            items[newIndex]?.scrollIntoView({ block: 'nearest' });
+            combo.activeIndex = newIndex;
+        };
+
+        const _extractComboLabel = (key, item) => {
+            if (!item) return '';
+            const source = COMBO_SOURCES[key];
+            for (const candidate of source?.labelKeys || ['nombre']) {
+                if (item[candidate] != null) {
+                    return normalizeClientText(item[candidate], { uppercase: true });
+                }
+            }
+            return '';
+        };
+
+        const _matchCatalogRecord = (key, collection, value) => {
+            if (!Array.isArray(collection) || !value) return null;
+            const target = normalizeForLookup(value);
+            return collection.find(item => normalizeForLookup(_extractComboLabel(key, item)) === target) || null;
+        };
+
+        const _getComboCatalog = (key) => {
+            const source = COMBO_SOURCES[key];
+            if (!source) return [];
+
+            // Fallback robusto para cuentas/referencias
+            if (source.catalog === 'cuentas' || source.catalog === 'referencias') {
+                const cuentas = state.catalogos?.referencias || state.catalogos?.cuentas || state.cuentas;
+                if (!cuentas || !cuentas.length) {
+                    console.warn(`[Combobox] Advertencia: CatÃ¡logo de referencias vacÃ­o para ${key}`);
+                }
+                return cuentas || [];
+            }
+
+            return state.catalogos?.[source.catalog] || [];
+        };
+
+        const escapeHtml = (unsafe) => {
+            return String(unsafe ?? '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        };
+
+        const normalizeForLookup = (value) => String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toUpperCase();
+
+        const normalizeClientText = (value, { uppercase = false } = {}) => {
+            let text = String(value ?? '').replace(/\s+/g, ' ').trim();
+            return uppercase ? text.toUpperCase() : text;
+        };
+
+
+
+        // =========================================================================
+        // FUNCIONES DEL PASO 1
+        // =========================================================================
+        // Configuracion del estado inicial
+        /**
+         * Genera un nuevo estado base para el componente.
+         * Se usa en el PASO 1 y cada vez que se desmonta el mÃ³dulo.
+         */
+        function _estadoInicial() {
+            return {
+                cuentas: [],
+                comunicados: [],
+                catalogos: { estados: [], distritosRiego: [], siniestros: [], ajustadores: [], aseguradoras: [] },
+                catalogosLoaded: false,
+                catalogosPromise: null,
+                cuentaSeleccionadaId: null,
+                cuentaSeleccionadaNombre: '',
+                comunicadoSeleccionadoId: null,
+                dom: {},
+                modals: {},
+                combos: {
+                    estado: { items: [], activeIndex: -1, hideTimeout: null },
+                    distrito: { items: [], activeIndex: -1, hideTimeout: null },
+                    siniestro: { items: [], activeIndex: -1, hideTimeout: null },
+                    ajustador: { items: [], activeIndex: -1, hideTimeout: null },
+                    // Combos express
+                    express_ajustador: { items: [], activeIndex: -1, hideTimeout: null },
+                    express_nombreCuenta: { items: [], activeIndex: -1, hideTimeout: null },
+                    express_estado: { items: [], activeIndex: -1, hideTimeout: null },
+                    express_distrito: { items: [], activeIndex: -1, hideTimeout: null },
+                    express_siniestro: { items: [], activeIndex: -1, hideTimeout: null },
+                    express_siniestroAseguradora: { items: [], activeIndex: -1, hideTimeout: null }
+                },
+                isNuevoSiniestro: false
+            };
+        }
+
+        // FUNCIÃ“N PRINCIPAL DEL PASO 1
+        const _defEstadoInicial = () => {
+            state = _estadoInicial();
+            console.log('âœ… PASO 1 completado');
+        };
+
+        // =========================================================================
+        // FUNCIONES DEL PASO 2
+        // =========================================================================
+        // Montaje del componente en el contenedor destino
+        const _mount = async (container) => {
+            console.log('=== PASO 2: Cargar HTML del componente ===');
+            _renderSpinnerInicial(container);
+
+            try {
+                await new Promise((resolve, reject) => {
+                    google.script.run
+                        .withSuccessHandler(html => {
+                            container.innerHTML = html;
+                            console.log('âœ… PASO 2 completado');
+                            resolve(html);
+                        })
+                        .withFailureHandler(error => {
+                            reject(error);
+                        })
+                        .include('cuentas');
+                });
+            } catch (error) {
+                console.error('âŒ PASO 2 fallÃ³:', error);
+                _renderErrorInicial(container, error.message || 'No fue posible cargar el componente.');
+                throw error;
+            }
+        };
+
+        // =========================================================================
+        // FUNCIONES DEL PASO 3
+        // =========================================================================
+        // SUBFUNCIÃ“N: Cachea elementos del DOM para evitar bÃºsquedas repetidas.
+        const _cacheDomElements = () => {
+            const dom = {};
+            const ids = [
+                'modalCuenta', 'form-cuenta', 'modalConfirmDelete', 'deleteAccountName', 'btnConfirmDelete',
+                'lista-cuentas', 'panel-comunicados', 'badgeCuentaSeleccionada', 'badgeTotalCuentas', 'btnNuevoComunicado', 'btnGuardarCuenta',
+                'modalNuevoComunicado', 'form-comunicado', 'modalCuentaSeleccionada', 'comunicadoNombre', 'comunicadoDescripcion',
+                'comunicadoFecha', 'comunicadoEstado', 'comunicadoEstadoId', 'estadoSuggestions', 'comunicadoDistrito',
+                'comunicadoDistritoId', 'distritoSuggestions', 'comunicadoSiniestro', 'comunicadoSiniestroId', 'siniestroSuggestions',
+                'wrapperSiniestroExtra', 'alertErrorComunicado', 'alertInfoComunicado', 'btnGuardarComunicado', 'siniestroFenomeno', 'siniestroFi',
+                'referenciaAjustador', 'referenciaAjustadorId', 'ajustadorSuggestions',
+                // Elementos Alta Express
+                'modalAltaExpress', 'form-express', 'btnGuardarExpress',
+                'express_nombreCuenta', 'express_nombreCuentaId', 'express_nombreCuentaSuggestions',
+                'express_ajustador', 'express_ajustadorId', 'express_ajustadorSuggestions',
+                'express_comunicadoNombre', 'express_comunicadoFecha', 'express_comunicadoDescripcion',
+                'express_comunicadoEstado', 'express_comunicadoEstadoId', 'express_estadoSuggestions',
+                'express_comunicadoDistrito', 'express_comunicadoDistritoId', 'express_distritoSuggestions',
+                'express_comunicadoDistrito', 'express_comunicadoDistritoId', 'express_distritoSuggestions',
+                'express_comunicadoSiniestro', 'express_comunicadoSiniestroId', 'express_siniestroSuggestions',
+                'express_wrapperSiniestroExtra',
+                'express_siniestroFenomeno',
+                'express_siniestroFi',
+                'express_siniestroFondo',
+                'express_siniestroAseguradora', 'express_siniestroAseguradoraId', 'express_siniestroAseguradoraSuggestions',
+                // Elementos Delete Comunicado
+                'modalConfirmDeleteComunicado', 'deleteComunicadoName', 'btnConfirmDeleteComunicado'
+            ];
+            ids.forEach(id => {
+                const key = id.replace(/-(\w)/g, (_, c) => c.toUpperCase());
+                dom[key] = document.getElementById(id);
+            });
+            dom.listaCuentas = dom.listaCuentas || document.getElementById('lista-cuentas');
+            dom.panelComunicados = dom.panelComunicados || document.getElementById('panel-comunicados');
+            state.dom = dom;
+        };
+
+        // SUBFUNCIÃ“N: Inicializa las instancias de los modales de Bootstrap.
+        const _initBootstrapInstances = () => {
+            if (state.dom.modalCuenta) {
+                state.modals.cuenta = new bootstrap.Modal(state.dom.modalCuenta);
+            }
+            if (state.dom.modalNuevoComunicado) {
+                state.modals.comunicado = new bootstrap.Modal(state.dom.modalNuevoComunicado);
+            }
+            if (state.dom.modalConfirmDelete) {
+                state.modals.delete = new bootstrap.Modal(state.dom.modalConfirmDelete);
+            }
+            if (state.dom.modalAltaExpress) {
+                state.modals.express = new bootstrap.Modal(state.dom.modalAltaExpress);
+            }
+            if (state.dom.modalConfirmDeleteComunicado) {
+                state.modals.deleteComunicado = new bootstrap.Modal(state.dom.modalConfirmDeleteComunicado);
+            }
+        };
+
+        // SUBFUNCIÃ“N: Agrega los event listeners necesarios para la interacciÃ³n del usuario.
+        const _addEventListeners = () => {
+            const { dom } = state;
+
+            dom.listaCuentas?.addEventListener('click', _handlePanelCuentasClick);
+            dom.panelComunicados?.addEventListener('click', _handlePanelComunicadosClick);
+
+            dom.formCuenta?.addEventListener('submit', _handleSubmitCuenta);
+            dom.formComunicado?.addEventListener('submit', _handleSubmitComunicado);
+            dom.formExpress?.addEventListener('submit', _handleSubmitExpress); // ALTA EXPRESS
+
+            dom.btnNuevoComunicado?.addEventListener('click', _handleNuevoComunicadoClick);
+
+            // Listener para el botÃ³n de Alta Express (para cargar catÃ¡logos si hace falta)
+            dom.btnGuardarExpress?.closest('.modal')?.addEventListener('shown.bs.modal', _openAltaExpressModal);
+
+            dom.modalCuenta?.addEventListener('hidden.bs.modal', _resetCuentaModal);
+            dom.modalNuevoComunicado?.addEventListener('hidden.bs.modal', _resetComunicadoModal);
+            dom.modalNuevoComunicado?.addEventListener('shown.bs.modal', () => dom.comunicadoNombre?.focus());
+        };
+
+        // FUNCION PRINCIPAL DEL PASO 3
+        const _initDOM = async (container) => {
+            console.log('=== PASO 3: Inicializar DOM y event listeners ===');
+
+            try {
+                // CachÃ© de elementos DOM
+                _cacheDomElements();
+                // Inicializar instancias de Bootstrap
+                _initBootstrapInstances();
+                // Inicializar comboboxes
+                _initComboboxes();
+                // Agregar event listeners
+                _addEventListeners();
+
+            } catch (error) {
+                console.error('âŒ PASO 3 fallÃ³:', error);
+                _renderErrorInicial(container, error.message || 'No fue posible inicializar el componente.');
+                return;
+            }
+
+            console.log('âœ… PASO 3 completado');
+        }
+
+        // =========================================================================
+        // FUNCIONES DEL PASO 4
+        // =========================================================================
+        // SUBFUNCIÃ“N: Carga los catÃ¡logos del servidor con cachÃ© y manejo de concurrencia
+        const _loadCatalogos = () => {
+            // Si ya estÃ¡n cargados, retornar inmediatamente
+            if (state.catalogosLoaded) {
+                return Promise.resolve(state.catalogos);
+            }
+
+            if (state.catalogosPromise) {
+                return state.catalogosPromise;
+            }
+
+            state.catalogosPromise = Promise.all([
+                serverCall('fetchComunicadoCatalogs')
+            ])
+                .then(([data]) => {
+                    // AsignaciÃ³n individual para mantener la referencia del objeto y sus otras propiedades (como cuentas)
+                    state.catalogos.estados = data.estados || [];
+                    state.catalogos.distritosRiego = data.distritosRiego || [];
+                    state.catalogos.siniestros = data.siniestros || [];
+                    state.catalogos.ajustadores = data.ajustadores || [];
+                    state.catalogos.aseguradoras = data.aseguradoras || [];
+
+                    state.catalogosLoaded = true;
+                    state.catalogosPromise = null;
+
+                    return state.catalogos;
+                })
+                .catch(err => {
+                    state.catalogosPromise = null;
+                    state.catalogosLoaded = false;
+
+                    console.error('Error al cargar catÃ¡logos:', err);
+                    throw err;
+                });
+
+            return state.catalogosPromise;
+        };
+
+        // SUBFUNCIÃ“N: Carga las cuentas del servidor
+        const _loadCuentas = async () => {
+            // Mostrar spinner mientras se cargan las cuentas
+            _renderSpinner('listaCuentas', 'Cargando referencias...');
+
+            const cuentas = await serverCall('readAllRows', 'cuentas');
+            console.log(`[_loadCuentas] ${cuentas?.length || 0} referencias cargadas.`, cuentas?.[0]);
+            state.cuentas = cuentas || [];
+            // Asignar tambiÃ©n a state.catalogos como 'referencias' para que el combobox lo encuentre
+            if (!state.catalogos) state.catalogos = {};
+            state.catalogos.cuentas = state.cuentas;
+            state.catalogos.referencias = state.cuentas;
+
+            // Renderizar lista de cuentas
+            _renderCuentas();
+
+            // Actualizar badge de total
+            _updateTotalCuentasBadge();
+        };
+
+        // FUNCIÃ“N PRINCIPAL DEL PASO 4
+        const _initData = async () => {
+            console.log('=== PASO 4: Cargar catÃ¡logos y cuentas en paralelo (Promise.all) ===');
+            try {
+                await Promise.all([
+                    _loadCatalogos(),
+                    _loadCuentas()
+                ]);
+                console.log('âœ… PASO 4 completado: CatÃ¡logos y cuentas cargados');
+            } catch (error) {
+                console.error('âŒ PASO 4 fallÃ³:', error);
+                _renderError('listaCuentas', error.message || 'Error al cargar datos iniciales.');
+                globalThis.showToast?.('Error al cargar datos iniciales.', 'error');
+                throw error;
+            }
+        }
+
+        // =========================================================================
+        // FUNCIONES DEL PASO 5
+        // =========================================================================
+        // FUNCIÃ“N PRINCIPAL DEL PASO 5
+        const _primeraCuentaSeleccionable = () => {
+            console.log('=== PASO 5: Seleccionar primera cuenta ===');
+            const selectedId = state.cuentaSeleccionadaId;
+            const cuentaASeleccionar = state.cuentas.find(c => idsAreEqual(c.id, selectedId))
+                || state.cuentas[0]
+                || null;
+
+            if (!cuentaASeleccionar) {
+                _actualizarSeleccionCuenta(null);
+                console.log('âœ… PASO 5 completado: No hay cuentas para seleccionar');
+            } else {
+                _actualizarSeleccionCuenta(cuentaASeleccionar);
+                console.log(`âœ… PASO 5 completado: Cuenta "${cuentaASeleccionar.cuenta}" seleccionada`);
+            }
+
+        };
+
+        // =========================================================================
+        // FUNCIONES DEL PASO 6
+        // =========================================================================
+        // SUBFUNCIÃ“N: Carga los comunicados de una cuenta especÃ­fica.
+        const _loadComunicados = async (cuentaId) => {
+            devLog('Cargando comunicados para cuenta ID:', cuentaId);
+            if (!hasValue(cuentaId)) {
+                state.comunicados = [];
+                _renderComunicados();
+                return;
+            }
+            // Mostrar spinner mientras se cargan los comunicados
+            _renderSpinner('panelComunicados', 'Cargando comunicados...');
+            devLog('Spinner de comunicados renderizado.');
+            let comunicados;
+            try {
+                devLog('Llamando a serverCall para readComunicadosPorCuenta...');
+                // Llamada al servidor para obtener los comunicados
+                comunicados = await serverCall('readComunicadosPorCuenta', parseInt(cuentaId, 10));
+                devLog('Comunicados cargados:', comunicados);
+            } catch (error) {
+                devLog('âš ï¸ Fallo el servidor al intentar cargar comunicados...', error);
+                try {
+                    // *VERIFICAR PORQUE FALLA ESTE RUNSERVER
+                    const rawResponse = await runServer('readComunicadosPorCuenta', cuentaId);
+                    devLog('Respuesta cruda de readComunicadosPorCuenta:', rawResponse);
+                    if (rawResponse && typeof rawResponse === 'object' && 'success' in rawResponse) {
+                        if (rawResponse.success) {
+                            comunicados = rawResponse.data ?? [];
+                        } else {
+                            throw new Error(rawResponse.message || 'Error al obtener comunicados.');
+                        }
+                    } else {
+                        throw error;
+                    }
+                } catch (secondaryError) {
+                    devLog('Fallo al recuperar o interpretar la respuesta cruda de readComunicadosPorCuenta:', secondaryError);
+                    throw error;
+                }
+            }
+            state.comunicados = comunicados || [];
+            // Renderizar lista de comunicados
+            const comunicadoASeleccionar = state.comunicados[0] || null;
+            _actualizarSeleccionComunicado(comunicadoASeleccionar);
+        }
+        // FUNCIÃ“N PRINCIPAL DEL PASO 6
+        const _cargarComunicadosCuentaSeleccionada = async () => {
+            console.log('=== PASO 6: Cargar comunicados de la cuenta seleccionada ===');
+            const cuentaId = state.cuentaSeleccionadaId;
+            if (!hasValue(cuentaId)) {
+                console.log('âš ï¸ PASO 6 omitido: No hay cuenta seleccionada');
+                return;
+            }
+
+            try {
+                await _loadComunicados(cuentaId);
+                console.log(`âœ… PASO 6 completado: Comunicados cargados para la cuenta ID ${cuentaId}`);
+            } catch (error) {
+                console.error('âŒ PASO 6 fallÃ³:', error);
+                _renderError('panelComunicados', error.message || 'Error al cargar comunicados.');
+                globalThis.showToast?.('Error al cargar comunicados.', 'error');
+                return;
+            }
+        };
+
+        // init DEBE ser async
+        /*  Tu funciÃ³n init debe ser el "director de orquesta" que espera a que cada mÃºsico termine su solo. 
+            Debe ser async y usar await para cada paso. 
+            TambiÃ©n debe tener un try...catch general para detener todo si un paso falla.
+        */
+        const init = async (container) => {
+            try {
+                // PASO 1: PREPARAR ESTADO INICIAL
+                // (Este es sÃ­ncrono, no necesita await, pero lo ponemos para claridad)
+                _defEstadoInicial();
+
+                // PASO 2: MONTAR EL COMPONENTE
+                // ESPERA a que el HTML estÃ© en la pÃ¡gina antes de continuar
+                await _mount(container);
+
+                // PASO 3: INICIALIZAR DOM
+                // ESPERA a que los elementos se cacheen y los eventos se aÃ±adan
+                await _initDOM(container);
+
+                // PASO 4: CARGAR DATOS
+                // ESPERA a que las cuentas y catÃ¡logos lleguen
+                await _initData();
+
+                // PASO 5: SELECCIONAR LA PRIMERA CUENTA
+                // (SÃ­ncrono, pero esperamos por si acaso se vuelve async en el futuro)
+                await _primeraCuentaSeleccionable();
+
+                // PASO 6: CARGAR LOS COMUNICADOS
+                // ESPERA a que los comunicados de esa cuenta lleguen
+                await _cargarComunicadosCuentaSeleccionada();
+
+                // PASO 7: COMPONENTE LISTO
+                console.log('âœ… PASO 7 completado: Componente Cuentas listo para usar');
+
+            } catch (error) {
+                // Si CUALQUIER paso (mount, initDOM, initData...) falla,
+                // la ejecuciÃ³n salta aquÃ­ y se detiene.
+                console.error('âŒ FALLO CRÃTICO EN LA CARGA:', error);
+
+                // Muestra un error final al usuario
+                _renderErrorInicial(container, `Error fatal al cargar: ${error.message}`);
+            }
+        };
+
+        // Alias pÃºblico para mantener compatibilidad con cÃ³digo que llama a mount()
+        const mount = async (container) => init(container);
+
+
+
+        // =========================================================================
+        // API PÃšBLICA
+        // =========================================================================
+
+        return {
+            init,
+            mount,
+            unmount: () => {
+                if (!state || Object.keys(state).length === 0) {
+                    console.log('Componente Cuentas ya desmontado o sin estado.');
+                    return;
+                }
+                Object.values(state.modals || {}).forEach(modal => modal?.dispose?.());
+                Object.values(state.combos || {}).forEach(combo => {
+                    combo?.dropdownInstance?.dispose?.();
+                    clearTimeout(combo?.hideTimeout);
+                });
+                state = _estadoInicial();
+                console.log('Componente Cuentas desmontado.');
+            },
+
+            // Exponer manejadores para onclick en HTML
+            _handleCuentaClick,
+            _handleComunicadoClick,
+            _handleEditarCuentaClick,
+            _handleEliminarCuentaClick
+        };
+    })();
+</script>
