@@ -561,7 +561,8 @@ function readAllComunicados() {
                 const base = hasCapturado ? mCapturado : (parseFloat(ultima.monto) || 0);
                 // Asegurar que supervision no sea NaN (puede venir undefined de la BD)
                 supervision = parseFloat(ultima.montoSupervisión) || 0;
-                presupuestoVigente = base + supervision;
+                // Presupuesto solo contiene el monto de obra (base), NO la suma
+                presupuestoVigente = base;
             }
 
             // 2. Obtener Contratista(s)

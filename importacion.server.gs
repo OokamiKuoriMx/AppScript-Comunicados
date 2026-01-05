@@ -426,6 +426,36 @@ function _analizarDocumento(doc, cache, batchDocs = []) {
                 if (existingCom.simulado) {
                     statusCom = 'ACTUALIZACION'; // Force update status for simulated/batch parents
                 } else {
+                    // NUEVO: Comparar líneas de presupuesto antes de decidir OMITIDO
+                    if (!hasChanges && doc.lineas && doc.lineas.length > 0) {
+                        // Buscar la actualización más reciente del comunicado
+                        const actsPrevias = cache.actualizaciones.filter(a => String(a.idComunicado) === String(existingCom.id));
+                        const actMasReciente = actsPrevias.sort((a, b) => Number(b.consecutivo) - Number(a.consecutivo))[0];
+
+                        if (actMasReciente && actMasReciente.id) {
+                            // Cargar líneas existentes
+                            const lineasBDResponse = readAllRows('presupuestoLineas');
+                            if (lineasBDResponse.success) {
+                                const lineasExistentes = (lineasBDResponse.data || []).filter(l =>
+                                    String(l.idActualizacion) === String(actMasReciente.id)
+                                );
+
+                                // Comparar líneas
+                                const diffLineas = _compararLineas(doc.lineas, lineasExistentes);
+                                if (diffLineas.hasDifferences) {
+                                    hasChanges = true;
+                                    changes.push(`Líneas (${diffLineas.inserts} nuevas, ${diffLineas.updates} actualizadas, ${diffLineas.deletes} eliminadas)`);
+                                }
+                            }
+                        } else {
+                            // No hay actualización previa, las líneas son nuevas
+                            if (doc.lineas.length > 0) {
+                                hasChanges = true;
+                                changes.push(`Líneas (${doc.lineas.length} nuevas)`);
+                            }
+                        }
+                    }
+
                     statusCom = hasChanges ? 'REEMPLAZAR' : 'OMITIDO';
                 }
             }
@@ -1202,11 +1232,27 @@ function _procesarBatchInterno(loteAgrupado, cache) {
                     if (dgEnBD) {
                         logBatch(`[${contexto}] ACTUALIZACION ENCONTRADA: Actualizando descripción de DG existente ID ${dgEnBD.id}`);
 
+                        // Construir descripción con historial completo de versiones
+                        // En vez de usar la descripción de la IA (que no tiene acceso al historial),
+                        // construimos añadiendo la versión actual al historial existente en BD.
+                        let descripcionFinal = dgEnBD.descripcion || '';
+                        const versionActual = doc.header.comunicadoId;
+
+                        // Si la descripción actual ya NO contiene la versión actual, añadirla
+                        if (descripcionFinal && !descripcionFinal.includes(versionActual)) {
+                            descripcionFinal = `${descripcionFinal}, ${versionActual}`;
+                        } else if (!descripcionFinal) {
+                            // Fallback: si no hay descripción existente, usar la de la IA
+                            descripcionFinal = doc.header.descripcion || `${doc.header.refCta}-${versionActual}`;
+                        }
+
+                        logBatch(`[${contexto}] DESCRIPCION HISTORIAL: "${dgEnBD.descripcion}" -> "${descripcionFinal}"`);
+
                         // Actualizar en BD
                         try {
-                            const resUpd = updateRow('datosGenerales', dgEnBD.id, { descripcion: doc.header.descripcion });
+                            const resUpd = updateRow('datosGenerales', dgEnBD.id, { descripcion: descripcionFinal });
                             if (resUpd.success) {
-                                dgEnBD.descripcion = doc.header.descripcion; // Actualizar cache local
+                                dgEnBD.descripcion = descripcionFinal; // Actualizar cache local
                                 counts.updatedDG = (counts.updatedDG || 0) + 1;
                             }
                         } catch (e) {
@@ -1221,6 +1267,7 @@ function _procesarBatchInterno(loteAgrupado, cache) {
                 }
 
                 if (!dgExistente && !idComunicadoExistente) {
+
                     // CREAR nuevo DatosGenerales (primera versión del comunicado)
                     const idEstado = _resolveIdFromCache(cache.estados, doc.header.estado, 'estado');
                     const idSiniestro = _resolveIdFromCache(cache.siniestros, doc.header.refSiniestro, 'siniestro');
@@ -1241,14 +1288,24 @@ function _procesarBatchInterno(loteAgrupado, cache) {
                 } else {
                     // ACTUALIZAR descripción del DG existente con la última versión
                     // Esto sucede cuando hay múltiples versiones en el mismo lote (L30, L30A, L30B)
-                    if (doc.header.descripcion && !isOrigen) {
-                        logBatch(`[${contexto}] FASE 2: Actualizando descripción DG (lote) de "${dgExistente.descripcion}" -> "${doc.header.descripcion}"`);
-                        dgExistente.descripcion = doc.header.descripcion;
+                    if (doc.header.comunicadoId && !isOrigen) {
+                        // Construir historial de versiones
+                        let descripcionFinal = dgExistente.descripcion || '';
+                        const versionActual = doc.header.comunicadoId;
+
+                        if (descripcionFinal && !descripcionFinal.includes(versionActual)) {
+                            descripcionFinal = `${descripcionFinal}, ${versionActual}`;
+                        } else if (!descripcionFinal) {
+                            descripcionFinal = doc.header.descripcion || `${doc.header.refCta}-${versionActual}`;
+                        }
+
+                        logBatch(`[${contexto}] FASE 2: Actualizando descripción DG (lote) de "${dgExistente.descripcion}" -> "${descripcionFinal}"`);
+                        dgExistente.descripcion = descripcionFinal;
 
                         // Si el DG ya tiene un ID (existe en BD), también actualizarlo en BD
                         if (dgExistente.id) {
                             try {
-                                const resUpd = updateRow('datosGenerales', dgExistente.id, { descripcion: doc.header.descripcion });
+                                const resUpd = updateRow('datosGenerales', dgExistente.id, { descripcion: descripcionFinal });
                                 if (resUpd.success) {
                                     counts.updatedDG = (counts.updatedDG || 0) + 1;
                                     logBatch(`[${contexto}] FASE 2: Descripción actualizada en BD para DG ID ${dgExistente.id}`);
@@ -1262,15 +1319,25 @@ function _procesarBatchInterno(loteAgrupado, cache) {
 
                 // CASO ESPECIAL: ACTUALIZACION_BD - El DG ya existe en BD, actualizar descripción
                 const st = doc.analisis?.comunicado?.status;
-                if (st === 'ACTUALIZACION_BD' && doc.header.descripcion) {
+                if (st === 'ACTUALIZACION_BD' && doc.header.comunicadoId) {
                     // Buscar DG existente en cache de BD
                     const dgEnBD = cache.datosGenerales.find(dg => String(dg.idComunicado) === String(idComunicado));
                     if (dgEnBD) {
-                        logBatch(`[${contexto}] FASE 2: ACTUALIZACION_BD - Actualizando descripción en BD de "${dgEnBD.descripcion}" -> "${doc.header.descripcion}"`);
+                        // Construir historial de versiones
+                        let descripcionFinal = dgEnBD.descripcion || '';
+                        const versionActual = doc.header.comunicadoId;
+
+                        if (descripcionFinal && !descripcionFinal.includes(versionActual)) {
+                            descripcionFinal = `${descripcionFinal}, ${versionActual}`;
+                        } else if (!descripcionFinal) {
+                            descripcionFinal = doc.header.descripcion || `${doc.header.refCta}-${versionActual}`;
+                        }
+
+                        logBatch(`[${contexto}] FASE 2: ACTUALIZACION_BD - Actualizando descripción en BD de "${dgEnBD.descripcion}" -> "${descripcionFinal}"`);
                         try {
-                            const resUpd = updateRow('datosGenerales', dgEnBD.id, { descripcion: doc.header.descripcion });
+                            const resUpd = updateRow('datosGenerales', dgEnBD.id, { descripcion: descripcionFinal });
                             if (resUpd.success) {
-                                dgEnBD.descripcion = doc.header.descripcion; // Actualizar cache
+                                dgEnBD.descripcion = descripcionFinal; // Actualizar cache
                                 counts.updatedDG = (counts.updatedDG || 0) + 1;
                             } else {
                                 logBatch(`[${contexto}] ERROR actualizando descripción: ${resUpd.message}`);
@@ -1466,7 +1533,23 @@ function _procesarBatchInterno(loteAgrupado, cache) {
                 );
 
                 if (yaExiste) {
-                    logBatch(`[${contexto}] FASE 3: SKIP Actualizacion. Ya existe revisión '${tipoRevision}' para ComID ${idComunicado}`);
+                    logBatch(`[${contexto}] FASE 3: Ya existe revisión '${tipoRevision}' para ComID ${idComunicado}`);
+
+                    // NUEVO: Sincronizar líneas de la actualización existente
+                    if (doc.lineas && doc.lineas.length > 0) {
+                        // Buscar la actualización existente más reciente para sincronizar líneas
+                        const actExistente = actsPrevias.sort((a, b) =>
+                            Number(b.consecutivo) - Number(a.consecutivo)
+                        )[0];
+
+                        if (actExistente && actExistente.id) {
+                            logBatch(`[${contexto}] FASE 3: Sincronizando líneas con ActID ${actExistente.id}...`);
+                            const syncResult = _syncLineasPresupuesto(actExistente.id, doc.lineas, logBatch);
+                            counts.syncUpdated = (counts.syncUpdated || 0) + syncResult.updated;
+                            counts.syncInserted = (counts.syncInserted || 0) + syncResult.inserted;
+                            counts.syncDeleted = (counts.syncDeleted || 0) + syncResult.deleted;
+                        }
+                    }
                 } else {
                     const consecutivo = actsPrevias.length + actsEnBatch.length + 1;
                     logBatch(`[${contexto}] FASE 3: Creando Actualizacion #${consecutivo} para ComID existente ${idComunicado}`);
@@ -1488,7 +1571,7 @@ function _procesarBatchInterno(loteAgrupado, cache) {
             });
 
             SpreadsheetApp.flush();
-            logBatch(`[${contexto}] FASE 3 completada. DG actualizados: ${counts.updatedDG}`);
+            logBatch(`[${contexto}] FASE 3 completada. DG actualizados: ${counts.updatedDG}, Líneas sync: ${counts.syncUpdated || 0} upd, ${counts.syncInserted || 0} ins, ${counts.syncDeleted || 0} del`);
         }
 
         // ==========================================================================================
@@ -1517,9 +1600,19 @@ function _procesarBatchInterno(loteAgrupado, cache) {
                         return vB.index - vA.index;
                     })[0];
 
-                    if (ultimoDoc && ultimoDoc.header.descripcion && ultimoDoc.header.tipoRegistro !== 'ORIGEN') {
-                        logBatch(`[${contexto}] PRE-INSERT: DG para ComID ${dg.idComunicado}: "${dg.descripcion}" -> "${ultimoDoc.header.descripcion}"`);
-                        dg.descripcion = ultimoDoc.header.descripcion;
+                    if (ultimoDoc && ultimoDoc.header.comunicadoId && ultimoDoc.header.tipoRegistro !== 'ORIGEN') {
+                        // Construir historial de versiones
+                        let descripcionFinal = dg.descripcion || '';
+                        const versionActual = ultimoDoc.header.comunicadoId;
+
+                        if (descripcionFinal && !descripcionFinal.includes(versionActual)) {
+                            descripcionFinal = `${descripcionFinal}, ${versionActual}`;
+                        } else if (!descripcionFinal) {
+                            descripcionFinal = ultimoDoc.header.descripcion || `${ultimoDoc.header.refCta}-${versionActual}`;
+                        }
+
+                        logBatch(`[${contexto}] PRE-INSERT: DG para ComID ${dg.idComunicado}: "${dg.descripcion}" -> "${descripcionFinal}"`);
+                        dg.descripcion = descripcionFinal;
                     }
                 }
             });
@@ -1550,12 +1643,22 @@ function _procesarBatchInterno(loteAgrupado, cache) {
                         return vB.index - vA.index;
                     })[0];
 
-                    if (ultimoDoc && ultimoDoc.header.descripcion && ultimoDoc.header.tipoRegistro !== 'ORIGEN') {
+                    if (ultimoDoc && ultimoDoc.header.comunicadoId && ultimoDoc.header.tipoRegistro !== 'ORIGEN') {
+                        // Construir historial de versiones
+                        let descripcionFinal = dgInsertado.descripcion || '';
+                        const versionActual = ultimoDoc.header.comunicadoId;
+
+                        if (descripcionFinal && !descripcionFinal.includes(versionActual)) {
+                            descripcionFinal = `${descripcionFinal}, ${versionActual}`;
+                        } else if (!descripcionFinal) {
+                            descripcionFinal = ultimoDoc.header.descripcion || `${ultimoDoc.header.refCta}-${versionActual}`;
+                        }
+
                         // La última versión tiene el historial completo, actualizar el DG
-                        if (dgInsertado.descripcion !== ultimoDoc.header.descripcion) {
-                            logBatch(`[${contexto}] POST-INSERT: Actualizando descripción DG ID ${dgId}: "${dgInsertado.descripcion}" -> "${ultimoDoc.header.descripcion}"`);
+                        if (dgInsertado.descripcion !== descripcionFinal) {
+                            logBatch(`[${contexto}] POST-INSERT: Actualizando descripción DG ID ${dgId}: "${dgInsertado.descripcion}" -> "${descripcionFinal}"`);
                             try {
-                                const resUpd = updateRow('datosGenerales', dgId, { descripcion: ultimoDoc.header.descripcion });
+                                const resUpd = updateRow('datosGenerales', dgId, { descripcion: descripcionFinal });
                                 if (resUpd.success) {
                                     counts.updatedDG = (counts.updatedDG || 0) + 1;
                                 }
@@ -1574,154 +1677,51 @@ function _procesarBatchInterno(loteAgrupado, cache) {
             const resActs = createBatch('actualizaciones', batchActualizaciones);
             counts.newActs = resActs.count;
 
+            // Mapa para rastrear líneas creadas en ESTE MISMO BATCH
+            // Clave: idActualizacion, Valor: array de líneas
+            const lineasRecienCreadas = new Map();
+
             // Preparar PresupuestoLineas
             resActs.ids.forEach((idActReal, i) => {
                 const updateObj = batchActualizaciones[i];
                 let lines = updateObj._docLineas || [];
-
-                // =================================================================
-                // LÓGICA SUSTITUCION_PARCIAL: Copiar líneas del padre y reemplazar
-                // =================================================================
+                const esOrigen = updateObj.esOrigen === 1 || updateObj.esOrigen === '1';
                 const tipoAccion = updateObj._tipoAccion;
-                const ubicacionEspecifica = updateObj._ubicacionEspecifica;
+                const idComunicado = updateObj.idComunicado;
+                const revisionActual = updateObj.revision || updateObj._revision;
 
-                if (tipoAccion === 'SUSTITUCION_PARCIAL' && ubicacionEspecifica) {
-                    logBatch(`[${contexto}] SUSTITUCION_PARCIAL detectada para ubicación: "${ubicacionEspecifica}"`);
-
-                    // Buscar el ORIGEN del comunicado (esOrigen=1), no el padre inmediato
-                    const idComunicado = updateObj.idComunicado;
-                    const actOrigen = cache.actualizaciones.find(a =>
-                        String(a.idComunicado) === String(idComunicado) &&
-                        (a.esOrigen === 1 || a.esOrigen === '1')
-                    );
-
-                    if (actOrigen) {
-                        logBatch(`[${contexto}] ORIGEN encontrado: Act.id=${actOrigen.id}, revision=${actOrigen.revision}`);
-
-                        // Cargar líneas del ORIGEN desde BD
-                        const lineasPadre = readAllRows('presupuestoLineas').data || [];
-                        const lineasDelOrigen = lineasPadre.filter(l =>
-                            String(l.idActualizacion) === String(actOrigen.id)
-                        );
-
-                        logBatch(`[${contexto}] Líneas del ORIGEN: ${lineasDelOrigen.length}`);
-
-                        if (lineasDelOrigen.length > 0) {
-                            // Copiar todas las líneas del ORIGEN
-                            const lineasCopiadas = lineasDelOrigen.map(l => ({
-                                concepto: l.descripcion,
-                                categoria: l.categoria,
-                                importe: l.importe
-                            }));
-
-                            // Buscar y reemplazar las líneas que coinciden
-                            // Para cada línea de la actualización (lines[]), buscar su equivalente en lineasCopiadas
-                            lines.forEach(lineaUpdate => {
-                                if (!lineaUpdate || !lineaUpdate.concepto) return;
-
-                                const ubicNorm = _normalizarUbicacion(lineaUpdate.concepto);
-                                const catNorm = String(lineaUpdate.categoria || '').toUpperCase().trim();
-                                let encontrada = false;
-
-                                for (let j = 0; j < lineasCopiadas.length; j++) {
-                                    const descNorm = _normalizarUbicacion(lineasCopiadas[j].concepto);
-                                    const catOrigen = String(lineasCopiadas[j].categoria || '').toUpperCase().trim();
-
-                                    // Coincidencia por UBICACIÓN + CATEGORÍA
-                                    const matchUbicacion = _matchUbicaciones(descNorm, ubicNorm);
-                                    const matchCategoria = catNorm === catOrigen ||
-                                        (catNorm.includes('DAÑO') && catOrigen.includes('DAÑO')) ||
-                                        (catNorm.includes('DESAZOLVE') && catOrigen.includes('DESAZOLVE'));
-
-                                    if (matchUbicacion && matchCategoria) {
-                                        logBatch(`[${contexto}] Reemplazando: "${lineasCopiadas[j].concepto}" [${catOrigen}] $${lineasCopiadas[j].importe} -> $${lineaUpdate.importe}`);
-                                        lineasCopiadas[j].importe = lineaUpdate.importe || 0;
-                                        encontrada = true;
-                                        break; // Solo 1 coincidencia por línea de update
-                                    }
-                                }
-
-                                if (!encontrada) {
-                                    logBatch(`[${contexto}] ADICIONANDO: "${lineaUpdate.concepto}" [${catNorm}] $${lineaUpdate.importe}`);
-                                    lineasCopiadas.push({
-                                        concepto: String(lineaUpdate.concepto).toUpperCase().trim(),
-                                        categoria: lineaUpdate.categoria || 'DAÑO FISICO',
-                                        importe: lineaUpdate.importe || 0
-                                    });
-                                }
-                            });
-
-                            lines = lineasCopiadas;
-                            logBatch(`[${contexto}] Líneas finales después de sustitución: ${lines.length}`);
-                        }
-                    } else {
-                        logBatch(`[${contexto}] WARN: No se encontró ORIGEN para SUSTITUCION_PARCIAL, usando líneas del documento directamente`);
-                    }
-                }
-                // =================================================================
+                logBatch(`[${contexto}] Procesando líneas para ActID ${idActReal}: esOrigen=${esOrigen}, tipoAccion=${tipoAccion}, revision=${revisionActual}`);
 
                 // =================================================================
-                // LÓGICA INFORMATIVO: Duplicar líneas del origen sin modificar montos
+                // MODELO DELTA: Solo insertar líneas del PDF actual
                 // =================================================================
-                if (tipoAccion === 'INFORMATIVO') {
-                    logBatch(`[${contexto}] INFORMATIVO detectado - duplicando líneas del origen`);
-
-                    // Buscar el ORIGEN del comunicado
-                    const idComunicado = updateObj.idComunicado;
-                    const actOrigen = cache.actualizaciones.find(a =>
-                        String(a.idComunicado) === String(idComunicado) &&
-                        (a.esOrigen === 1 || a.esOrigen === '1')
-                    );
-
-                    if (actOrigen) {
-                        logBatch(`[${contexto}] ORIGEN encontrado para INFORMATIVO: Act.id=${actOrigen.id}`);
-
-                        // Cargar líneas del ORIGEN desde BD
-                        const lineasPadre = readAllRows('presupuestoLineas').data || [];
-                        const lineasDelOrigen = lineasPadre.filter(l =>
-                            String(l.idActualizacion) === String(actOrigen.id)
-                        );
-
-                        logBatch(`[${contexto}] Líneas del ORIGEN a duplicar: ${lineasDelOrigen.length}`);
-
-                        if (lineasDelOrigen.length > 0) {
-                            // Copiar TODAS las líneas del ORIGEN sin modificar
-                            lines = lineasDelOrigen.map(l => ({
-                                concepto: l.descripcion,
-                                categoria: l.categoria,
-                                importe: l.importe
-                            }));
-
-                            logBatch(`[${contexto}] INFORMATIVO: ${lines.length} líneas duplicadas del origen`);
-                        } else {
-                            logBatch(`[${contexto}] WARN: ORIGEN sin líneas para INFORMATIVO`);
-                        }
-                    } else {
-                        logBatch(`[${contexto}] WARN: No se encontró ORIGEN para INFORMATIVO`);
-                        // En este caso no hay líneas que duplicar, quedará con lines=[]
-                    }
-                }
+                // Ya NO copiamos líneas del predecesor.
+                // Cada versión solo guarda las líneas que trae el PDF.
+                // El estado completo se calcula al momento de consultar.
                 // =================================================================
+
+                logBatch(`[${contexto}] DELTA MODEL: Insertando ${lines.length} líneas del documento ${revisionActual}`);
 
                 lines.forEach(l => {
-                    // Calculo de Categoría (Fallback si IA falló)
-                    let catFinal = l.categoria;
-                    if (!catFinal || catFinal.trim() === '') {
-                        const desc = String(l.concepto || '').toUpperCase();
-                        if (desc.includes('DESAZOLVE') || desc.includes('LIMPIEZA') || desc.includes('EXTRACCI')) {
-                            catFinal = 'DESAZOLVES';
-                        } else if (desc.includes('SUPERVISI')) {
-                            catFinal = 'SUPERVISION';
-                        } else {
-                            catFinal = 'DAÑO FISICO';
-                        }
+                    // Calculo de Categoría (usar número: 1=Daño Físico, 2=Desazolves)
+                    let catFinal;
+                    if (l.categoria) {
+                        // Si la IA devolvió categoría como texto, convertir a número
+                        catFinal = _categoriaTxtANum(l.categoria);
+                    } else {
+                        // Determinar desde el concepto
+                        catFinal = _categoriaDesdeConcepto(l.concepto);
                     }
 
+                    const descripcionNorm = String(l.concepto || 'Sin concepto').toUpperCase().trim();
+
+                    // Guardar para procesar después (necesitamos primero crear las entradas en DescripcionLineas)
                     batchPresupuestos.push({
                         idActualizacion: idActReal,
-                        descripcion: String(l.concepto || 'Sin concepto').toUpperCase().trim(),
-                        categoria: catFinal.toUpperCase(),
+                        _descripcionTemp: descripcionNorm, // Temporal, se reemplazará por idLinea
+                        categoria: catFinal, // Ahora es número (1 o 2)
                         importe: l.importe,
+                        esVigente: true,
                         fechaCreacion: new Date()
                     });
                 });
@@ -1729,16 +1729,230 @@ function _procesarBatchInterno(loteAgrupado, cache) {
             SpreadsheetApp.flush();
         }
 
-        // Insertar Presupuestos
+        // =================================================================
+        // PROCESAR DESCRIPCION LINEAS Y OBTENER IDs (POR COMUNICADO)
+        // =================================================================
         if (batchPresupuestos.length > 0) {
-            logBatch(`[${contexto}] Insertando ${batchPresupuestos.length} líneas de presupuesto...`);
+            logBatch(`[${contexto}] Procesando ${batchPresupuestos.length} líneas de presupuesto...`);
+
+            // Agrupar líneas por idComunicado para buscar en el contexto correcto
+            const lineasPorComunicado = new Map();
+            batchPresupuestos.forEach((linea, idx) => {
+                // Encontrar el idComunicado para esta línea (a través de batchActualizaciones)
+                const actIdx = batchActualizaciones.findIndex(a =>
+                    String(resActs.ids[batchActualizaciones.indexOf(a)]) === String(linea.idActualizacion) ||
+                    resActs.ids.some((id, i) => String(id) === String(linea.idActualizacion))
+                );
+
+                // Buscar en batchActualizaciones el que corresponde a esta línea
+                let idCom = null;
+                for (let i = 0; i < resActs.ids.length; i++) {
+                    if (String(resActs.ids[i]) === String(linea.idActualizacion)) {
+                        idCom = batchActualizaciones[i].idComunicado;
+                        break;
+                    }
+                }
+
+                if (!idCom) {
+                    // Buscar en la BD
+                    const actInfo = cache.actualizaciones.find(a => String(a.id) === String(linea.idActualizacion));
+                    if (actInfo) idCom = actInfo.idComunicado;
+                }
+
+                if (!lineasPorComunicado.has(String(idCom))) {
+                    lineasPorComunicado.set(String(idCom), []);
+                }
+                lineasPorComunicado.get(String(idCom)).push({ linea, idx });
+            });
+
+            // Para cada comunicado, buscar líneas existentes y hacer matching
+            const todasLineasBD = readAllRows('presupuestoLineas').data || [];
+
+            lineasPorComunicado.forEach((lineasDelCom, idComunicado) => {
+                logBatch(`[${contexto}] Procesando líneas para comunicado ${idComunicado}: ${lineasDelCom.length} líneas`);
+
+                // Obtener todos los idActualizacion de este comunicado (de BD + batch actual)
+                const actualizacionesDelCom = cache.actualizaciones
+                    .filter(a => String(a.idComunicado) === String(idComunicado))
+                    .map(a => String(a.id));
+
+                // También agregar las actualizaciones del batch actual
+                batchActualizaciones.forEach((act, i) => {
+                    if (String(act.idComunicado) === String(idComunicado) && resActs.ids[i]) {
+                        if (!actualizacionesDelCom.includes(String(resActs.ids[i]))) {
+                            actualizacionesDelCom.push(String(resActs.ids[i]));
+                        }
+                    }
+                });
+
+                // Obtener todas las líneas de presupuesto de este comunicado (de la BD)
+                const lineasExistentes = todasLineasBD.filter(l =>
+                    actualizacionesDelCom.includes(String(l.idActualizacion))
+                );
+
+                // Construir mapa de idLinea → descripción para este comunicado
+                const lineasUsadasEnCom = new Map(); // idLinea → info de descripción
+                lineasExistentes.forEach(l => {
+                    if (l.idLinea && !lineasUsadasEnCom.has(String(l.idLinea))) {
+                        const descInfo = cache.descripcionLineas.find(dl => String(dl.id) === String(l.idLinea));
+                        if (descInfo) {
+                            lineasUsadasEnCom.set(String(l.idLinea), {
+                                id: descInfo.id,
+                                descripcion: descInfo.descripcion,
+                                categoria: descInfo.categoria,
+                                descripcionNorm: _normalizarUbicacion(descInfo.descripcion)
+                            });
+                        }
+                    }
+                });
+
+                logBatch(`[${contexto}] Comunicado ${idComunicado}: ${lineasUsadasEnCom.size} líneas únicas existentes`);
+
+                // Para cada línea del PDF, buscar match por similitud en las líneas del comunicado
+                lineasDelCom.forEach(({ linea, idx }) => {
+                    const descripcionNorm = _normalizarUbicacion(linea._descripcionTemp);
+                    const catLinea = linea.categoria;
+                    let idLineaEncontrado = null;
+
+                    // Buscar match por similitud en las líneas existentes del comunicado
+                    lineasUsadasEnCom.forEach((info, idLinea) => {
+                        if (idLineaEncontrado) return; // Ya encontramos match
+
+                        // Comparar por categoría Y similitud de descripción
+                        const catMatch = (info.categoria == catLinea) ||
+                            (_categoriaTxtANum(info.categoria) === catLinea);
+
+                        if (catMatch) {
+                            const descMatch = info.descripcionNorm === descripcionNorm ||
+                                _matchUbicaciones(info.descripcionNorm, descripcionNorm);
+
+                            if (descMatch) {
+                                idLineaEncontrado = parseInt(idLinea);
+                                logBatch(`[${contexto}] MATCH: "${linea._descripcionTemp}" ↔ "${info.descripcion}" (idLinea=${idLinea})`);
+                            }
+                        }
+                    });
+
+                    if (idLineaEncontrado) {
+                        // Usar el idLinea existente
+                        batchPresupuestos[idx].idLinea = idLineaEncontrado;
+                    } else {
+                        // Crear nueva descripción - marcar para creación
+                        batchPresupuestos[idx]._needsNewDescripcion = true;
+                        logBatch(`[${contexto}] NUEVA DESCRIPCIÓN: "${linea._descripcionTemp}" [cat=${catLinea}]`);
+                    }
+                });
+            });
+
+            // Crear las nuevas entradas en DescripcionLineas para líneas que lo necesitan
+            const descripcionesNuevas = new Map();
+            batchPresupuestos.forEach((linea, idx) => {
+                if (linea._needsNewDescripcion) {
+                    const key = `${linea._descripcionTemp}|${linea.categoria}`;
+                    if (!descripcionesNuevas.has(key)) {
+                        descripcionesNuevas.set(key, {
+                            descripcion: linea._descripcionTemp,
+                            categoria: linea.categoria,
+                            indices: [idx]
+                        });
+                    } else {
+                        descripcionesNuevas.get(key).indices.push(idx);
+                    }
+                }
+            });
+
+            if (descripcionesNuevas.size > 0) {
+                const batchDescripciones = Array.from(descripcionesNuevas.values())
+                    .map(d => ({ descripcion: d.descripcion, categoria: d.categoria }));
+
+                logBatch(`[${contexto}] Creando ${batchDescripciones.length} nuevas entradas en DescripcionLineas...`);
+
+                const resDesc = createBatch('descripcionLineas', batchDescripciones);
+
+                // Asignar los nuevos IDs a las líneas correspondientes
+                if (resDesc.ids && resDesc.ids.length > 0) {
+                    const keysArray = Array.from(descripcionesNuevas.keys());
+                    keysArray.forEach((key, i) => {
+                        const newId = resDesc.ids[i];
+                        const info = descripcionesNuevas.get(key);
+
+                        // Actualizar todas las líneas que necesitan este idLinea
+                        info.indices.forEach(idx => {
+                            batchPresupuestos[idx].idLinea = newId;
+                        });
+
+                        // Actualizar cache
+                        cache.descripcionLineas.push({
+                            id: newId,
+                            descripcion: info.descripcion,
+                            categoria: info.categoria
+                        });
+                    });
+                }
+
+                SpreadsheetApp.flush();
+            }
+
+            // Limpiar campos temporales
+            batchPresupuestos.forEach(linea => {
+                delete linea._descripcionTemp;
+                delete linea._needsNewDescripcion;
+            });
+        }
+
+        // Insertar PresupuestoLineas
+        if (batchPresupuestos.length > 0) {
+            logBatch(`[${contexto}]Insertando ${batchPresupuestos.length} líneas de presupuesto...`);
             const resLines = createBatch('presupuestoLineas', batchPresupuestos);
             counts.newLines = resLines.count;
+            SpreadsheetApp.flush();
+
+            // =========================================================
+            // RECALCULAR MONTO TOTAL usando MODELO DELTA
+            // =========================================================
+            // El monto se calcula como la suma del estado completo materializado,
+            // NO solo las líneas del PDF actual.
+            // =========================================================
+
+            // Obtener IDs únicos de actualizaciones procesadas
+            const idsActualizacionesUnicas = [...new Set(batchPresupuestos.map(l => String(l.idActualizacion)))];
+
+            // Para cada actualización, necesitamos su idComunicado
+            const actualizacionesInfo = (readAllRows('actualizaciones').data || [])
+                .filter(a => idsActualizacionesUnicas.includes(String(a.id)));
+
+            let countMontoUpdated = 0;
+            actualizacionesInfo.forEach(act => {
+                try {
+                    // Calcular estado completo para este comunicado hasta esta versión
+                    const estado = calcularEstadoVersion(act.idComunicado, act.id);
+                    const montoRedondeado = estado.total;
+                    const montoSupervision = Math.round(montoRedondeado * 0.05 * 100) / 100;
+
+                    logBatch(`[${contexto}] DELTA MONTO ActID ${act.id}: ${estado.lineas.length} líneas totalizadas = $${montoRedondeado} (Supervisión: $${montoSupervision})`);
+
+                    const resUpd = updateRow('actualizaciones', act.id, {
+                        monto: montoRedondeado,
+                        montoSupervisión: montoSupervision
+                    });
+
+                    if (resUpd.success) {
+                        countMontoUpdated++;
+                    } else {
+                        logBatch(`[${contexto}] ERROR actualizando monto: ${resUpd.message}`);
+                    }
+                } catch (e) {
+                    logBatch(`[${contexto}] ERROR recalculando monto ActID ${act.id}: ${e.message}`);
+                }
+            });
+
+            logBatch(`[${contexto}] MONTOS DELTA RECALCULADOS: ${countMontoUpdated} actualizaciones`);
+            counts.montoRecalculados = countMontoUpdated;
             SpreadsheetApp.flush();
         }
 
         // FIN DEL PROCESO
-        logBatch(`[${contexto}] Batch Completado. Resumen: ${JSON.stringify(counts)}`);
+        logBatch(`[${contexto}]Batch Completado.Resumen: ${JSON.stringify(counts)}`);
 
         // Generar CSV Errores
         let csvErrorContent = null;
@@ -1749,7 +1963,7 @@ function _procesarBatchInterno(loteAgrupado, cache) {
         return _buildResponse(true, 'Importación Batch Completada.', counts, omitidos, loteAgrupado, csvErrorContent, debugLogs);
 
     } catch (error) {
-        console.error(`Error en ${contexto}:`, error);
+        console.error(`Error en ${contexto}: `, error);
         return { success: false, message: `Error fatal: ${error.message}` };
     }
 }
@@ -1770,7 +1984,8 @@ function _loadCatalogsCache() {
         estados: readAllRows('estados').data || [],
         ajustadores: readAllRows('ajustadores').data || [],
         distritosRiego: readAllRows('distritosRiego').data || [], // Cargar Distritos
-        actualizaciones: readAllRows('actualizaciones').data || []
+        actualizaciones: readAllRows('actualizaciones').data || [],
+        descripcionLineas: readAllRows('descripcionLineas').data || []
     };
 }
 
@@ -2033,6 +2248,344 @@ function _findIdAjustadorDefault(ajustadores) {
     return ct ? ct.id : null;
 }
 
+// ============================================================================
+// CATEGORÍAS: 1 = Daño Físico, 2 = Desazolves
+// ============================================================================
+
+/**
+ * Convierte texto de categoría a número.
+ * @param {string} catText - Texto de categoría (ej: "DAÑO FISICO", "DESAZOLVES")
+ * @returns {number} 1 = Daño Físico, 2 = Desazolves
+ */
+function _categoriaTxtANum(catText) {
+    if (!catText) return 1; // Default: Daño Físico
+    const cat = String(catText).toUpperCase().trim();
+    if (cat.includes('DESAZOLVE') || cat.includes('LIMPIEZA') || cat.includes('REMOCION') || cat.includes('EXTRACCI')) {
+        return 2; // Desazolves
+    }
+    return 1; // Daño Físico (incluyendo DAÑO, SUPERVISION, etc.)
+}
+
+/**
+ * Convierte número de categoría a texto.
+ * @param {number} catNum - Número de categoría (1 o 2)
+ * @returns {string} "DAÑO FISICO" o "DESAZOLVES"
+ */
+function _categoriaNumATxt(catNum) {
+    return catNum === 2 ? 'DESAZOLVES' : 'DAÑO FISICO';
+}
+
+/**
+ * Determina la categoría numérica desde la descripción del concepto.
+ * @param {string} concepto - Texto del concepto/ubicación
+ * @returns {number} 1 = Daño Físico, 2 = Desazolves
+ */
+function _categoriaDesdeConcepto(concepto) {
+    if (!concepto) return 1;
+    const desc = String(concepto).toUpperCase();
+    if (desc.includes('DESAZOLVE') || desc.includes('LIMPIEZA') || desc.includes('EXTRACCI')) {
+        return 2;
+    }
+    return 1;
+}
+
+// ============================================================================
+// MODELO DELTA: Calcular Estado Completo de una Versión
+// ============================================================================
+
+/**
+ * Calcula el estado completo de un comunicado hasta una versión específica.
+ * En el modelo delta, cada versión solo guarda los cambios.
+ * Esta función "materializa" el estado sumando todos los deltas.
+ * 
+ * @param {number} idComunicado - ID del comunicado
+ * @param {number|null} hastaIdActualizacion - ID de la actualización hasta la cual calcular (null = más reciente)
+ * @returns {Object} { lineas: [{idLinea, descripcion, categoria, importe}], total: number }
+ */
+function calcularEstadoVersion(idComunicado, hastaIdActualizacion = null) {
+    // 1. Obtener todas las actualizaciones del comunicado, ordenadas por versión
+    const actualizaciones = (readAllRows('actualizaciones').data || [])
+        .filter(a => String(a.idComunicado) === String(idComunicado))
+        .sort((a, b) => {
+            const vA = _parseVersion(a.revision || 'ORIGEN');
+            const vB = _parseVersion(b.revision || 'ORIGEN');
+            return vA.index - vB.index;
+        });
+
+    if (actualizaciones.length === 0) {
+        return { lineas: [], total: 0 };
+    }
+
+    // 2. Determinar hasta cuál actualización calcular
+    let indexHasta = actualizaciones.length - 1;
+    if (hastaIdActualizacion) {
+        const idx = actualizaciones.findIndex(a => String(a.id) === String(hastaIdActualizacion));
+        if (idx >= 0) indexHasta = idx;
+    }
+
+    // 3. Obtener IDs de actualizaciones hasta la versión objetivo
+    const idsActualizaciones = actualizaciones.slice(0, indexHasta + 1).map(a => String(a.id));
+
+    // 4. Cargar todas las líneas de presupuesto de esas actualizaciones
+    const todasLineas = (readAllRows('presupuestoLineas').data || [])
+        .filter(l => idsActualizaciones.includes(String(l.idActualizacion)));
+
+    // 5. Cargar catálogo de descripciones
+    const descripciones = readAllRows('descripcionLineas').data || [];
+    const mapaDesc = new Map();
+    descripciones.forEach(d => mapaDesc.set(String(d.id), d));
+
+    // 6. Para cada idLinea, obtener el valor más reciente
+    // Ordenar líneas por actualización (antiguo a nuevo) para que el más reciente sobreescriba
+    const estadoFinal = new Map();
+
+    todasLineas
+        .sort((a, b) => {
+            const idxA = idsActualizaciones.indexOf(String(a.idActualizacion));
+            const idxB = idsActualizaciones.indexOf(String(b.idActualizacion));
+            return idxA - idxB;
+        })
+        .forEach(linea => {
+            const idLinea = String(linea.idLinea);
+            const descInfo = mapaDesc.get(idLinea) || { descripcion: 'Sin descripción', categoria: 1 };
+
+            estadoFinal.set(idLinea, {
+                idLinea: linea.idLinea,
+                descripcion: descInfo.descripcion,
+                categoria: linea.categoria || descInfo.categoria,
+                importe: parseFloat(linea.importe) || 0
+            });
+        });
+
+    // 7. Calcular total y retornar
+    const lineasArray = Array.from(estadoFinal.values());
+    const total = lineasArray.reduce((sum, l) => sum + l.importe, 0);
+
+    return {
+        lineas: lineasArray,
+        total: Math.round(total * 100) / 100
+    };
+}
+
+/**
+ * Compara el estado de dos versiones para mostrar en historial.
+ * @param {number} idComunicado - ID del comunicado
+ * @param {number} idActAnterior - ID de la actualización anterior
+ * @param {number} idActActual - ID de la actualización actual
+ * @returns {Object} { antes: [{...}], despues: [{...}], cambios: [...] }
+ */
+function compararVersiones(idComunicado, idActAnterior, idActActual) {
+    const estadoAntes = calcularEstadoVersion(idComunicado, idActAnterior);
+    const estadoDespues = calcularEstadoVersion(idComunicado, idActActual);
+
+    // Crear mapa de cambios
+    const cambios = [];
+    const lineasAntes = new Map(estadoAntes.lineas.map(l => [String(l.idLinea), l]));
+    const lineasDespues = new Map(estadoDespues.lineas.map(l => [String(l.idLinea), l]));
+
+    // Comparar líneas
+    lineasDespues.forEach((lineaDespues, idLinea) => {
+        const lineaAntes = lineasAntes.get(idLinea);
+        if (!lineaAntes) {
+            cambios.push({ tipo: 'NUEVA', linea: lineaDespues });
+        } else if (lineaAntes.importe !== lineaDespues.importe) {
+            cambios.push({
+                tipo: 'MODIFICADA',
+                linea: lineaDespues,
+                importeAnterior: lineaAntes.importe
+            });
+        }
+    });
+
+    return {
+        antes: estadoAntes,
+        despues: estadoDespues,
+        cambios
+    };
+}
+
+
+/**
+ * Compara líneas del PDF con líneas existentes en BD.
+ * Usa clave compuesta: UBICACION + CATEGORIA
+ * @param {Array} lineasPdf - Líneas del PDF [{concepto, categoria, importe}]
+ * @param {Array} lineasBd - Líneas de BD [{descripcion, categoria, importe}]
+ * @returns {Object} {hasDifferences, inserts, updates, deletes}
+ */
+function _compararLineas(lineasPdf, lineasBd) {
+    const result = { hasDifferences: false, inserts: 0, updates: 0, deletes: 0 };
+
+    if (!lineasPdf) lineasPdf = [];
+    if (!lineasBd) lineasBd = [];
+
+    console.log(`[_compararLineas] PDF tiene ${lineasPdf.length} líneas, BD tiene ${lineasBd.length} líneas`);
+
+    // Normalizar clave
+    const _normKey = (concepto, categoria) => {
+        const ubicNorm = _normalizarUbicacion(concepto);
+        const catNorm = String(categoria || 'DAÑO FISICO').toUpperCase().trim()
+            .replace('DESAZOLVE', 'DESAZOLVES');
+        return `${ubicNorm} | ${catNorm}`;
+    };
+
+    // Mapear líneas PDF
+    const mapPdf = new Map();
+    lineasPdf.forEach((l, i) => {
+        const key = _normKey(l.concepto, l.categoria);
+        console.log(`[_compararLineas] PDF[${i}]: concepto = "${l.concepto?.substring(0, 30)}..." cat = "${l.categoria}" -> key="${key.substring(0, 50)}..."`);
+        mapPdf.set(key, l);
+    });
+
+    // Mapear líneas BD
+    const mapBd = new Map();
+    lineasBd.forEach((l, i) => {
+        const key = _normKey(l.descripcion, l.categoria);
+        console.log(`[_compararLineas] BD[${i}]: desc = "${l.descripcion?.substring(0, 30)}..." cat = "${l.categoria}" -> key="${key.substring(0, 50)}..."`);
+        mapBd.set(key, l);
+    });
+
+    // Contar diferencias
+    for (const [key, lineaPdf] of mapPdf) {
+        const lineaBd = mapBd.get(key);
+
+        if (lineaBd) {
+            // Existe - verificar si cambió el importe
+            const importePdf = parseFloat(lineaPdf.importe) || 0;
+            const importeBd = parseFloat(lineaBd.importe) || 0;
+
+            if (Math.abs(importePdf - importeBd) > 0.01) {
+                console.log(`[_compararLineas] DIFF IMPORTE: PDF = ${importePdf} vs BD = ${importeBd}`);
+                result.updates++;
+                result.hasDifferences = true;
+            }
+            mapBd.delete(key);
+        } else {
+            // Nueva línea
+            console.log(`[_compararLineas] NUEVA LÍNEA: "${key.substring(0, 50)}..."`);
+            result.inserts++;
+            result.hasDifferences = true;
+        }
+    }
+
+    // Líneas que ya no existen
+    result.deletes = mapBd.size;
+    if (result.deletes > 0) {
+        console.log(`[_compararLineas] LÍNEAS A ELIMINAR: ${result.deletes}`);
+        result.hasDifferences = true;
+    }
+
+    console.log(`[_compararLineas] Resultado: inserts = ${result.inserts}, updates = ${result.updates}, deletes = ${result.deletes}, hasDiff = ${result.hasDifferences}`);
+    return result;
+}
+
+/**
+ * Sincroniza líneas de presupuesto de una actualización existente.
+ * Compara por clave compuesta: UBICACION + CATEGORIA
+ * @param {number} idActualizacion - ID de la actualización existente
+ * @param {Array} lineasNuevas - Líneas extraídas del PDF [{concepto, categoria, importe}]
+ * @param {Function} logFn - Función de log
+ * @returns {Object} Resumen de operaciones {updated, inserted, deleted}
+ */
+function _syncLineasPresupuesto(idActualizacion, lineasNuevas, logFn) {
+    const contexto = '_syncLineasPresupuesto';
+    const result = { updated: 0, inserted: 0, deleted: 0 };
+
+    if (!idActualizacion || !lineasNuevas || lineasNuevas.length === 0) {
+        logFn(`[${contexto}]Sin líneas para sincronizar`);
+        return result;
+    }
+
+    logFn(`[${contexto}]Sincronizando ${lineasNuevas.length} líneas para ActID ${idActualizacion}`);
+
+    // 1. Cargar líneas existentes de la BD
+    const lineasBDResponse = readAllRows('presupuestoLineas');
+    if (!lineasBDResponse.success) {
+        logFn(`[${contexto}]ERROR: No se pudieron leer líneas existentes`);
+        return result;
+    }
+
+    const lineasExistentes = (lineasBDResponse.data || []).filter(l =>
+        String(l.idActualizacion) === String(idActualizacion)
+    );
+
+    logFn(`[${contexto}]Líneas existentes en BD: ${lineasExistentes.length}`);
+
+    // 2. Normalizar líneas del PDF para comparación
+    const _normKey = (concepto, categoria) => {
+        const ubicNorm = _normalizarUbicacion(concepto);
+        const catNorm = String(categoria || 'DAÑO FISICO').toUpperCase().trim()
+            .replace('FISICO', 'FISICO')
+            .replace('DESAZOLVE', 'DESAZOLVES');
+        return `${ubicNorm} | ${catNorm}`;
+    };
+
+    const mapNuevas = new Map();
+    lineasNuevas.forEach(ln => {
+        const key = _normKey(ln.concepto, ln.categoria);
+        mapNuevas.set(key, ln);
+    });
+
+    const mapExistentes = new Map();
+    lineasExistentes.forEach(le => {
+        const key = _normKey(le.descripcion, le.categoria);
+        mapExistentes.set(key, le);
+    });
+
+    logFn(`[${contexto}]Claves nuevas: ${[...mapNuevas.keys()].join(', ')}`);
+    logFn(`[${contexto}]Claves existentes: ${[...mapExistentes.keys()].join(', ')}`);
+
+    // 3. ACTUALIZAR líneas existentes que cambiaron
+    for (const [key, lineaNueva] of mapNuevas) {
+        const lineaExistente = mapExistentes.get(key);
+
+        if (lineaExistente) {
+            // Existe - verificar si cambió el importe
+            const importeNuevo = parseFloat(lineaNueva.importe) || 0;
+            const importeExistente = parseFloat(lineaExistente.importe) || 0;
+
+            if (Math.abs(importeNuevo - importeExistente) > 0.01) {
+                logFn(`[${contexto}]ACTUALIZAR: "${lineaExistente.descripcion}"[${lineaExistente.categoria}]$${importeExistente} -> $${importeNuevo}`);
+                try {
+                    const resUpd = updateRow('presupuestoLineas', lineaExistente.id, { importe: importeNuevo });
+                    if (resUpd.success) result.updated++;
+                } catch (e) {
+                    logFn(`[${contexto}]ERROR actualizando: ${e.message}`);
+                }
+            }
+            // Marcar como procesada
+            mapExistentes.delete(key);
+        } else {
+            // No existe - INSERTAR
+            logFn(`[${contexto}]INSERTAR: "${lineaNueva.concepto}"[${lineaNueva.categoria}]$${lineaNueva.importe}`);
+            try {
+                const catFinal = String(lineaNueva.categoria || 'DAÑO FISICO').toUpperCase();
+                const resIns = createRow('presupuestoLineas', {
+                    idActualizacion: idActualizacion,
+                    descripcion: String(lineaNueva.concepto || 'Sin concepto').toUpperCase().trim(),
+                    categoria: catFinal,
+                    importe: parseFloat(lineaNueva.importe) || 0,
+                    fechaCreacion: new Date()
+                });
+                if (resIns.success) result.inserted++;
+            } catch (e) {
+                logFn(`[${contexto}]ERROR insertando: ${e.message}`);
+            }
+        }
+    }
+
+    // 4. CARRY-FORWARD: Las líneas que ya no existen en el PDF SE MANTIENEN SIN CAMBIOS
+    // NO SE ELIMINAN - solo se registra para trazabilidad
+    if (mapExistentes.size > 0) {
+        logFn(`[${contexto}]CARRY - FORWARD: ${mapExistentes.size} líneas se mantienen sin cambios(no están en el PDF nuevo)`);
+        for (const [key, lineaMantenida] of mapExistentes) {
+            logFn(`[${contexto}]MANTENER: "${lineaMantenida.descripcion}"[${lineaMantenida.categoria}]$${lineaMantenida.importe}`);
+        }
+    }
+
+    logFn(`[${contexto}]Sincronización completada: ${result.updated} actualizadas, ${result.inserted} insertadas, ${mapExistentes.size} mantenidas`);
+    return result;
+}
+
 /**
  * Normaliza una ubicación para comparación fuzzy.
  * Elimina palabras comunes, acentos, deja solo palabras clave.
@@ -2080,6 +2633,296 @@ function _matchUbicaciones(desc1, desc2) {
 
     // Requiere al menos una palabra clave coincidente Y 2+ palabras totales
     return keywordMatch && coincidencias >= 2;
+}
+
+// ============================================================================
+// HERENCIA DE LÍNEAS - LÓGICA "CARRY FORWARD"
+// ============================================================================
+
+/**
+ * Busca la actualización inmediatamente anterior en la cadena de versiones.
+ * Ejemplo: Para L30B, retorna la actualización L30A. Para L30A, retorna el ORIGEN.
+ * 
+ * @param {Array} actualizaciones - Lista de actualizaciones en cache
+ * @param {number} idComunicado - ID del comunicado padre
+ * @param {string} revisionActual - Revisión actual (ej: "L30B", "ORIGEN")
+ * @param {Function} logFn - Función de logging
+ * @returns {Object|null} Actualización predecesora o null si es ORIGEN
+ */
+function _buscarActualizacionPredecesora(actualizaciones, idComunicado, revisionActual, logFn) {
+    const contexto = '_buscarActualizacionPredecesora';
+
+    if (!actualizaciones || !idComunicado || !revisionActual) {
+        logFn(`[${contexto}]Parámetros inválidos`);
+        return null;
+    }
+
+    // Filtrar actualizaciones del mismo comunicado
+    const actsMismoCom = actualizaciones.filter(a =>
+        String(a.idComunicado) === String(idComunicado)
+    );
+
+    if (actsMismoCom.length === 0) {
+        logFn(`[${contexto}]No hay actualizaciones para idComunicado ${idComunicado}`);
+        return null;
+    }
+
+    logFn(`[${contexto}]Buscando predecesor de "${revisionActual}" entre ${actsMismoCom.length} actualizaciones`);
+
+    // Si la revisión actual es ORIGEN, no hay predecesor
+    const parsedActual = _parseVersion(revisionActual);
+    if (!parsedActual.sufijo && parsedActual.index === 0) {
+        logFn(`[${contexto}]"${revisionActual}" es ORIGEN - sin predecesor`);
+        return null;
+    }
+
+    // Ordenar actualizaciones por índice de versión (A=1, B=2, C=3...)
+    const actsOrdenadas = actsMismoCom.map(a => {
+        const parsed = _parseVersion(a.revision);
+        return {
+            ...a,
+            parsedIndex: parsed.index,
+            parsedBase: parsed.base,
+            parsedSufijo: parsed.sufijo
+        };
+    }).sort((a, b) => a.parsedIndex - b.parsedIndex);
+
+    // Buscar la versión inmediatamente anterior
+    // Si estamos en L30B (index=2), buscamos L30A (index=1)
+    const indexBuscado = parsedActual.index - 1;
+
+    logFn(`[${contexto}]Buscando index ${indexBuscado} para predecesor de ${revisionActual}(index = ${parsedActual.index})`);
+
+    // Caso especial: Si buscamos index 0, es el ORIGEN
+    if (indexBuscado === 0) {
+        const origen = actsOrdenadas.find(a =>
+            a.esOrigen === 1 || a.esOrigen === '1' || a.parsedIndex === 0
+        );
+        if (origen) {
+            logFn(`[${contexto}]Predecesor es ORIGEN: id = ${origen.id}`);
+            return origen;
+        }
+    } else {
+        // Buscar por index exacto
+        const predecesor = actsOrdenadas.find(a => a.parsedIndex === indexBuscado);
+        if (predecesor) {
+            logFn(`[${contexto}]Predecesor encontrado: ${predecesor.revision}(id = ${predecesor.id})`);
+            return predecesor;
+        }
+    }
+
+    // Fallback: Buscar la versión con el índice más alto que sea menor al actual
+    const candidatos = actsOrdenadas.filter(a => a.parsedIndex < parsedActual.index);
+    if (candidatos.length > 0) {
+        const mejor = candidatos[candidatos.length - 1]; // El último (mayor índice menor al actual)
+        logFn(`[${contexto}]Fallback predecesor: ${mejor.revision}(id = ${mejor.id})`);
+        return mejor;
+    }
+
+    logFn(`[${contexto}]No se encontró predecesor para "${revisionActual}"`);
+    return null;
+}
+
+/**
+ * Obtiene las líneas del comunicado predecesor inmediato.
+ * Implementa la lógica "carry-forward": hereda todas las líneas del predecesor.
+ * 
+ * @param {Object} cache - Cache de catálogos (debe incluir actualizaciones)
+ * @param {number} idComunicado - ID del comunicado
+ * @param {string} revisionActual - Identificador de revisión actual (ej: "L30B")
+ * @param {Function} logFn - Función de logging
+ * @returns {Array} Líneas del predecesor [{descripcion, categoria, importe, idOriginal}]
+ */
+function _obtenerLineasPredecesor(cache, idComunicado, revisionActual, logFn) {
+    const contexto = '_obtenerLineasPredecesor';
+
+    // 1. Buscar la actualización predecesora
+    const actPredecesor = _buscarActualizacionPredecesora(
+        cache.actualizaciones,
+        idComunicado,
+        revisionActual,
+        logFn
+    );
+
+    if (!actPredecesor) {
+        logFn(`[${contexto}]Sin predecesor para ${revisionActual} - retornando array vacío`);
+        return [];
+    }
+
+    // 2. Cargar líneas del predecesor desde BD
+    const lineasBDResponse = readAllRows('presupuestoLineas');
+    if (!lineasBDResponse.success) {
+        logFn(`[${contexto}]ERROR: No se pudieron leer líneas de presupuesto`);
+        return [];
+    }
+
+    const lineasPredecesor = (lineasBDResponse.data || []).filter(l =>
+        String(l.idActualizacion) === String(actPredecesor.id)
+    );
+
+    logFn(`[${contexto}]Encontradas ${lineasPredecesor.length} líneas del predecesor ${actPredecesor.revision || 'ORIGEN'}`);
+
+    // 3. Retornar líneas con estructura normalizada, resolviendo descripcion desde DescripcionLineas
+    return lineasPredecesor.map(l => {
+        let descripcion = l.descripcion || 'Sin descripcion';
+        let categoria = l.categoria || 'DAÑO FISICO';
+
+        // Resolver descripcion desde DescripcionLineas usando idLinea
+        if (l.idLinea && cache.descripcionLineas) {
+            const descLinea = cache.descripcionLineas.find(dl => String(dl.id) === String(l.idLinea));
+            if (descLinea) {
+                descripcion = descLinea.descripcion;
+                categoria = descLinea.categoria || l.categoria;
+            }
+        }
+
+        return {
+            descripcion: descripcion,
+            categoria: categoria,
+            importe: l.importe,
+            idLinea: l.idLinea, // Incluir idLinea para trazabilidad
+            idOriginal: l.id // Para referencia/trazabilidad
+        };
+    });
+}
+
+/**
+ * Sincroniza líneas de presupuesto usando lógica "carry-forward".
+ * 
+ * REGLAS:
+ * 1. Líneas que NO aparecen en el PDF → MANTIENEN su importe anterior
+ * 2. Líneas que SÍ aparecen en el PDF → Se actualiza el importe
+ * 3. Líneas nuevas → Se agregan
+ * 
+ * @param {number} idActualizacion - ID de la actualización nueva
+ * @param {Array} lineasPdf - Líneas extraídas del PDF [{concepto, categoria, importe}]
+ * @param {Array} lineasPredecesor - Líneas heredadas del predecesor [{descripcion, categoria, importe}]
+ * @param {Function} logFn - Función de log
+ * @returns {Object} Resumen de operaciones {inherited, updated, inserted}
+ */
+function _syncLineasCarryForward(idActualizacion, lineasPdf, lineasPredecesor, logFn) {
+    const contexto = '_syncLineasCarryForward';
+    const result = { inherited: 0, updated: 0, inserted: 0 };
+
+    if (!idActualizacion) {
+        logFn(`[${contexto}]ERROR: idActualizacion no proporcionado`);
+        return result;
+    }
+
+    logFn(`[${contexto}]Iniciando sync: ${lineasPdf?.length || 0} líneas PDF, ${lineasPredecesor?.length || 0} líneas predecesor`);
+
+    // Normalizar clave para comparación
+    const _normKey = (concepto, categoria) => {
+        const ubicNorm = _normalizarUbicacion(concepto);
+        const catNorm = String(categoria || 'DAÑO FISICO').toUpperCase().trim()
+            .replace('DESAZOLVE', 'DESAZOLVES');
+        return `${ubicNorm}| ${catNorm} `;
+    };
+
+    // 1. Crear mapa de líneas del PDF
+    const mapPdf = new Map();
+    if (lineasPdf && lineasPdf.length > 0) {
+        lineasPdf.forEach((l, i) => {
+            const key = _normKey(l.concepto, l.categoria);
+            logFn(`[${contexto}]PDF[${i}]: "${l.concepto?.substring(0, 40)}..."[${l.categoria}] $${l.importe} -> key="${key.substring(0, 50)}..."`);
+            mapPdf.set(key, l);
+        });
+    }
+
+    // 2. Crear mapa de líneas del predecesor
+    const mapPredecesor = new Map();
+    if (lineasPredecesor && lineasPredecesor.length > 0) {
+        lineasPredecesor.forEach((l, i) => {
+            const key = _normKey(l.descripcion, l.categoria);
+            logFn(`[${contexto}]PRED[${i}]: "${l.descripcion?.substring(0, 40)}..."[${l.categoria}] $${l.importe} -> key="${key.substring(0, 50)}..."`);
+            mapPredecesor.set(key, l);
+        });
+    }
+
+    // Batch para insertar líneas finales
+    const lineasAInsertar = [];
+
+    // 3. PROCESAR LÍNEAS DEL PREDECESOR (carry-forward)
+    for (const [key, lineaPredecesor] of mapPredecesor) {
+        const lineaPdf = mapPdf.get(key);
+
+        if (lineaPdf) {
+            // Línea EXISTE en PDF → usar importe del PDF (actualización)
+            const importeNuevo = parseFloat(lineaPdf.importe) || 0;
+            const importeAnterior = parseFloat(lineaPredecesor.importe) || 0;
+
+            if (Math.abs(importeNuevo - importeAnterior) > 0.01) {
+                logFn(`[${contexto}]ACTUALIZAR: "${lineaPredecesor.descripcion}" $${importeAnterior} -> $${importeNuevo} `);
+            } else {
+                logFn(`[${contexto}] SIN CAMBIO: "${lineaPredecesor.descripcion}" $${importeAnterior} `);
+            }
+
+            lineasAInsertar.push({
+                idActualizacion: idActualizacion,
+                descripcion: String(lineaPredecesor.descripcion).toUpperCase().trim(),
+                categoria: String(lineaPredecesor.categoria || 'DAÑO FISICO').toUpperCase(),
+                importe: importeNuevo,
+                fechaCreacion: new Date()
+            });
+            result.updated++;
+
+            // Marcar como procesada
+            mapPdf.delete(key);
+        } else {
+            // Línea NO EXISTE en PDF → MANTENER importe anterior (carry-forward)
+            logFn(`[${contexto}]HEREDAR: "${lineaPredecesor.descripcion}"[${lineaPredecesor.categoria}] $${lineaPredecesor.importe} `);
+
+            lineasAInsertar.push({
+                idActualizacion: idActualizacion,
+                descripcion: String(lineaPredecesor.descripcion).toUpperCase().trim(),
+                categoria: String(lineaPredecesor.categoria || 'DAÑO FISICO').toUpperCase(),
+                importe: parseFloat(lineaPredecesor.importe) || 0,
+                fechaCreacion: new Date()
+            });
+            result.inherited++;
+        }
+    }
+
+    // 4. AGREGAR LÍNEAS NUEVAS (solo existen en PDF, no en predecesor)
+    for (const [key, lineaPdf] of mapPdf) {
+        logFn(`[${contexto}]NUEVA: "${lineaPdf.concepto}"[${lineaPdf.categoria}] $${lineaPdf.importe} `);
+
+        // Determinar categoría
+        let catFinal = lineaPdf.categoria;
+        if (!catFinal || catFinal.trim() === '') {
+            const desc = String(lineaPdf.concepto || '').toUpperCase();
+            if (desc.includes('DESAZOLVE') || desc.includes('LIMPIEZA') || desc.includes('EXTRACCI')) {
+                catFinal = 'DESAZOLVES';
+            } else if (desc.includes('SUPERVISI')) {
+                catFinal = 'SUPERVISION';
+            } else {
+                catFinal = 'DAÑO FISICO';
+            }
+        }
+
+        lineasAInsertar.push({
+            idActualizacion: idActualizacion,
+            descripcion: String(lineaPdf.concepto || 'Sin concepto').toUpperCase().trim(),
+            categoria: catFinal.toUpperCase(),
+            importe: parseFloat(lineaPdf.importe) || 0,
+            fechaCreacion: new Date()
+        });
+        result.inserted++;
+    }
+
+    // 5. INSERTAR TODAS LAS LÍNEAS EN BATCH
+    if (lineasAInsertar.length > 0) {
+        logFn(`[${contexto}] Insertando ${lineasAInsertar.length} líneas en batch...`);
+        try {
+            const resCreate = createBatch('presupuestoLineas', lineasAInsertar);
+            logFn(`[${contexto}] Batch insertado: ${resCreate.count || 0} líneas`);
+        } catch (e) {
+            logFn(`[${contexto}] ERROR en batch: ${e.message} `);
+        }
+    }
+
+    logFn(`[${contexto}] Sync completado: ${result.inherited} heredadas, ${result.updated} actualizadas, ${result.inserted} nuevas`);
+    return result;
 }
 
 function _markError(doc, omitidos, msg) {
@@ -2178,7 +3021,7 @@ function convertirExcelACsv(base64Data) {
         };
 
     } catch (error) {
-        console.error(`[${contexto}] Error:`, error);
+        console.error(`[${contexto}]Error: `, error);
         return { success: false, message: error.message };
     } finally {
         if (fileId) {
@@ -2237,7 +3080,7 @@ function parseImportFile(csvInfo) {
 
         // Clave única compuesta: Ref + ID + TIPO
         // Esto permite que un ORIGEN y una ACTUALIZACION compartan el mismo ID (L30) pero sean objetos distintos.
-        const key = `${refCta}|${comId}|${tipoRegistro}`;
+        const key = `${refCta}| ${comId}| ${tipoRegistro} `;
 
         if (!agrupado[key]) {
             agrupado[key] = {
@@ -2295,7 +3138,7 @@ function validarLote(loteAgrupado, cache) {
             // y priorizamos la suma de las líneas de desglose.
             const oldTotal = doc.header.totalPdf;
             doc.header.totalPdf = doc.validacion.sumaLineas;
-            doc.validacion.motivo = `Corregido: Total Header (${oldTotal}) ajustado a Suma Líneas (${doc.validacion.sumaLineas})`;
+            doc.validacion.motivo = `Corregido: Total Header(${oldTotal}) ajustado a Suma Líneas(${doc.validacion.sumaLineas})`;
             // No marcamos omitido, dejamos pasar.
         } else if (doc.validacion.sumaLineas === 0 && doc.header.totalPdf > 0) {
             // Caso: Actualización de Monto sin desglose (posible en ajustes directos)
@@ -2336,7 +3179,7 @@ function validarLote(loteAgrupado, cache) {
                     // pero el error real es que FALTA el origen especifico.
                     doc.validacion.esValido = false;
                     doc.validacion.status = 'OMITIDO';
-                    doc.validacion.motivo = `No se encontró el Origen '${doc.header.comunicadoId}' en el lote (Se encontró otro: '${origenCuentaEnLote.header.comunicadoId}').`;
+                    doc.validacion.motivo = `No se encontró el Origen '${doc.header.comunicadoId}' en el lote(Se encontró otro: '${origenCuentaEnLote.header.comunicadoId}').`;
                     return;
                 }
 
@@ -2473,7 +3316,7 @@ function previsualizarImportacionFacturas(fileContent) {
         };
 
     } catch (error) {
-        console.error(`Error en ${contexto}:`, error);
+        console.error(`Error en ${contexto}: `, error);
         return { success: false, message: error.message };
     }
 }
@@ -2552,7 +3395,7 @@ function ejecutarImportacionFacturas(fileContent) {
         };
 
     } catch (e) {
-        console.error(`Error en ${contexto}:`, e);
+        console.error(`Error en ${contexto}: `, e);
         return { success: false, message: e.message };
     }
 }

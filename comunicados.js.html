@@ -119,7 +119,7 @@
 
             for (let i = 0; i < total; i++) {
                 const file = files[i];
-                const msg = `Procesando IA (${i + 1}/${total}): ${file.name}`;
+                const msg = `🤖 IA Analizando (${i + 1}/${total}): ${file.name}`;
                 dom.loaderMsg.textContent = msg;
 
                 try {
@@ -896,9 +896,8 @@
             // Dashboard & Filters Refs
             dom.dashboard = document.getElementById('dashboard-container');
             dom.statTotal = document.getElementById('stat-total');
-            dom.statSinSiniestro = document.getElementById('stat-sin-siniestro');
-            dom.statNuevosSiniestros = document.getElementById('stat-nuevos-siniestros');
-            dom.statMesActual = document.getElementById('stat-mes-actual');
+            dom.statTotalContratista = document.getElementById('stat-total-contratista');
+            dom.statTotalSupervision = document.getElementById('stat-total-supervision');
 
             dom.filterSearch = document.getElementById('filter-search');
             dom.filterStatus = document.getElementById('filter-status');
@@ -1488,35 +1487,19 @@
         function _calculateStats(data) {
             if (!dom.dashboard) return;
 
-            // Total
+            // Total de comunicados
             const total = data.length;
 
-            // Sin Siniestro (Importantes)
-            const sinSiniestro = data.filter(d => !d.siniestro || d.siniestro.trim() === '').length;
+            // Suma total de presupuestos (Contratista/Obra)
+            const totalContratista = data.reduce((sum, d) => sum + (parseFloat(d.presupuesto) || 0), 0);
 
-            // Nuevos Siniestros (Lógica simulada: si el contratista o description dicen 'Nuevo' o si status es 'En Proceso'?)
-            // Ajustamos: Contamos siniestros que NO están en catálogo (si tuviéramos esa info en el item) logicamente
-            // Por ahora usaremos "En Proceso" si existiera campo estado, o simplemente "Sin Siniestro" como proxy de atención.
-            // Usemos lógica de fecha para "Nuevos" este mes en otra card.
-            // Para esta card usaremos items con 'estado' vacio o nulo si existe?
-            // Vamos a contar items CON siniestro pero sin Estimación (campo monto supervisión = 0 tal vez?)
-            const nuevosSiniestros = data.filter(d => d.siniestro && (!d.presupuesto || parseFloat(d.presupuesto) === 0)).length;
-
-
-            // Este Mes (Recientes)
-            const hoy = new Date();
-            const mesActual = hoy.getMonth() + 1; // 1-12
-            const anyoActual = hoy.getFullYear();
-            const esteMes = data.filter(d => {
-                const f = new Date(d.fecha); // Asumiendo formato parseable
-                return !isNaN(f) && f.getMonth() + 1 === mesActual && f.getFullYear() === anyoActual;
-            }).length;
+            // Suma total de montos de supervisión
+            const totalSupervision = data.reduce((sum, d) => sum + (parseFloat(d.montoSupervision) || 0), 0);
 
             // Render DOM
             dom.statTotal.textContent = total;
-            dom.statSinSiniestro.textContent = sinSiniestro;
-            dom.statNuevosSiniestros.textContent = nuevosSiniestros;
-            dom.statMesActual.textContent = esteMes;
+            dom.statTotalContratista.textContent = _formatCurrency(totalContratista);
+            dom.statTotalSupervision.textContent = _formatCurrency(totalSupervision);
 
             // Mostrar el dashboard si hay datos
             if (total > 0) {
@@ -1645,7 +1628,7 @@
                     <td class="text-nowrap small">${escapeHtml(com.fecha || '')}</td>
                     <td class="small">${escapeHtml(com.estado || '')}</td>
                     <td class="small text-truncate" style="max-width: 200px;" title="${escapeHtml(com.contratista || '')}">${escapeHtml(com.contratista || '')}</td>
-                    <td class="small font-monospace text-end text-primary fw-bold" title="Total Obra + Supervisión">${_formatCurrency(com.presupuesto)}</td>
+                    <td class="small font-monospace text-end text-primary fw-bold" title="Monto de Obra">${_formatCurrency(com.presupuesto)}</td>
                     <td class="small font-monospace text-end text-muted">${_formatCurrency(com.montoSupervision)}</td>
                     <td class="text-end pe-4">
                         <button class="btn btn-sm btn-outline-primary me-1" onclick="Comunicados.abrirModal(${com.id || ''})" title="Edición rápida">

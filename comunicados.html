@@ -65,7 +65,7 @@
     <div id="dashboard-container" class="col-12 d-none fade-in">
         <div class="row g-3 mb-4">
             <!-- Total Card -->
-            <div class="col-12 col-md-6 col-xl-3">
+            <div class="col-12 col-md-6 col-xl-4">
                 <div class="stat-card p-3 h-100" style="--card-border-color: #0d6efd;">
                     <div class="d-flex justify-content-between align-items-start">
                         <div>
@@ -82,55 +82,37 @@
                 </div>
             </div>
 
-            <!-- Importantes Card -->
-            <div class="col-12 col-md-6 col-xl-3">
-                <div class="stat-card p-3 h-100" style="--card-border-color: #dc3545;">
+            <!-- Total Contratista Card -->
+            <div class="col-12 col-md-6 col-xl-4">
+                <div class="stat-card p-3 h-100" style="--card-border-color: #0d6efd;">
                     <div class="d-flex justify-content-between align-items-start">
                         <div>
-                            <div class="stat-label mb-1">Sin Siniestro</div>
-                            <div class="stat-value text-danger" id="stat-sin-siniestro">0</div>
-                            <div class="stat-trend text-danger">
-                                <i class="bi bi-exclamation-circle"></i> Requieren atención
-                            </div>
-                        </div>
-                        <div class="stat-icon bg-danger bg-opacity-10 text-danger">
-                            <i class="bi bi-bell-fill"></i>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- En Proceso Card (Or Siniestros Nuevos) -->
-            <div class="col-12 col-md-6 col-xl-3">
-                <div class="stat-card p-3 h-100" style="--card-border-color: #ffc107;">
-                    <div class="d-flex justify-content-between align-items-start">
-                        <div>
-                            <div class="stat-label mb-1">Nuevos Siniestros</div>
-                            <div class="stat-value text-dark" id="stat-nuevos-siniestros">0</div>
+                            <div class="stat-label mb-1">Total Contratista</div>
+                            <div class="stat-value text-primary" id="stat-total-contratista">$0.00</div>
                             <div class="stat-trend text-muted">
-                                <i class="bi bi-stars text-warning"></i> Detectados recientemente
+                                <i class="bi bi-building"></i> Monto de obra
                             </div>
                         </div>
-                        <div class="stat-icon bg-warning bg-opacity-10 text-warning">
-                            <i class="bi bi-magic"></i>
+                        <div class="stat-icon bg-primary bg-opacity-10 text-primary">
+                            <i class="bi bi-cash-stack"></i>
                         </div>
                     </div>
                 </div>
             </div>
 
-            <!-- Recientes Card -->
-            <div class="col-12 col-md-6 col-xl-3">
+            <!-- Total Supervisión Card -->
+            <div class="col-12 col-md-6 col-xl-4">
                 <div class="stat-card p-3 h-100" style="--card-border-color: #198754;">
                     <div class="d-flex justify-content-between align-items-start">
                         <div>
-                            <div class="stat-label mb-1">Este Mes</div>
-                            <div class="stat-value text-success" id="stat-mes-actual">0</div>
-                            <div class="stat-trend text-success">
-                                <i class="bi bi-graph-up-arrow"></i> Actividad reciente
+                            <div class="stat-label mb-1">Total Supervisión</div>
+                            <div class="stat-value text-success" id="stat-total-supervision">$0.00</div>
+                            <div class="stat-trend text-muted">
+                                <i class="bi bi-clipboard-check"></i> Monto supervisión
                             </div>
                         </div>
                         <div class="stat-icon bg-success bg-opacity-10 text-success">
-                            <i class="bi bi-calendar-check mx-auto"></i>
+                            <i class="bi bi-person-badge"></i>
                         </div>
                     </div>
                 </div>
@@ -207,7 +189,7 @@
                                     id="sort-icon-contratista"></i>
                             </th>
                             <th class="text-end cursor-pointer" onclick="Comunicados.ordenar('presupuesto')">
-                                Reclamo <i class="bi bi-arrow-down-up small text-muted ms-1"
+                                Obra <i class="bi bi-arrow-down-up small text-muted ms-1"
                                     id="sort-icon-presupuesto"></i>
                             </th>
                             <th class="text-end cursor-pointer" onclick="Comunicados.ordenar('montoSupervision')">

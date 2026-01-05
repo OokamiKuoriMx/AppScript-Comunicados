@@ -195,11 +195,19 @@ const TABLE_DEFINITIONS = {
         uniqueFields: []
     },
 
+    descripcionLineas: {
+        sheetName: 'DescripcionLineas',
+        primaryField: 'id',
+        headers: ['id', 'descripcion', 'categoria'],
+        requiredFields: ['descripcion'],
+        uniqueFields: []
+    },
+
     presupuestoLineas: {
         sheetName: 'PresupuestoLineas',
         primaryField: 'id',
-        headers: ['id', 'idActualizacion', 'descripcion', 'categoria', 'importe', 'fechaCreacion'],
-        requiredFields: ['idActualizacion', 'descripcion', 'importe'],
+        headers: ['id', 'idActualizacion', 'idLinea', 'categoria', 'importe', 'esVigente', 'fechaCreacion'],
+        requiredFields: ['idActualizacion', 'idLinea', 'importe'],
         uniqueFields: []
     },
 

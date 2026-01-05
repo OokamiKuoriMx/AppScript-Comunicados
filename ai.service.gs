@@ -161,7 +161,124 @@ function _callGeminiWithPdf(base64Content, filename, errorFeedback = null, catal
         Eres un Auditor de Ingeniería experto.
         Tu misión es extraer datos de reportes técnicos (PDFs) para generar un registro idéntico al que realizaría un auditor humano en un Excel.
 
-        ## PASO 0: ANÁLISIS CONTEXTUAL (LEE TODO EL DOCUMENTO PRIMERO)
+        ## 🚨 REGLA PRIORITARIA - EXTRACCIÓN DE LÍNEAS DE PRESUPUESTO 🚨
+        
+        **ANTES de analizar el header**, BUSCA en el documento una tabla de "Resumen de presupuestos" que contenga columnas como:
+        - "DAÑO FÍSICO" (o similar: "Importe daño físico", "Daño Material")
+        - "REMOCIÓN Y DESAZOLVE" (o similar: "Desazolves", "Remoción")
+        - "CONCEPTO" o "NOMBRE DE INVENTARIO"
+        
+        **PARA CADA FILA de esa tabla**, genera UNA o DOS líneas en el array "lineas":
+        
+        - SI columna "DAÑO FÍSICO" > 0 → { "concepto": "[NOMBRE]", "categoria": "DAÑO FISICO", "importe": [valor] }
+        - SI columna "REMOCIÓN/DESAZOLVE" > 0 → { "concepto": "[MISMO NOMBRE]", "categoria": "DESAZOLVES", "importe": [valor] }
+        
+        **❌ NUNCA** uses la columna "IMPORTE" o "TOTAL" como importe de línea.
+        **❌ NUNCA** generes el array "lineas" vacío si hay una tabla de resumen.
+        **✅ SIEMPRE** genera al menos 1 línea si hay tabla de presupuestos.
+
+        ## PASO 0: DETECCIÓN DEL TIPO DE AJUSTADOR
+        
+        **PRIMERO**, identifica qué ajustador emitió el documento para aplicar las reglas correctas:
+        
+        ### INDICADORES DE CHARLES TAYLOR ADJUSTING:
+        - Logo "Charles Taylor" o "CTA" en el encabezado
+        - Referencias con prefijo "GL", "AM", "CT" (ej: "Ref. CTA: GL061410")
+        - Comunicados en formato "GL...-L05" donde L05 es el consecutivo
+        - Línea "Comunicado: GL061410-L05 (Estado, Municipio)"
+        
+        ### INDICADORES DE MILLER INTERNATIONAL:
+        - Logo "miller International" en el encabezado
+        - Texto "Technical Loss Adjusters"
+        - Referencias en formato "Ref. Miller: SR-164-2022"
+        - Referencias de siniestro "Ref. AGROASEMEX: SCNA-0017/2022"
+        - Número de comunicado junto a la fecha: "No. 847"
+        - Campo "Localidad afectada:" con distrito de riego explícito
+        
+        ---
+        
+        ## REGLAS PARA MILLER INTERNATIONAL
+        
+        Si detectas que es un documento de Miller International, aplica estas reglas:
+        
+        1. **comunicadoId**: 
+           - Busca "No. XXX" en el encabezado, junto a la fecha
+           - Ejemplo: "Ciudad de México, 19 de octubre de 2022 / No. 847"
+           - comunicadoId = "847" (solo el número)
+           - ⚠️ IGNORA el campo "Asunto:", NO contiene el comunicado
+        
+        2. **refCta (Referencia del Ajustador)**:
+           - Busca "Ref. Miller: XXX"
+           - Ejemplo: "Ref. Miller: SR-164-2022"
+           - refCta = "SR-164-2022"
+        
+        3. **refSiniestro**:
+           - Busca "Ref. AGROASEMEX: XXX" o similar
+           - Ejemplo: "Ref. AGROASEMEX: SCNA-0017/2022"
+           - refSiniestro = "SCNA-0017/2022"
+        
+        4. **distritoRiego**:
+           - Busca "Localidad afectada: XXX"
+           - Ejemplo: "Localidad afectada: Distrito de Riego 009, Valle de Juarez, Chihuahua"
+           - distritoRiego = "Distrito de Riego 009, Valle de Juarez, Chihuahua"
+        
+        5. **estado**:
+           - Extrae del final de "Localidad afectada" (después de la última coma)
+           - Ejemplo: "...Valle de Juarez, Chihuahua" → estado = "CHIHUAHUA"
+        
+        6. **ajustadorNombre**: 
+           - = "MILLER INTERNATIONAL"
+        
+        7. **aseguradora**:
+           - Extrae del campo "Ref. AGROASEMEX" el nombre de la aseguradora
+           - = "AGROASEMEX"
+        
+        8. **descripcion (HISTORIAL)**:
+           - Para origen: "{refCta}-{comunicadoId}"
+           - Ejemplo: "SR-164-2022-847"
+        
+        9. **⚠️ REGLA CRÍTICA - EXTRACCIÓN DE LÍNEAS EN MILLER**:
+        
+           Las tablas de Miller tienen estas columnas:
+           | N° | NOMBRE DE INVENTARIO | **DAÑO FÍSICO** | **REMOCIÓN Y DESAZOLVE** | IMPORTE |
+           
+           **DEBES GENERAR DOS LÍNEAS SEPARADAS** por cada fila (si el importe > 0):
+           
+           **LÍNEA 1: DAÑO FÍSICO**
+           - concepto: [NOMBRE DE INVENTARIO, ej: "CANAL RODEO"]
+           - categoria: "DAÑO FISICO"
+           - importe: [Valor de columna "DAÑO FÍSICO"] → 995719.34
+           
+           **LÍNEA 2: DESAZOLVES** (SOLO si el valor > 0)
+           - concepto: [MISMO NOMBRE DE INVENTARIO]
+           - categoria: "DESAZOLVES"
+           - importe: [Valor de columna "REMOCIÓN Y DESAZOLVE"] → 12149.26
+           
+           **EJEMPLO COMPLETO** para la tabla:
+           | P-01 | Canal Rodeo | $995,719.34 | $12,149.26 | $1,007,868.60 |
+           | P-02 | Presa Derivadora Parían | $96,795.73 | $17,227.73 | $114,023.46 |
+           | P-03 | Camino de operación lateral Tejabán | $27,029.59 | $0.00 | $27,029.59 |
+           
+           "lineas": [
+               { "concepto": "CANAL RODEO", "categoria": "DAÑO FISICO", "importe": 995719.34 },
+               { "concepto": "CANAL RODEO", "categoria": "DESAZOLVES", "importe": 12149.26 },
+               { "concepto": "PRESA DERIVADORA PARÍAN", "categoria": "DAÑO FISICO", "importe": 96795.73 },
+               { "concepto": "PRESA DERIVADORA PARÍAN", "categoria": "DESAZOLVES", "importe": 17227.73 },
+               { "concepto": "CAMINO DE OPERACIÓN LATERAL TEJABÁN", "categoria": "DAÑO FISICO", "importe": 27029.59 }
+           ]
+           
+           **❌ NUNCA HAGAS ESTO (INCORRECTO)**:
+           - ❌ Una sola línea con el importe TOTAL ($1,007,868.60)
+           - ❌ Ignorar la columna de REMOCIÓN Y DESAZOLVE
+           - ❌ Sumar ambas columnas en una sola línea
+        
+        ---
+        
+        ## REGLAS PARA CHARLES TAYLOR (REGLAS ORIGINALES)
+        
+        Si detectas que es un documento de Charles Taylor, aplica estas reglas:
+
+        ### ANÁLISIS CONTEXTUAL (LEE TODO EL DOCUMENTO PRIMERO)
         
         Antes de extraer datos, LEE y COMPRENDE el contexto completo del documento:
         
@@ -345,7 +462,23 @@ function _callGeminiWithPdf(base64Content, filename, errorFeedback = null, catal
         - **EXTRAE SOLO** las tablas de "Resumen" o "Presupuesto" que describan tramos o ubicaciones (Ríos, Márgenes).
         - Ignora filas de subtotales o encabezados de tramo que no tengan importe propio.
         
-        4. **⚠️ REGLA CRÍTICA - TABLAS CON DOS COLUMNAS DE IMPORTE**:
+        4. **⚠️ REGLA CRÍTICA - BÚSQUEDA DE TABLA CON DOS CATEGORÍAS**:
+        
+        **PASO 1: BUSCA** en el documento una tabla que tenga columnas con estos nombres o similares:
+        - "DAÑO FÍSICO" o "Importe daño físico" o "Daño Material"
+        - "REMOCIÓN Y DESAZOLVE" o "Importe Remoción" o "Desazolves" o "Desazolve"
+        - "IMPORTE" o "TOTAL" (columna de suma)
+        
+        **PASO 2: CUANDO ENCUENTRES ESA TABLA**, para CADA FILA que tenga un concepto/ubicación:
+        
+        SI la columna "DAÑO FÍSICO" tiene valor > 0:
+        → GENERA una línea con categoria = "DAÑO FISICO" y ese importe
+        
+        SI la columna "REMOCIÓN Y DESAZOLVE" tiene valor > 0:
+        → GENERA OTRA línea con categoria = "DESAZOLVES" y ese importe
+        
+        **NUNCA** uses la columna "IMPORTE" (el total) como importe de línea.
+        **SIEMPRE** usa los valores de las columnas separadas.
         
         CUANDO VEAS UNA TABLA CON ESTAS DOS COLUMNAS:
         | Concepto | **Importe daño físico MX$** | **Importe Remoción, desazolves MX$** | Importe MX$ |
@@ -368,8 +501,30 @@ function _callGeminiWithPdf(base64Content, filename, errorFeedback = null, catal
             { "concepto": "BORDO DEL RÍO ARENAS", "categoria": "DESAZOLVES", "importe": 99825.79 }
         ]
         
-        **NO HAGAS ESTO (INCORRECTO)**:
-        - ❌ Una sola línea con importe total 2,479,657.51
+        **EJEMPLO 2 - CHARLES TAYLOR CON UNA SOLA FILA**:
+        Si la tabla tiene UNA sola fila de concepto pero DOS columnas de importe:
+        | N° | CONCEPTO | DAÑO FÍSICO | REMOCIÓN Y DESAZOLVE | IMPORTE |
+        | P-01 | Canal Principal Margen Izquierda | $3,085,059.14 | $657,268.25 | $3,742,327.39 |
+        
+        DEBES GENERAR **DOS LÍNEAS**:
+        "lineas": [
+            { "concepto": "CANAL PRINCIPAL MARGEN IZQUIERDA", "categoria": "DAÑO FISICO", "importe": 3085059.14 },
+            { "concepto": "CANAL PRINCIPAL MARGEN IZQUIERDA", "categoria": "DESAZOLVES", "importe": 657268.25 }
+        ]
+        
+        **EJEMPLO 3 - DESCRIPCIÓN LARGA DE OBRA**:
+        | N° | CONCEPTO | DAÑO FÍSICO | REMOCIÓN Y DESAZOLVE | IMPORTE |
+        | P-01 | Obra de Protección a base de Tablaestaca Margen Derecha del Río Atoyac | $6,612,752.18 | $27,792.33 | $6,640,544.51 |
+        
+        DEBES GENERAR **DOS LÍNEAS**:
+        "lineas": [
+            { "concepto": "OBRA DE PROTECCIÓN A BASE DE TABLAESTACA MARGEN DERECHA DEL RÍO ATOYAC", "categoria": "DAÑO FISICO", "importe": 6612752.18 },
+            { "concepto": "OBRA DE PROTECCIÓN A BASE DE TABLAESTACA MARGEN DERECHA DEL RÍO ATOYAC", "categoria": "DESAZOLVES", "importe": 27792.33 }
+        ]
+        
+        ⚠️ **NO HAGAS ESTO (INCORRECTO)**:
+        - ❌ Una sola línea con importe total (suma de ambas columnas)
+        - ❌ Ignorar la columna de REMOCIÓN Y DESAZOLVE aunque sea pequeña
         - ❌ Líneas separadas por concepto (Preliminares, Demoliciones, etc.)
         - ❌ Incluir "- DAÑO FÍSICO" en el concepto
 
