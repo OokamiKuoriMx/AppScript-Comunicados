@@ -1811,123 +1811,155 @@ function _procesarBatchInterno(loteAgrupado, cache) {
             counts.newActs = resActs.count;
 
             // =================================================================
-            // SOLUCIÓN "CARRY-FORWARD" EN MEMORIA (In-Memory Merge)
+            // LÓGICA MAESTRA V3.0: MEMORIA + SUSTITUCIÓN + DELTAS
             // =================================================================
-            // Mapa para que L50B pueda leer lo que L50A acaba de generar
-            // Clave: idComunicado + "_" + consecutivoLocal
             const memoriaLineasBatch = new Map();
 
-            // Preparar PresupuestoLineas
+            // Recorremos cada actualización procesada (L50, L50A...)
             resActs.ids.forEach((idActReal, i) => {
                 const updateObj = batchActualizaciones[i];
-                const lineasDelPdf = updateObj._docLineas || []; // Lo que trajo la IA (Delta)
-
+                const lineasDelPdf = updateObj._docLineas || [];
                 const esOrigen = updateObj.esOrigen === 1 || updateObj.esOrigen === '1';
                 const idComunicado = updateObj.idComunicado;
-                const revisionActual = updateObj.revision || updateObj._revision;
-                const consecutivoLocal = updateObj.consecutivo; // 1, 2, 3...
+                const consecutivoLocal = updateObj.consecutivo;
 
-                logBatch(`[${contexto}] Procesando líneas para ActID ${idActReal} (${revisionActual}): PDF trajo ${lineasDelPdf.length} líneas.`);
+                // 1. DETECCIÓN: ¿La IA dijo que esto sustituye todo?
+                const esSustitucionTotal = updateObj._tipoAccion === 'REEMPLAZO_TOTAL';
 
-                let lineasFinales = [];
+                logBatch(`[PROCESANDO] ActID ${idActReal}: SustituciónTotal=${esSustitucionTotal}`);
 
-                if (esOrigen) {
-                    // Si es ORIGEN, las líneas finales son exactamente las del PDF
-                    lineasFinales = lineasDelPdf.map(l => ({
-                        concepto: l.concepto,
-                        categoria: l.categoria,
-                        importe: parseFloat(l.importe) || 0
-                    }));
-                } else {
-                    // Si es ACTUALIZACIÓN, necesitamos FUSIONAR con el predecesor
-                    // 1. Buscar líneas del Predecesor (Puede estar en MEMORIA del batch o en BD)
-                    let lineasPredecesor = [];
-
-                    // A) Intentar leer del Batch actual (ej: L50B leyendo a L50A)
-                    // El predecesor debería tener un consecutivo menor (consecutivoLocal - 1)
-                    const clavePredecesorBatch = `${idComunicado}_${consecutivoLocal - 1}`;
-
-                    if (memoriaLineasBatch.has(clavePredecesorBatch)) {
-                        logBatch(`[${contexto}] MERGE: Encontrado predecesor en MEMORIA BATCH (Consecutivo ${consecutivoLocal - 1})`);
-                        lineasPredecesor = memoriaLineasBatch.get(clavePredecesorBatch);
+                // 2. RECUPERAR EL PASADO (Snapshot anterior)
+                let lineasPredecesor = [];
+                if (!esOrigen) {
+                    const clavePredecesor = `${idComunicado}_${consecutivoLocal - 1}`;
+                    if (memoriaLineasBatch.has(clavePredecesor)) {
+                        // A) Leemos de la memoria (ej. L50A leyendo lo que dejó L50)
+                        lineasPredecesor = memoriaLineasBatch.get(clavePredecesor);
                     } else {
-                        // B) Si no está en memoria, buscar en BD (ej: L50A leyendo a L50 histórico)
-                        logBatch(`[${contexto}] MERGE: Buscando predecesor en BD...`);
-                        lineasPredecesor = _obtenerLineasPredecesor(cache, idComunicado, revisionActual, logBatch);
+                        // B) Leemos de la BD (solo lo vigente)
+                        const lineasBD = readAllRows('presupuestoLineas').data || [];
+                        const idsActsCom = cache.actualizaciones
+                            .filter(a => String(a.idComunicado) === String(idComunicado))
+                            .map(a => String(a.id));
 
-                        // Normalizar formato de BD a formato simple
-                        lineasPredecesor = lineasPredecesor.map(l => ({
-                            concepto: l.descripcion, // Usamos descripcion o concepto
-                            categoria: l.categoria,
-                            importe: parseFloat(l.importe) || 0
-                        }));
-                    }
-
-                    // 2. Ejecutar FUSIÓN (Merge Logic)
-                    // Normalizar clave para comparación
-                    const _key = (c, cat) => `${String(c).toUpperCase().trim()}|${String(cat).toUpperCase().trim()}`;
-
-                    const mapMerge = new Map();
-
-                    // a) Cargar Base (Predecesor)
-                    lineasPredecesor.forEach(l => mapMerge.set(_key(l.concepto, l.categoria), l));
-
-                    // b) Aplicar Cambios (PDF Actual)
-                    lineasDelPdf.forEach(l => {
-                        const key = _key(l.concepto, l.categoria);
-                        const importe = parseFloat(l.importe) || 0;
-
-                        // Determinar categoría si viene vacía
-                        let catFinal = l.categoria;
-                        if (!catFinal) {
-                            const desc = String(l.concepto).toUpperCase();
-                            catFinal = (desc.includes('DESAZOLVE') || desc.includes('LIMPIEZA')) ? 'DESAZOLVES' : 'DAÑO FISICO';
-                        }
-
-                        if (mapMerge.has(key)) {
-                            // ACTUALIZAR existente
-                            const existente = mapMerge.get(key);
-                            if (Math.abs(existente.importe - importe) > 0.01) {
-                                existente.importe = importe; // Sobrescribir importe
-                            }
-                        } else {
-                            // INSERTAR nueva
-                            mapMerge.set(key, {
-                                concepto: l.concepto,
-                                categoria: catFinal,
-                                importe: importe
+                        lineasPredecesor = lineasBD
+                            .filter(l => idsActsCom.includes(String(l.idActualizacion)) && l.esVigente === true)
+                            .map(l => {
+                                const desc = cache.descripcionLineas.find(d => String(d.id) === String(l.idLinea));
+                                return {
+                                    concepto: desc ? desc.descripcion : 'S/D',
+                                    categoria: desc ? desc.categoria : l.categoria,
+                                    importe: parseFloat(l.importe) || 0,
+                                    idLinea: l.idLinea,
+                                    idRegistroPrevio: l.id,
+                                    esVigente: true
+                                };
                             });
-                        }
-                    });
-
-                    lineasFinales = Array.from(mapMerge.values());
-                    logBatch(`[${contexto}] MERGE RESULTADO: ${lineasPredecesor.length} (Base) + ${lineasDelPdf.length} (PDF) -> ${lineasFinales.length} Líneas Finales.`);
+                    }
                 }
 
-                // 3. GUARDAR EN MEMORIA PARA EL SIGUIENTE (ej: Para que L50C lea esto)
-                memoriaLineasBatch.set(`${idComunicado}_${consecutivoLocal}`, lineasFinales);
+                // 3. FUSIÓN Y NORMALIZACIÓN
+                // Clave estricta para comparar (elimina UR, DR, acentos, espacios)
+                const _key = (c, cat) => {
+                    let limpio = String(c).toUpperCase().trim()
+                        .replace(/\bUR\b/g, 'UNIDAD DE RIEGO').replace(/\bU\.R\.\b/g, 'UNIDAD DE RIEGO')
+                        .replace(/\bDR\b/g, 'DISTRITO DE RIEGO').replace(/\bDTT\b/g, 'DISTRITO DE TEMPORAL')
+                        .normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^A-Z0-9]/g, '');
+                    let catLimpia = String(cat).toUpperCase().includes('DESAZOLVE') || String(cat) == '2' ? '2' : '1';
+                    return `${limpio}|${catLimpia}`;
+                };
 
+                const mapSnapshot = new Map();
 
-                // 4. PREPARAR PARA INSERTAR EN BD
-                lineasFinales.forEach((l, i) => {
-                    // Calculo de Categoría Numérica
-                    let catFinalNum = 1;
-                    if (l.categoria) {
-                        const c = String(l.categoria).toUpperCase();
-                        if (c === '2' || c.includes('DESAZOLVE') || c.includes('LIMPIEZA')) catFinalNum = 2;
+                // A) PREPARAR EL TABLERO (BASE)
+                lineasPredecesor.forEach(l => {
+                    let accion = 'MANTENER';
+                    let importeBase = l.importe;
+
+                    // SI ES REEMPLAZO TOTAL: Marcamos todo para irse a $0 (borrado lógico)
+                    if (esSustitucionTotal) {
+                        accion = 'ACTUALIZAR';
+                        importeBase = 0;
+                        logBatch(`[SUSTITUCION] Marcando a $0: ${l.concepto.substring(0, 15)}...`);
                     }
 
-                    const descripcionNorm = String(l.concepto || 'Sin concepto').toUpperCase().trim();
-
-                    batchPresupuestos.push({
-                        idActualizacion: idActReal,
-                        _descripcionTemp: descripcionNorm,
-                        categoria: catFinalNum,
-                        importe: l.importe,
-                        consecutivo: i + 1, // Added consecutivo
-                        esVigente: true,
-                        fechaCreacion: new Date()
+                    mapSnapshot.set(_key(l.concepto, l.categoria), {
+                        ...l,
+                        importe: importeBase,
+                        _accion: accion
                     });
+                });
+
+                // B) APLICAR LO NUEVO (PDF)
+                lineasDelPdf.forEach(l => {
+                    const key = _key(l.concepto, l.categoria);
+                    const importeNuevo = parseFloat(l.importe) || 0;
+                    const catNum = (String(l.categoria).toUpperCase().includes('DESAZOLVE')) ? 2 : 1;
+
+                    if (mapSnapshot.has(key)) {
+                        // YA EXISTÍA (o estaba marcada en $0)
+                        const existente = mapSnapshot.get(key);
+
+                        // Si el monto del PDF es diferente a lo que tenemos en el tablero
+                        if (Math.abs(existente.importe - importeNuevo) > 0.01) {
+                            existente.importe = importeNuevo;
+                            existente._accion = 'ACTUALIZAR'; // Confirmar que hay que guardar
+                            // Si el PDF trae mejor nombre, lo usamos
+                            if (l.concepto.length > existente.concepto.length) existente.concepto = l.concepto;
+                        }
+                    } else {
+                        // ES NUEVA
+                        mapSnapshot.set(key, {
+                            concepto: l.concepto,
+                            categoria: catNum,
+                            importe: importeNuevo,
+                            _accion: 'INSERTAR',
+                            esVigente: true
+                        });
+                    }
+                });
+
+                // Guardar foto completa en memoria para el siguiente archivo
+                const lineasFinales = Array.from(mapSnapshot.values());
+                memoriaLineasBatch.set(`${idComunicado}_${consecutivoLocal}`, lineasFinales);
+
+                // 4. GUARDAR EN BD (SOLO LO NECESARIO)
+                lineasFinales.forEach(l => {
+                    const descripcionNorm = String(l.concepto || 'S/D').toUpperCase().trim();
+                    const catNum = l.categoria == 2 || String(l.categoria).includes('DESAZOLVE') ? 2 : 1;
+
+                    if (l._accion === 'INSERTAR') {
+                        // Insertar nueva (Vigente)
+                        batchPresupuestos.push({
+                            idActualizacion: idActReal,
+                            _descripcionTemp: descripcionNorm,
+                            categoria: catNum,
+                            importe: l.importe,
+                            esVigente: true,
+                            fechaCreacion: new Date()
+                        });
+                    }
+                    else if (l._accion === 'ACTUALIZAR') {
+                        // Apagar la vieja (Update esVigente=false)
+                        if (l.idRegistroPrevio) {
+                            try {
+                                updateRow('presupuestoLineas', l.idRegistroPrevio, { esVigente: false });
+                            } catch (e) { console.error(e); }
+                        }
+                        // Insertar la nueva versión (Vigente)
+                        // (Se inserta aunque sea $0 para dejar constancia histórica de que valía 0 en este momento)
+                        batchPresupuestos.push({
+                            idActualizacion: idActReal,
+                            idLinea: l.idLinea,
+                            _descripcionTemp: descripcionNorm,
+                            categoria: catNum,
+                            importe: l.importe,
+                            esVigente: true,
+                            fechaCreacion: new Date()
+                        });
+                        logBatch(`[BD] UPDATE ${descripcionNorm} -> $${l.importe}`);
+                    }
+                    // 'MANTENER': No hacemos nada. La línea vieja sigue vigente. Ahorro de espacio.
                 });
             });
 

@@ -28,14 +28,28 @@ function procesarPdfIA(payload, optFilename) {
         filename = payload.filename || filename;
     }
 
-    // Conceptos de ubicación existentes (del batch o BD) para entity resolution
-    const existingConcepts = (payload && payload.existingConcepts) || [];
+    // Modificación Step 2: Inyectar Diccionario Maestro si no viene en payload
+    // Esto asegura que la IA siempre tenga el contexto completo de conceptos normalizados.
+    let cache = (payload && payload.cache) || null;
+    let existingConcepts = (payload && payload.existingConcepts) || [];
+
+    // Cargar cache si no existe (necesario para inyectar conceptos)
+    if (!cache) {
+        try {
+            cache = _loadCatalogsCache();
+        } catch (e) {
+            console.warn('Error cargando cache en procesarPdfIA:', e);
+        }
+    }
+
+    if (existingConcepts.length === 0 && cache && cache.descripcionLineas) {
+        // Cargar TODOS los conceptos maestros del sistema
+        existingConcepts = cache.descripcionLineas.map(d => d.descripcion);
+        console.log(`[procesarPdfIA] Inyectados ${existingConcepts.length} conceptos maestros para normalización.`);
+    }
 
     // Batch de resultados ya procesados (para buscar registros relacionados)
     const batchResults = (payload && payload.batchResults) || [];
-
-    // Cache de BD (opcional, se cargará si no se proporciona)
-    let cache = (payload && payload.cache) || null;
 
     const contexto = `procesarPdfIA(${filename})`;
     console.log(`[${contexto}] Iniciando procesamiento IA (Multimodal directo)...`);
@@ -577,20 +591,22 @@ function _callGeminiWithPdf(base64Content, filename, errorFeedback = null, catal
     - \`comunicadoId\` **SIEMPRE** empieza con \`"L"\` (L + número(s) + letra opcional)
     - **❌ Si contiene “GL/AM/CT”** dentro de \`comunicadoId\`, estás mal → corrige.
 
-    ## 7) DECISIÓN DEL TIPO DE ACCIÓN (tipoAccion)
-    Valores permitidos:
-    - \`"REEMPLAZO_TOTAL"\`
-    - \`"SUSTITUCION_PARCIAL"\`
-    - \`"INFORMATIVO"\`
+    ## 7) DECISIÓN DEL TIPO DE ACCIÓN (tipoAccion) - CRÍTICO
+    Valores permitidos: "REEMPLAZO_TOTAL" | "SUSTITUCION_PARCIAL" | "INFORMATIVO"
 
-    ### 7.1 Regla prioritaria (montos)
-    - Si existe **cualquier** tabla con importes/costos → **NO** es informativo.
-    - Si NO hay tablas pero hay “monto soportado / presupuesto ajustado / monto establecido” → hay monto narrativo.
+    ### 7.1 GATILLO PARA "REEMPLAZO_TOTAL"
+    Debes marcar "REEMPLAZO_TOTAL" SI Y SOLO SI encuentras frases como:
+    - "Este comunicado sustituye al..."
+    - "Deja sin efectos el comunicado anterior..."
+    - "Reemplaza en su totalidad..."
+    - "Se presenta el presupuesto revisado TOTAL..." (y el documento trae todas las líneas nuevamente, no solo las nuevas).
 
-    ### 7.2 Clasificación
-    - \`"INFORMATIVO"\`: no hay tablas de importes **y** no hay monto final soportado (solo narrativa).
-    - \`"REEMPLAZO_TOTAL"\`: hay tablas de presupuesto (especialmente resúmenes) que representan el presupuesto reportado en el comunicado.
-    - \`"SUSTITUCION_PARCIAL"\`: el texto indica explícitamente que el ajuste aplica a **una ubicación/tramo en particular** (“para esta ubicación”, “solo el tramo…”, etc.) **o** solo se reporta un monto final narrativo para una ubicación.
+    ### 7.2 GATILLO PARA "SUSTITUCION_PARCIAL"
+    - Si el texto dice "Se agregan...", "Adicionalmente...", "Solo para la ubicación..."
+    - O si es una actualización de cantidades específicas sin invalidar el resto del presupuesto anterior.
+
+    ### 7.3 INFORMATIVO
+    - Solo si NO hay tablas de importes y NO hay cambios sustanciales en montos.
 
     ## 8) CONSTRUCCIÓN DE \`lineas\` (con limpieza + rescate)
     ### 8.1 Filtro de ruido (IGNORAR)
