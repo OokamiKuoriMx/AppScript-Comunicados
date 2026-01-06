@@ -488,63 +488,36 @@ function _callGeminiWithPdf(base64Content, filename, errorFeedback = null, catal
     3. No generes el JSON** hasta terminar el escaneo completo.
     4. Si no encuentras algun dato importe, vuelve a revisar el documento.
 
-    ## 2) DETECCIÓN DE ORIGEN VS ACTUALIZACIÓN (tipoRegistro + versionAnterior)
+    ## 2) DETECCIÓN DE ORIGEN VS ACTUALIZACIÓN (Regla de Hierro)
     
-    **tipoRegistro** solo puede ser:
-    - \`"ORIGEN"\`
-    - \`"ACTUALIZACION"\`
+    Analiza el **comunicadoId** (ej. "L50", "L50A") y el texto:
 
-    ### 2.1 Señales de actualización (buscar en TODO el documento)
-    - SI EN LA LÍNEA DE COMUNICADO aparece \`(Actualización)\` o similar
-    - En texto: “sustituye”, “sustituyen”, “revisado”, “modifica”, “anexo actualizado”, “deja sin efectos”
-    - Referencias explícitas a comunicados anteriores: “...sustituye al ...-L30A”
-    - Si el \`comunicadoId\` tiene un sufijo de letra (L30A, L50B), ES UNA ACTUALIZACIÓN.
+    1. **REGLA DE SUFIJO:** - Si el \`comunicadoId\` termina en NÚMERO (ej: "L50", "L05", "L120"), **SIEMPRE ES "ORIGEN"**. (Ignora cualquier texto que diga lo contrario).
+       - Si el \`comunicadoId\` termina en LETRA (ej: "L50A", "L50B"), evalúa el texto.
 
-    **IMPORTANTE**
-    - **DEFAULT: tipoRegistro = "ORIGEN"** (asume origen siempre)
-    - **SOLO si encuentras señales de actualización** → tipoRegistro = "ACTUALIZACION"
+    2. **REGLA DE TEXTO (Solo si tiene letra):**
+       - Busca: "sustituye", "actualización", "adicional", "modifica".
+       - Si encuentras estas palabras -> \`tipoRegistro\` = [El ID del documento actual] (ej: "L50A").
+       - **DEFAULT:** Si NO encuentras palabras de cambio explícito, \`tipoRegistro\` = "ORIGEN".
 
-    ### 2.2 versionAnterior (solo si actualización)
-    - Si el texto menciona comunicado anterior (\`...GLxxxx-L30A...\`), extrae **SOLO el consecutivo** (\`"L30A"\`, no \`"GLxxxx-L30A"\`).
-    - Si no lo menciona explícitamente → deja vacío.
-
-    ## 3) BÚSQUEDA DE MONTOS (SOLO LO QUE ESTÁ EN EL DOCUMENTO)
+    ## 3) BÚSQUEDA DE MONTOS (Modo Híbrido)
     
-    **TU TAREA ES EXTRAER VISUALMENTE.** NO inventes, NO calcules, NO traigas datos del pasado. SOLO extrae lo que ves en tablas o párrafos de ESTE PDF.
+    **PRIORIDAD 1: TABLAS EXPLÍCITAS**
+    Busca tablas con columnas "Concepto", "Daño Físico", "Desazolves".
+    - Si existen, extrae TODAS las filas aplicando Row-Splitting.
 
-    ### A) TABLAS DE PRESUPUESTO (si existen)
-    Busca tablas con columnas: "DAÑO FÍSICO", "DESAZOLVES", "CONCEPTO", "REMOCIÓN"
-    - **“REMOCIÓN Y DESAZOLVE”** (o “Desazolves”, “Remoción”, etc.)
-    - **“CONCEPTO”** o **“NOMBRE DE INVENTARIO”**
-    - (Puede existir columna **“IMPORTE/TOTAL”**)
-
-    ### 3.1 Row-Splitting (OBLIGATORIO)
-    **Por cada fila** con un concepto/ubicación:    
-    - Si **DAÑO FÍSICO > 0** → agrega línea:
-    \`{ "concepto": "[NOMBRE]", "categoria": "DAÑO FISICO", "importe": [valor] }\`
-    - Si **REMOCIÓN/DESAZOLVE > 0** → agrega línea:
-    \`{ "concepto": "[MISMO NOMBRE]", "categoria": "DESAZOLVES", "importe": [valor] }\`
-
-    ### 3.2 Prohibiciones absolutas
-    - **❌ NUNCA** uses la columna **“IMPORTE/TOTAL”** como importe de línea.
-    - **❌ NUNCA** sumes “DAÑO FÍSICO” + “REMOCIÓN/DESAZOLVE” en una sola línea.
-    - **❌ NUNCA** dejes \`lineas\` vacío **si encontraste** una tabla de resumen válida.
-    - **✅ SIEMPRE** genera al menos 1 línea si hay tabla válida.
-
-    ### B) MONTOS NARRATIVOS (si NO hay tablas)
-    **Si no encontraste tablas de presupuesto**, busca montos en el TEXTO:
+    **PRIORIDAD 2: MONTOS NARRATIVOS (CRÍTICO PARA CARTAS)**
+    Si la tabla es muy pequeña o NO hay tabla, BUSCA EN EL TEXTO PÁRRAFO POR PÁRRAFO.
+    Busca patrones como:
+    - "...un monto de MX$ 46,458.92..."
+    - "...importe estimado de $ 1,500,000.00..."
+    - "...presupuesto ajustado a..."
     
-    Busca frases como:
-    - "permitieron establecer un monto de MX$..."
-    - "soportar un monto de..."
-    - "presupuesto ajustado de..."
-    
-    **Extrae:**
-    - \`importe\`: el monto mencionado tras esas frases
-    - \`concepto\`: la ubicación del párrafo anterior (ej: "Unidad de Riego Aguas Blancas")
-    - \`categoria\`: "DAÑO FISICO" por defecto
-    
-    **IGNORAR montos de:** "monto solicitado por la empresa", "monto asignado asciende a"
+    **Si encuentras un monto narrativo:**
+    - Crea una línea artificial.
+    - \`concepto\`: La ubicación mencionada en el mismo párrafo (ej: "Unidad de Riego Aguas Blancas").
+    - \`importe\`: El valor encontrado.
+    - \`categoria\`: "DAÑO FISICO" (default).
 
     ## 4) [SECCIÓN ELIMINADA - NO REALIZAR CARRY-FORWARD]
     **IMPORTANTE:** El sistema se encargará de fusionar con datos históricos. Tu trabajo es reportar **SOLO** las líneas y montos que aparecen explícitamente en **ESTE DOCUMENTO PDF**.

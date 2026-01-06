@@ -1819,7 +1819,17 @@ function _procesarBatchInterno(loteAgrupado, cache) {
             resActs.ids.forEach((idActReal, i) => {
                 const updateObj = batchActualizaciones[i];
                 const lineasDelPdf = updateObj._docLineas || [];
-                const esOrigen = updateObj.esOrigen === 1 || updateObj.esOrigen === '1';
+
+                // --- PARCHE DE SEGURIDAD PARA ORIGEN ---
+                // Si el comunicado ID no tiene sufijo de letra (L50), FORZAMOS que sea ORIGEN.
+                // Esto corrige si la IA se confundió.
+                const idComStr = String(updateObj.revision || '').toUpperCase().trim();
+                const esBasePura = /L\d+$/.test(idComStr); // Regex: Termina en dígito (L50)
+
+                // Forzar esOrigen si parece ser la base (L50) O si la IA dijo ORIGEN
+                const esOrigen = esBasePura || (updateObj.esOrigen === 1 || updateObj.esOrigen === '1');
+                // ---------------------------------------
+
                 const idComunicado = updateObj.idComunicado;
                 const consecutivoLocal = updateObj.consecutivo;
 
