@@ -1020,23 +1020,53 @@
                 : [];
 
             // Helper to find matching line from previous revision
-            const findPrevLine = (currentLine) => {
+            const findPrevLine = (currentLine, currentIdx) => {
+                // 1. Try matching by unique 'idLinea' if available (Most Robust)
+                if (currentLine.idLinea) {
+                    const match = prevLines.find(pl => String(pl.idLinea) === String(currentLine.idLinea));
+                    if (match) return match;
+                }
+
+                // 2. Try matching by Description + Category (Content Matching)
                 const descNorm = (currentLine.descripcion || '').toUpperCase().trim();
-                return prevLines.find(pl => {
-                    const prevDescNorm = (pl.descripcion || '').toUpperCase().trim();
-                    // Match by description/ubicacion
-                    return prevDescNorm === descNorm ||
-                        prevDescNorm.includes(descNorm) ||
-                        descNorm.includes(prevDescNorm);
-                });
+                const catNorm = (currentLine.categoria || '').toUpperCase().trim();
+
+                if (descNorm) {
+                    // STRICT MATCH: Description AND Category must match
+                    const exactMatch = prevLines.find(pl => {
+                        const prevDesc = (pl.descripcion || '').toUpperCase().trim();
+                        const prevCat = (pl.categoria || '').toUpperCase().trim();
+                        return prevDesc === descNorm && prevCat === catNorm;
+                    });
+
+                    if (exactMatch) return exactMatch;
+
+                    // Fallback: If Description matches exactly but Category is empty/undefined in one of them?
+                    // No, safe to strictly require category if it exists.
+                }
+
+                // 3. Fallback: Positional Matching (if descriptions are empty or missing)
+                // Assuming rows align if no content changes
+                if (!descNorm) {
+                    const candidateByIndex = prevLines[currentIdx];
+                    // Verify candidate also has empty description to be safe
+                    if (candidateByIndex && !(candidateByIndex.descripcion || '').trim()) {
+                        return candidateByIndex;
+                    }
+                }
+
+                return null;
             };
+
+            // Prepare Categories Catalog
+            const categoriasCatalog = state.catalogs.categorias || [];
 
             lines.forEach((l, i) => {
                 const tr = document.createElement('tr');
                 const importeActual = parseFloat(l.importe) || 0;
 
                 // Find matching line in previous revision
-                const prevLine = findPrevLine(l);
+                const prevLine = findPrevLine(l, i);
                 const importeAnterior = prevLine ? (parseFloat(prevLine.importe) || 0) : 0;
                 const diferencia = importeActual - importeAnterior;
 
@@ -1050,18 +1080,42 @@
                     difClass = 'text-danger fw-bold';
                 }
 
-                // Show N/A if this is origin (no previous revision)
-                const showPrev = prevIdx >= 0;
+                // Show N/A if this is origin (no previous revision) or no match found? 
+                // Context: We want to show 0.00 if previous revision exists but line didn't exist (new line).
+                // Logic: If prevIdx >= 0 (there IS a previous revision), but prevLine is null, it means Amount Prev = 0.
+                const hasPrevRevision = prevIdx >= 0;
+
+                // Build Category Options
+                const currentCat = (l.categoria || '').trim(); // Keep original case for value
+                // Helper to check existence case-insensitive
+                const catExists = (val) => categoriasCatalog.some(c => String(c.id).toUpperCase() === String(val).toUpperCase());
+
+                let catOptions = `<option value="">Seleccione...</option>`;
+
+                // If current value is custom/not in catalog, add it as temporary option
+                if (currentCat && !catExists(currentCat)) {
+                    catOptions += `<option value="${currentCat}" selected>${currentCat}</option>`;
+                }
+
+                categoriasCatalog.forEach(c => {
+                    // Check selection case-insensitive to be friendly, but verify logic
+                    const isSelected = String(c.id).toUpperCase() === String(currentCat).toUpperCase();
+                    catOptions += `<option value="${c.id}" ${isSelected ? 'selected' : ''}>${c.nombre}</option>`;
+                });
 
                 tr.innerHTML = `
                     <td><input type="text" class="form-control form-control-sm" value="${l.descripcion || ''}" placeholder="Descripción" onchange="ComunicadoDetalle.updateLineaPresupuesto(${i}, 'descripcion', this.value)"></td>
-                    <td><input type="text" class="form-control form-control-sm" value="${l.categoria || ''}" placeholder="Categoría" onchange="ComunicadoDetalle.updateLineaPresupuesto(${i}, 'categoria', this.value)"></td>
-                    <td class="text-end ${showPrev ? '' : 'text-muted'}">
-                        ${showPrev ? _formatCurrency(importeAnterior) : '<small class="text-muted">N/A</small>'}
+                    <td>
+                        <select class="form-select form-select-sm" onchange="ComunicadoDetalle.updateLineaPresupuesto(${i}, 'categoria', this.value)">
+                            ${catOptions}
+                        </select>
+                    </td>
+                    <td class="text-end ${hasPrevRevision ? '' : 'text-muted'}">
+                        ${hasPrevRevision ? _formatCurrency(importeAnterior) : '<small class="text-muted">N/A</small>'}
                     </td>
                     <td><input type="text" class="form-control form-control-sm text-end currency-input" value="${_formatCurrency(importeActual)}" onchange="ComunicadoDetalle.updateLineaPresupuesto(${i}, 'importe', this.value)"></td>
                     <td class="text-end ${difClass}">
-                        ${showPrev ? difPrefix + _formatCurrency(Math.abs(diferencia)) : '<small class="text-muted">—</small>'}
+                        ${hasPrevRevision ? difPrefix + _formatCurrency(Math.abs(diferencia)) : '<small class="text-muted">—</small>'}
                     </td>
                     <td class="text-center"><button class="btn btn-sm text-danger" onclick="ComunicadoDetalle.removeLineaPresupuesto(${i})"><i class="bi bi-trash"></i></button></td>
                 `;

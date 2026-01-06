@@ -201,6 +201,13 @@ function _analizarDocumento(doc, cache, batchDocs = []) {
         String(c.referencia).toUpperCase().trim() === refClean ||
         String(c.cuenta).toUpperCase().trim() === refClean
     );
+
+    console.log(`[Import] Buscando cuenta: refClean="${refClean}", encontrada=${!!cta}${cta ? ` (id=${cta.id})` : ''}`);
+
+    if (!cta) {
+        console.log(`[Import] ADVERTENCIA: Cuenta "${refClean}" NO encontrada en cache. Cuentas disponibles: ${cache.cuentas.map(c => c.referencia).slice(0, 10).join(', ')}`);
+    }
+
     if (cta) {
         // =================================================================================
         // NUEVA LÓGICA DE VALIDACIÓN (2025-12-30) - Basada en Clave: RefCta + ComunicadoID
@@ -209,11 +216,54 @@ function _analizarDocumento(doc, cache, batchDocs = []) {
         const _cleanIdFunc = (val) => String(val || '').toUpperCase().replace(/\s+/g, '').trim();
         const comunicadoIdClean = _cleanIdFunc(h.comunicadoId);
 
-        // Determinar si es ORIGEN o ACTUALIZACION
-        // SIMPLE: Si tipoRegistro = "ORIGEN" → es origen, sino → es actualización
-        const esOrigen = !h.tipoRegistro || h.tipoRegistro === 'ORIGEN';
+        // Parsear versión del comunicado para detectar si tiene sufijo
+        const versionInfo = _parseVersion(comunicadoIdClean);
+        const tieneSufijo = versionInfo.index > 0; // L50A/B/C tienen index > 0
 
-        console.log(`[Import] Procesando: RefCta=${refClean}, ComunicadoID=${comunicadoIdClean}, TipoRegistro=${h.tipoRegistro}, esOrigen=${esOrigen}`);
+        // Determinar si es ORIGEN o ACTUALIZACION
+        // REGLA CLAVE: 
+        // - Sin sufijo (L50, L30, etc.) → SIEMPRE es ORIGEN (es el documento base)
+        // - Con sufijo (L50A, L50B, etc.) → Es ACTUALIZACIÓN si existe padre
+        let esOrigen = false;
+
+        if (!tieneSufijo) {
+            // Sin sufijo = SIEMPRE es origen (no importa lo que diga la IA)
+            esOrigen = true;
+            console.log(`[Import] ${comunicadoIdClean} NO tiene sufijo → Tratando como ORIGEN (documento base)`);
+        } else {
+            // Tiene sufijo: verificar si la IA lo marcó como ORIGEN o verificar padre en BD
+            esOrigen = !h.tipoRegistro || h.tipoRegistro === 'ORIGEN';
+
+            // Si la IA dice ORIGEN pero el ID tiene sufijo, verificar si existe padre
+            if (esOrigen) {
+                const baseId = versionInfo.base;
+                const posiblePadre = cache.comunicados.find(c => {
+                    if (String(c.idReferencia) !== String(cta.id)) return false;
+                    return _parseVersion(c.comunicado).base === baseId;
+                });
+
+                if (posiblePadre) {
+                    console.log(`[Import] CORRECCIÓN: ${comunicadoIdClean} tiene sufijo y padre "${posiblePadre.comunicado}" existe en BD → Tratando como ACTUALIZACIÓN`);
+                    esOrigen = false;
+                } else {
+                    console.log(`[Import] ${comunicadoIdClean} tiene sufijo pero NO existe padre "${baseId}" en BD → Tratando como ORIGEN (caso raro)`);
+                }
+            } else {
+                console.log(`[Import] ${comunicadoIdClean} tiene sufijo y IA dice actualización → Tratando como ACTUALIZACIÓN`);
+            }
+        }
+
+        console.log(`[Import] Procesando: RefCta=${refClean}, ComunicadoID=${comunicadoIdClean}, TipoRegistro=${h.tipoRegistro}, esOrigen=${esOrigen}, tieneSufijo=${tieneSufijo}`);
+
+        // CORRECCIÓN FORZADA DE DESCRIPCIÓN PARA ORIGEN
+        // Si es ORIGEN, la descripción debe ser limpia (Ref-Com), ignorando cualquier historial alucinado por la IA
+        if (esOrigen) {
+            const descLimpia = `${refClean}-${comunicadoIdClean}`;
+            if (h.descripcion !== descLimpia) {
+                console.log(`[Import] Corrección de descripción ORIGEN: "${h.descripcion}" -> "${descLimpia}"`);
+                h.descripcion = descLimpia;
+            }
+        }
 
         if (esOrigen) {
             // =========================================================================
@@ -248,13 +298,25 @@ function _analizarDocumento(doc, cache, batchDocs = []) {
             // A) Buscar padre en LOTE ACTUAL (Prioridad 1 - Para Vista Previa de batch)
             let padreEnLote = null;
             if (batchDocs && batchDocs.length > 0) {
-                padreEnLote = batchDocs.find(d => {
+                // Filtrar todos los posibles padres (misma base)
+                const candidatosLote = batchDocs.filter(d => {
                     const dHeader = d.header;
                     const dRefClean = String(dHeader.refCta || '').trim().toUpperCase();
                     if (dRefClean !== refClean) return false;
-                    // Verificar Familia
-                    return _parseVersion(dHeader.comunicadoId).base === baseId;
+                    const ver = _parseVersion(dHeader.comunicadoId);
+                    return ver.base === baseId && ver.index < versionActual.index; // Debe ser anterior (L50 o L50A para L50B)
                 });
+
+                // Ordenar descendente para tomar el más reciente (el inmediato anterior)
+                if (candidatosLote.length > 0) {
+                    candidatosLote.sort((a, b) => {
+                        const vA = _parseVersion(a.header.comunicadoId).index;
+                        const vB = _parseVersion(b.header.comunicadoId).index;
+                        return vB - vA; // Mayor a menor
+                    });
+                    padreEnLote = candidatosLote[0];
+                    console.log(`[Import] Padre seleccionado en LOTE: ${padreEnLote.header.comunicadoId} (de ${candidatosLote.length} candidatos)`);
+                }
             }
 
             // B) Buscar padre en BD
@@ -262,6 +324,11 @@ function _analizarDocumento(doc, cache, batchDocs = []) {
                 if (String(c.idReferencia) !== String(cta.id)) return false;
                 return _parseVersion(c.comunicado).base === baseId;
             });
+
+            // DEBUG: Log comunicados disponibles para esta cuenta
+            const comsParaEstaCta = cache.comunicados.filter(c => String(c.idReferencia) === String(cta.id));
+            console.log(`[Import] Comunicados en BD para cta.id=${cta.id}: ${comsParaEstaCta.map(c => c.comunicado).join(', ') || 'NINGUNO'}`);
+            console.log(`[Import] Buscando base "${baseId}" → padreEnDB=${padreEnDB ? padreEnDB.comunicado : 'NO ENCONTRADO'}`);
 
             if (padreEnLote) {
                 // Padre encontrado en LOTE → ACTUALIZACION (EN LOTE)
@@ -303,6 +370,71 @@ function _analizarDocumento(doc, cache, batchDocs = []) {
                 doc.validacion.status = 'ERROR';
                 doc.validacion.motivo = `No se puede importar ${h.tipoRegistro}: No existe el comunicado padre (${h.comunicadoId}) ni en el lote actual ni en la BD`;
                 console.log(`[Import] ERROR: No existe padre para ${h.tipoRegistro}`);
+            }
+        }
+
+        // =========================================================================
+        // ESTRATEGIA DE MERGE / CARRY-FORWARD (BACKEND SAFETY NET)
+        // Garantizar que NUNCA se eliminen líneas del padre en una actualización.
+        // Si la IA devolvió pocas líneas (ej. solo el cambio), fusionamos con el padre.
+        // =========================================================================
+        if (statusCom === 'ACTUALIZACION_LOTE' || statusCom === 'ACTUALIZACION_BD') {
+            try {
+                let lineasPadre = [];
+                if (statusCom === 'ACTUALIZACION_LOTE' && padreEnLote) {
+                    lineasPadre = padreEnLote.rawPayload.lineas || []; // Usar rawPayload.lineas del batch
+                } else if (statusCom === 'ACTUALIZACION_BD' && padreEnDB) {
+                    // Llamar a función global (definida en ai.service.gs o importacion.server.gs)
+                    // Si no está disponible, implementar lógica simple de extracción aquí
+                    if (typeof _obtenerLineasDeComunicado === 'function') {
+                        lineasPadre = _obtenerLineasDeComunicado(padreEnDB.id, cache);
+                    } else {
+                        // Fallback si la función no es accesible (copia local de la lógica)
+                        const acts = cache.actualizaciones.filter(a => String(a.idComunicado) === String(padreEnDB.id)) || [];
+                        if (acts.length > 0) {
+                            const ultAct = acts.sort((a, b) => b.consecutivo - a.consecutivo)[0];
+                            const lns = cache.presupuestoLineas.filter(l => String(l.idActualizacion) === String(ultAct.id));
+                            lineasPadre = lns.map(l => {
+                                const desc = cache.descripcionLineas.find(d => String(d.id) === String(l.idLinea));
+                                return {
+                                    concepto: desc ? desc.descripcion : 'Sin descripción',
+                                    categoria: l.categoria || 'DAÑO FISICO',
+                                    importe: parseFloat(l.importe || 0)
+                                };
+                            });
+                        }
+                    }
+                }
+
+                if (lineasPadre.length > 0 && doc.lineas) {
+                    console.log(`[Import] Iniciando MERGE: Padre (${lineasPadre.length} líneas) vs IA (${doc.lineas.length} líneas)`);
+
+                    const _norm = (s) => String(s || '').toUpperCase().trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, ' ');
+                    const keyFunc = (c, cat) => `${_norm(c)}|${_norm(cat)}`;
+
+                    // Indexar líneas nuevas (IA)
+                    const updatesMap = new Map();
+                    doc.lineas.forEach(l => updatesMap.set(keyFunc(l.concepto, l.categoria), l));
+
+                    // 1. Fusionar sobre la base del padre (ACTUALIZAR o CONSERVAR)
+                    const lineasFinales = lineasPadre.map(lp => {
+                        const k = keyFunc(lp.concepto, lp.categoria);
+                        if (updatesMap.has(k)) {
+                            const up = updatesMap.get(k);
+                            updatesMap.delete(k); // Marcar como procesado
+                            return { ...lp, importe: up.importe }; // Actualizar importe
+                        }
+                        return lp; // Conservar original
+                    });
+
+                    // 2. Agregar líneas nuevas (las que sobraron en updatesMap)
+                    updatesMap.forEach(nuevo => lineasFinales.push(nuevo));
+
+                    doc.lineas = lineasFinales;
+                    console.log(`[Import] MERGE COMPLETADO: Resultado final ${lineasFinales.length} líneas.`);
+                }
+            } catch (e) {
+                console.error('[Import] Error en MERGE strategy:', e);
             }
         }
 
@@ -1098,6 +1230,7 @@ function _procesarBatchInterno(loteAgrupado, cache) {
         const batchDatosGenerales = [];
         const batchActualizaciones = [];
         const batchPresupuestos = [];
+        let resActs = null; // Declarar en scope superior para que sea accesible en el procesamiento de líneas
 
         if (docsParaCrear.length > 0) {
             logBatch(`[${contexto}] FASE 2: Procesando ${docsParaCrear.length} comunicados NUEVOS...`);
@@ -1674,65 +1807,137 @@ function _procesarBatchInterno(loteAgrupado, cache) {
         // Insertar Actualizaciones
         if (batchActualizaciones.length > 0) {
             logBatch(`[${contexto}] Insertando ${batchActualizaciones.length} Actualizaciones...`);
-            const resActs = createBatch('actualizaciones', batchActualizaciones);
+            resActs = createBatch('actualizaciones', batchActualizaciones);
             counts.newActs = resActs.count;
 
-            // Mapa para rastrear líneas creadas en ESTE MISMO BATCH
-            // Clave: idActualizacion, Valor: array de líneas
-            const lineasRecienCreadas = new Map();
+            // =================================================================
+            // SOLUCIÓN "CARRY-FORWARD" EN MEMORIA (In-Memory Merge)
+            // =================================================================
+            // Mapa para que L50B pueda leer lo que L50A acaba de generar
+            // Clave: idComunicado + "_" + consecutivoLocal
+            const memoriaLineasBatch = new Map();
 
             // Preparar PresupuestoLineas
             resActs.ids.forEach((idActReal, i) => {
                 const updateObj = batchActualizaciones[i];
-                let lines = updateObj._docLineas || [];
+                const lineasDelPdf = updateObj._docLineas || []; // Lo que trajo la IA (Delta)
+
                 const esOrigen = updateObj.esOrigen === 1 || updateObj.esOrigen === '1';
-                const tipoAccion = updateObj._tipoAccion;
                 const idComunicado = updateObj.idComunicado;
                 const revisionActual = updateObj.revision || updateObj._revision;
+                const consecutivoLocal = updateObj.consecutivo; // 1, 2, 3...
 
-                logBatch(`[${contexto}] Procesando líneas para ActID ${idActReal}: esOrigen=${esOrigen}, tipoAccion=${tipoAccion}, revision=${revisionActual}`);
+                logBatch(`[${contexto}] Procesando líneas para ActID ${idActReal} (${revisionActual}): PDF trajo ${lineasDelPdf.length} líneas.`);
 
-                // =================================================================
-                // MODELO DELTA: Solo insertar líneas del PDF actual
-                // =================================================================
-                // Ya NO copiamos líneas del predecesor.
-                // Cada versión solo guarda las líneas que trae el PDF.
-                // El estado completo se calcula al momento de consultar.
-                // =================================================================
+                let lineasFinales = [];
 
-                logBatch(`[${contexto}] DELTA MODEL: Insertando ${lines.length} líneas del documento ${revisionActual}`);
+                if (esOrigen) {
+                    // Si es ORIGEN, las líneas finales son exactamente las del PDF
+                    lineasFinales = lineasDelPdf.map(l => ({
+                        concepto: l.concepto,
+                        categoria: l.categoria,
+                        importe: parseFloat(l.importe) || 0
+                    }));
+                } else {
+                    // Si es ACTUALIZACIÓN, necesitamos FUSIONAR con el predecesor
+                    // 1. Buscar líneas del Predecesor (Puede estar en MEMORIA del batch o en BD)
+                    let lineasPredecesor = [];
 
-                lines.forEach(l => {
-                    // Calculo de Categoría (usar número: 1=Daño Físico, 2=Desazolves)
-                    let catFinal;
-                    if (l.categoria) {
-                        // Si la IA devolvió categoría como texto, convertir a número
-                        catFinal = _categoriaTxtANum(l.categoria);
+                    // A) Intentar leer del Batch actual (ej: L50B leyendo a L50A)
+                    // El predecesor debería tener un consecutivo menor (consecutivoLocal - 1)
+                    const clavePredecesorBatch = `${idComunicado}_${consecutivoLocal - 1}`;
+
+                    if (memoriaLineasBatch.has(clavePredecesorBatch)) {
+                        logBatch(`[${contexto}] MERGE: Encontrado predecesor en MEMORIA BATCH (Consecutivo ${consecutivoLocal - 1})`);
+                        lineasPredecesor = memoriaLineasBatch.get(clavePredecesorBatch);
                     } else {
-                        // Determinar desde el concepto
-                        catFinal = _categoriaDesdeConcepto(l.concepto);
+                        // B) Si no está en memoria, buscar en BD (ej: L50A leyendo a L50 histórico)
+                        logBatch(`[${contexto}] MERGE: Buscando predecesor en BD...`);
+                        lineasPredecesor = _obtenerLineasPredecesor(cache, idComunicado, revisionActual, logBatch);
+
+                        // Normalizar formato de BD a formato simple
+                        lineasPredecesor = lineasPredecesor.map(l => ({
+                            concepto: l.descripcion, // Usamos descripcion o concepto
+                            categoria: l.categoria,
+                            importe: parseFloat(l.importe) || 0
+                        }));
+                    }
+
+                    // 2. Ejecutar FUSIÓN (Merge Logic)
+                    // Normalizar clave para comparación
+                    const _key = (c, cat) => `${String(c).toUpperCase().trim()}|${String(cat).toUpperCase().trim()}`;
+
+                    const mapMerge = new Map();
+
+                    // a) Cargar Base (Predecesor)
+                    lineasPredecesor.forEach(l => mapMerge.set(_key(l.concepto, l.categoria), l));
+
+                    // b) Aplicar Cambios (PDF Actual)
+                    lineasDelPdf.forEach(l => {
+                        const key = _key(l.concepto, l.categoria);
+                        const importe = parseFloat(l.importe) || 0;
+
+                        // Determinar categoría si viene vacía
+                        let catFinal = l.categoria;
+                        if (!catFinal) {
+                            const desc = String(l.concepto).toUpperCase();
+                            catFinal = (desc.includes('DESAZOLVE') || desc.includes('LIMPIEZA')) ? 'DESAZOLVES' : 'DAÑO FISICO';
+                        }
+
+                        if (mapMerge.has(key)) {
+                            // ACTUALIZAR existente
+                            const existente = mapMerge.get(key);
+                            if (Math.abs(existente.importe - importe) > 0.01) {
+                                existente.importe = importe; // Sobrescribir importe
+                            }
+                        } else {
+                            // INSERTAR nueva
+                            mapMerge.set(key, {
+                                concepto: l.concepto,
+                                categoria: catFinal,
+                                importe: importe
+                            });
+                        }
+                    });
+
+                    lineasFinales = Array.from(mapMerge.values());
+                    logBatch(`[${contexto}] MERGE RESULTADO: ${lineasPredecesor.length} (Base) + ${lineasDelPdf.length} (PDF) -> ${lineasFinales.length} Líneas Finales.`);
+                }
+
+                // 3. GUARDAR EN MEMORIA PARA EL SIGUIENTE (ej: Para que L50C lea esto)
+                memoriaLineasBatch.set(`${idComunicado}_${consecutivoLocal}`, lineasFinales);
+
+
+                // 4. PREPARAR PARA INSERTAR EN BD
+                lineasFinales.forEach((l, i) => {
+                    // Calculo de Categoría Numérica
+                    let catFinalNum = 1;
+                    if (l.categoria) {
+                        const c = String(l.categoria).toUpperCase();
+                        if (c === '2' || c.includes('DESAZOLVE') || c.includes('LIMPIEZA')) catFinalNum = 2;
                     }
 
                     const descripcionNorm = String(l.concepto || 'Sin concepto').toUpperCase().trim();
 
-                    // Guardar para procesar después (necesitamos primero crear las entradas en DescripcionLineas)
                     batchPresupuestos.push({
                         idActualizacion: idActReal,
-                        _descripcionTemp: descripcionNorm, // Temporal, se reemplazará por idLinea
-                        categoria: catFinal, // Ahora es número (1 o 2)
+                        _descripcionTemp: descripcionNorm,
+                        categoria: catFinalNum,
                         importe: l.importe,
+                        consecutivo: i + 1, // Added consecutivo
                         esVigente: true,
                         fechaCreacion: new Date()
                     });
                 });
             });
+
             SpreadsheetApp.flush();
         }
 
         // =================================================================
         // PROCESAR DESCRIPCION LINEAS Y OBTENER IDs (POR COMUNICADO)
         // =================================================================
-        if (batchPresupuestos.length > 0) {
+        if (batchPresupuestos.length > 0 && resActs && resActs.ids) {
             logBatch(`[${contexto}] Procesando ${batchPresupuestos.length} líneas de presupuesto...`);
 
             // Agrupar líneas por idComunicado para buscar en el contexto correcto
@@ -1819,6 +2024,8 @@ function _procesarBatchInterno(loteAgrupado, cache) {
                         if (idLineaEncontrado) return; // Ya encontramos match
 
                         // Comparar por categoría Y similitud de descripción
+                        // STRICT CHECK: Si las categorías son diferentes, NO ES LA MISMA LÍNEA.
+                        // Esto previene que una línea de "Desazolve" herede el historial de "Daño Físico"
                         const catMatch = (info.categoria == catLinea) ||
                             (_categoriaTxtANum(info.categoria) === catLinea);
 
@@ -1900,10 +2107,111 @@ function _procesarBatchInterno(loteAgrupado, cache) {
             });
         }
 
+        // =========================================================================
+        // FILTRO DELTA: Solo insertar líneas que cambiaron respecto a la versión anterior
+        // =========================================================================
+        let linesToInsert = batchPresupuestos;
+
+        if (batchPresupuestos.length > 0 && batchActualizaciones.length > 0) {
+            logBatch(`[${contexto}] Aplicando filtro DELTA a ${batchPresupuestos.length} líneas...`);
+
+            // 1. Agrupar líneas por actualización
+            const linesByAct = new Map();
+            batchPresupuestos.forEach(l => {
+                const aid = String(l.idActualizacion);
+                if (!linesByAct.has(aid)) linesByAct.set(aid, []);
+                linesByAct.get(aid).push(l);
+            });
+
+            // 2. Ordenar actualizaciones por jerarquía (Origen -> A -> B) para procesar en orden
+            // Asumimos que batchActualizaciones ya viene con 'consecutivo' y 'descripcion'
+            // Necesitamos procesar por COMUNICADO y luego por SECUENCIA
+
+            // Mapa de estados virtuales: idComunicado -> Map<idLinea, {importe, categoria}>
+            const virtualState = new Map();
+
+            // Ordenar batchActualizaciones globalmente por comunicado y consecutivo
+            const sortedActs = [...batchActualizaciones].sort((a, b) => {
+                if (String(a.idComunicado) !== String(b.idComunicado)) {
+                    return String(a.idComunicado).localeCompare(String(b.idComunicado));
+                }
+                return Number(a.consecutivo) - Number(b.consecutivo);
+            });
+
+            const filteredLines = [];
+
+            // 3. Procesar cada actualización en orden
+            for (const act of sortedActs) {
+                const actId = String(act.id);
+                const comId = String(act.idComunicado);
+                const comLines = linesByAct.get(actId) || [];
+
+                if (comLines.length === 0) continue;
+
+                // 3.1 Cargar estado previo
+                let stateMap = virtualState.get(comId);
+
+                if (!stateMap) {
+                    // Si es la primera vez que tocamos este comunicado en el batch,
+                    // intentamos cargar su estado "BASE" desde la DB (la última versión COMMITTEADA).
+                    // Si act.consecutivo == 1 (Origen), la base es vacía.
+                    stateMap = new Map(); // idLinea -> Float
+
+                    if (Number(act.consecutivo) > 1) {
+                        // Cargar estado de la DB (versión anterior inmediata real)
+                        // Nota: calcularEstadoVersion devuelve el estado acumulado.
+                        // Debemos pedir estado hasta update anterior.
+                        // Complicación: No tenemos el ID del update anterior fácilmente aqui si no está en batch.
+                        // Aproximación: Usar calcularEstadoVersion(comId) que trae "hasta lo último de DB".
+                        // Esto asume que lo del batch sigue a lo de la DB.
+                        try {
+                            const dbState = calcularEstadoVersion(comId);
+                            if (dbState && dbState.lineas) {
+                                dbState.lineas.forEach(l => {
+                                    stateMap.set(String(l.idLinea), parseFloat(l.importe));
+                                });
+                            }
+                        } catch (e) { console.warn("Error cargando estado base DB", e); }
+                    }
+                    virtualState.set(comId, stateMap);
+                }
+
+                // 3.2 Filtrar líneas de esta actualización
+                comLines.forEach(linea => {
+                    const lid = String(linea.idLinea);
+                    const importeNuevo = parseFloat(linea.importe) || 0;
+                    const importePrevio = stateMap.get(lid);
+
+                    let esCambio = false;
+
+                    if (importePrevio === undefined) {
+                        // Nueva línea
+                        esCambio = true;
+                    } else {
+                        // Línea existente, verificar si cambió importe (tolerancia)
+                        if (Math.abs(importeNuevo - importePrevio) > 0.01) {
+                            esCambio = true;
+                        }
+                    }
+
+                    if (esCambio) {
+                        filteredLines.push(linea);
+                        // Actualizar estado virtual
+                        stateMap.set(lid, importeNuevo);
+                    }
+                });
+            }
+
+            // Reemplazar líneas a insertar con las filtradas
+            logBatch(`[${contexto}] Filtro DELTA completado: ${batchPresupuestos.length} -> ${filteredLines.length} líneas.`);
+            linesToInsert = filteredLines;
+        }
+
+
         // Insertar PresupuestoLineas
-        if (batchPresupuestos.length > 0) {
-            logBatch(`[${contexto}]Insertando ${batchPresupuestos.length} líneas de presupuesto...`);
-            const resLines = createBatch('presupuestoLineas', batchPresupuestos);
+        if (linesToInsert.length > 0) {
+            logBatch(`[${contexto}]Insertando ${linesToInsert.length} líneas de presupuesto (Delta)...`);
+            const resLines = createBatch('presupuestoLineas', linesToInsert);
             counts.newLines = resLines.count;
             SpreadsheetApp.flush();
 
@@ -2353,7 +2661,8 @@ function calcularEstadoVersion(idComunicado, hastaIdActualizacion = null) {
                 idLinea: linea.idLinea,
                 descripcion: descInfo.descripcion,
                 categoria: linea.categoria || descInfo.categoria,
-                importe: parseFloat(linea.importe) || 0
+                importe: parseFloat(linea.importe) || 0,
+                consecutivo: linea.consecutivo
             });
         });
 
@@ -2610,7 +2919,9 @@ function _matchUbicaciones(desc1, desc2) {
     // Palabras clave que identifican estructuras de riego
     const keywords = ['RIO', 'ARROYO', 'BORDO', 'CANAL', 'MARGEN', 'IZQUIERDA', 'DERECHA',
         'PRESA', 'DREN', 'COMPUERTA', 'GPS', 'TRAMO', 'PALIZADA', 'ARENAS',
-        'USUMACINTA', 'ARMERIA', 'MARABASCO'];
+        'USUMACINTA', 'ARMERIA', 'MARABASCO',
+        'UNIDAD', 'RIEGO', 'UR', 'DISTRITO', 'DTT', 'DR',
+        'COYUQUILLA', 'COSCAMILA', 'ENCINOS', 'AGUAS', 'BLANCAS', 'TLAPANECO', 'ALPOYECA'];
 
     // Extraer palabras significativas de cada descripción
     const words1 = desc1.split(' ').filter(w => w.length > 2);
@@ -2862,6 +3173,7 @@ function _syncLineasCarryForward(idActualizacion, lineasPdf, lineasPredecesor, l
                 descripcion: String(lineaPredecesor.descripcion).toUpperCase().trim(),
                 categoria: String(lineaPredecesor.categoria || 'DAÑO FISICO').toUpperCase(),
                 importe: importeNuevo,
+                consecutivo: lineasAInsertar.length + 1,
                 fechaCreacion: new Date()
             });
             result.updated++;
@@ -2877,6 +3189,7 @@ function _syncLineasCarryForward(idActualizacion, lineasPdf, lineasPredecesor, l
                 descripcion: String(lineaPredecesor.descripcion).toUpperCase().trim(),
                 categoria: String(lineaPredecesor.categoria || 'DAÑO FISICO').toUpperCase(),
                 importe: parseFloat(lineaPredecesor.importe) || 0,
+                consecutivo: lineasAInsertar.length + 1,
                 fechaCreacion: new Date()
             });
             result.inherited++;
@@ -2905,6 +3218,7 @@ function _syncLineasCarryForward(idActualizacion, lineasPdf, lineasPredecesor, l
             descripcion: String(lineaPdf.concepto || 'Sin concepto').toUpperCase().trim(),
             categoria: catFinal.toUpperCase(),
             importe: parseFloat(lineaPdf.importe) || 0,
+            consecutivo: lineasAInsertar.length + 1,
             fechaCreacion: new Date()
         });
         result.inserted++;
@@ -3447,4 +3761,63 @@ function parseFacturaFile(csvText) {
             estatus: idxEstatus > -1 ? String(r[idxEstatus]).trim() : 'Por Validar'
         };
     }).filter(obj => obj.uuid); // Filtrar filas vacias
+}
+
+/**
+ * Helper para obtener líneas del predecesor inmediato desde BD
+ * Utilizado por _procesarBatchInterno para carry-forward en memoria
+ */
+function _obtenerLineasPredecesor(cache, idComunicado, revisionActual, logBatch) {
+    if (!idComunicado) return [];
+
+    try {
+        // 1. Obtener todas las actualizaciones de este comunicado en cache
+        const acts = cache.actualizaciones.filter(a => String(a.idComunicado) === String(idComunicado));
+        if (acts.length === 0) return [];
+
+        // 2. Determinar índice de versión actual
+        const verActual = _parseVersion(revisionActual);
+
+        // Buscamos el índice inmediatamente anterior (ej: L50B(2) -> busca index 1 (L50A))
+        const targetIndex = verActual.index - 1;
+
+        // Si targetIndex < 0, significa que somos L50A buscando L50 origin.
+        // Pero las líneas del Origen suelen guardarse bajo una actualización con esOrigen=1.
+        // Asumimos que la tabla actualizaciones contiene el registro de origen también.
+
+        const predecesor = acts.find(a => {
+            const v = _parseVersion(a.revision || a.tipoRegistro || ''); // a.revision guarda "L50A"
+            return v.index === targetIndex;
+        });
+
+        if (!predecesor) {
+            if (logBatch) logBatch(`[_obtenerLineasPredecesor] No se encontró predecesor para ${revisionActual} (Target Index: ${targetIndex}) en BD.`);
+            return [];
+        }
+
+        if (logBatch) logBatch(`[_obtenerLineasPredecesor] Predecesor encontrado: ${predecesor.revision} (ID: ${predecesor.id})`);
+
+        // 3. Obtener líneas asociadas a esa actualización
+        const lines = cache.presupuestoLineas.filter(l => String(l.idActualizacion) === String(predecesor.id));
+
+        // 4. Mapear a formato simple (compatible con Merge Logic)
+        return lines.map(l => {
+            const descEntry = cache.descripcionLineas.find(d => String(d.id) === String(l.idLinea));
+
+            // Convertir categoría numérica a texto para el merge
+            let catStr = 'DAÑO FISICO';
+            if (String(l.categoria) === '2') catStr = 'DESAZOLVES';
+
+            return {
+                concepto: descEntry ? descEntry.descripcion : 'Sin descripción', // Usamos 'concepto' para compatibilidad
+                descripcion: descEntry ? descEntry.descripcion : 'Sin descripción',
+                categoria: catStr,
+                importe: parseFloat(l.importe || 0)
+            };
+        });
+
+    } catch (e) {
+        if (logBatch) logBatch(`[_obtenerLineasPredecesor] Error: ${e.message}`);
+        return [];
+    }
 }

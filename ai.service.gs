@@ -15,7 +15,7 @@ const BASE_429_WAIT_MS = 5000;             // 5 segundos base si hay 429 (raro c
 /**
  * Procesa un PDF en Base64 y devuelve los datos estructurados.
  * NUEVO: Usa Gemini multimodal directamente (sin Drive OCR).
- * @param {object|string} payload - Objeto {content, filename} o content string (legacy).
+ * @param {object|string} payload - Objeto {content, filename, existingConcepts} o content string (legacy).
  * @param {string} [optFilename] - Filename si payload es string.
  * @returns {object} Resultado estructurado { header, lineas, validacion, metadata }.
  */
@@ -27,6 +27,15 @@ function procesarPdfIA(payload, optFilename) {
         base64Content = payload.content;
         filename = payload.filename || filename;
     }
+
+    // Conceptos de ubicación existentes (del batch o BD) para entity resolution
+    const existingConcepts = (payload && payload.existingConcepts) || [];
+
+    // Batch de resultados ya procesados (para buscar registros relacionados)
+    const batchResults = (payload && payload.batchResults) || [];
+
+    // Cache de BD (opcional, se cargará si no se proporciona)
+    let cache = (payload && payload.cache) || null;
 
     const contexto = `procesarPdfIA(${filename})`;
     console.log(`[${contexto}] Iniciando procesamiento IA (Multimodal directo)...`);
@@ -49,19 +58,13 @@ function procesarPdfIA(payload, optFilename) {
                 // INYECCIÓN DE CATÁLOGOS (RAG Ligero)
                 let catalogsContext = {};
                 try {
-                    const cache = _loadCatalogsCache();
-
-                    // Extract distinctive lists to guide AI
-                    // Fenomenos might need to be extracted from Siniestros or a separate table if it exists. 
-                    // Assuming 'siniestros' table has 'fenomeno' column or similar description.
-                    // Checking TABLE_DEFINITIONS or guessing based on user request.
-                    // User said "siniestros ajustadores fenomenos existentes".
+                    if (!cache) {
+                        cache = _loadCatalogsCache();
+                    }
 
                     catalogsContext = {
                         ajustadores: [...new Set(cache.ajustadores.map(a => a.nombre || a.nombreAjustador).filter(Boolean))],
                         siniestros: [...new Set(cache.siniestros.map(s => s.siniestro).filter(Boolean))],
-                        // Fenomenos often live in Siniestros description or separte catalog. 
-                        // I'll grab unique 'fenomeno' from siniestros table if available, or just map descriptions.
                         fenomenos: [...new Set(cache.siniestros.map(s => s.fenomeno).filter(Boolean))],
                         distritos: [...new Set(cache.distritosRiego.map(d => d.distritoRiego).filter(Boolean))],
                         aseguradoras: [...new Set(cache.aseguradoras.map(a => a.aseguradora || a.nombre).filter(Boolean))]
@@ -70,7 +73,21 @@ function procesarPdfIA(payload, optFilename) {
                     console.warn(`[${contexto}] No se pudieron cargar catálogos para contexto AI:`, errCatalogs);
                 }
 
-                const jsonResponse = _callGeminiWithPdf(base64Content, filename, lastError, catalogsContext);
+                // CARGAR REGISTROS RELACIONADOS para carry-forward
+                // Nota: En primer intento no tenemos refCta/comunicadoId todavía
+                // Esta lógica se ejecutará después del primer intento exitoso para retry si es necesario
+                let relatedRecords = [];
+                if (payload && payload.refCta && payload.comunicadoId) {
+                    relatedRecords = cargarRegistrosRelacionados(
+                        payload.refCta,
+                        payload.comunicadoId,
+                        batchResults,
+                        cache
+                    );
+                    console.log(`[${contexto}] Encontrados ${relatedRecords.length} registros relacionados`);
+                }
+
+                const jsonResponse = _callGeminiWithPdf(base64Content, filename, lastError, catalogsContext, existingConcepts, relatedRecords);
 
                 // Validar Lógica de Negocio básica (Suma)
                 const validacion = _validarLogicaNegocio(jsonResponse);
@@ -79,7 +96,6 @@ function procesarPdfIA(payload, optFilename) {
                     resultadoFinal = jsonResponse;
                     break; // Éxito
                 } else {
-                    // Fallo lógico (la suma no cuadra, etc), reintentar con feedback
                     console.warn(`[${contexto}] Intento #${intentos} falló validación: ${validacion.mensaje}`);
                     lastError = `Tu respuesta anterior tenía errores lógicos: ${validacion.mensaje}. Por favor rectifica y verifica los cálculos.`;
                 }
@@ -95,12 +111,16 @@ function procesarPdfIA(payload, optFilename) {
         }
 
         // Estructurar para el Importador
+        // Extraer conceptos únicos para propagar en batch
+        const extractedConcepts = [...new Set(resultadoFinal.lineas.map(l => l.concepto).filter(Boolean))];
+
         return {
             success: true,
             data: {
                 header: resultadoFinal.header,
                 lineas: resultadoFinal.lineas
             },
+            extractedConcepts: extractedConcepts,
             analisis: {
                 intentos: intentos,
                 modelo: GEMINI_MODEL
@@ -118,6 +138,273 @@ function procesarPdfIA(payload, optFilename) {
 }
 
 /**
+ * Carga conceptos de ubicación existentes desde la BD para una referencia CTA.
+ * Usado para Entity Resolution cuando no hay conceptos en el batch pero hay historial.
+ * @param {string} refCta - Referencia CTA del comunicado (ej: "GL098774")
+ * @returns {Array} Lista de conceptos únicos existentes
+ */
+function cargarConceptosPorRefCta(refCta) {
+    if (!refCta) return [];
+
+    try {
+        // Buscar comunicados con esta refCta
+        const comunicados = readAllRows('comunicados');
+        if (!comunicados.success) return [];
+
+        const comsConRef = comunicados.data.filter(c =>
+            c.refCta && c.refCta.toUpperCase() === refCta.toUpperCase()
+        );
+
+        if (comsConRef.length === 0) return [];
+
+        // Obtener IDs de comunicados
+        const idsComs = comsConRef.map(c => String(c.id));
+
+        // Buscar actualizaciones de esos comunicados
+        const actualizaciones = readAllRows('actualizaciones');
+        if (!actualizaciones.success) return [];
+
+        const actsDeReferencia = actualizaciones.data.filter(a =>
+            idsComs.includes(String(a.idComunicado))
+        );
+
+        if (actsDeReferencia.length === 0) return [];
+
+        // Obtener IDs de actualizaciones
+        const idsActs = actsDeReferencia.map(a => String(a.id));
+
+        // Buscar líneas de presupuesto de esas actualizaciones
+        const lineasResp = readAllRows('presupuestoLineas');
+        if (!lineasResp.success) return [];
+
+        const lineasDeRef = lineasResp.data.filter(l =>
+            idsActs.includes(String(l.idActualizacion))
+        );
+
+        // Obtener IDs de líneas únicas
+        const idsLineas = [...new Set(lineasDeRef.map(l => String(l.idLinea)))];
+
+        // Buscar descripciones de esas líneas
+        const descripcionesResp = readAllRows('descripcionLineas');
+        if (!descripcionesResp.success) return [];
+
+        const conceptos = descripcionesResp.data
+            .filter(d => idsLineas.includes(String(d.id)))
+            .map(d => d.descripcion)
+            .filter(Boolean);
+
+        const conceptosUnicos = [...new Set(conceptos)];
+        console.log(`[cargarConceptosPorRefCta] ${refCta}: ${conceptosUnicos.length} conceptos encontrados`);
+
+        return conceptosUnicos;
+
+    } catch (error) {
+        console.error('[cargarConceptosPorRefCta] Error:', error);
+        return [];
+    }
+}
+
+/**
+ * Carga registros relacionados para carry-forward de líneas en actualizaciones.
+ * Busca candidatos en el batch actual y en la BD, ordenados por cercanía de versión.
+ * @param {string} refCta - Referencia CTA del comunicado (ej: "GL098774")
+ * @param {string} comunicadoId - ID del comunicado actual (ej: "L50B")
+ * @param {Array} batchResults - Resultados ya procesados en el batch actual
+ * @param {object} cache - Cache de catálogos de BD (opcional, para búsqueda en BD)
+ * @returns {Array} Lista de candidatos ordenados { header, lineas }
+ */
+function cargarRegistrosRelacionados(refCta, comunicadoId, batchResults = [], cache = null) {
+    if (!refCta) return [];
+
+    const contexto = '[cargarRegistrosRelacionados]';
+    const refClean = String(refCta).toUpperCase().trim();
+
+    // Parsear versión actual para determinar predecesores esperados
+    const versionActual = _parseVersionLocal(comunicadoId);
+    const predecesoresEsperados = _calcularPredecesores(versionActual);
+    console.log(`${contexto} Buscando candidatos para ${refCta}-${comunicadoId}. Predecesores: ${predecesoresEsperados.join(', ')}`);
+
+    const candidatos = [];
+
+    // 1. Buscar en batch actual (prioridad 1)
+    if (batchResults && batchResults.length > 0) {
+        const batchCandidatos = batchResults
+            .filter(r => {
+                const rRef = String(r.rawPayload?.header?.refCta || r.header?.refCta || '').toUpperCase().trim();
+                return rRef === refClean;
+            })
+            .map(r => ({
+                source: 'BATCH',
+                header: r.rawPayload?.header || r.header || {},
+                lineas: r.rawPayload?.lineas || r.lineas || []
+            }));
+
+        candidatos.push(...batchCandidatos);
+        console.log(`${contexto} Encontrados ${batchCandidatos.length} candidatos en batch`);
+    }
+
+    // 2. Buscar en BD (prioridad 2)
+    if (cache) {
+        const dbCandidatos = _buscarCandidatosEnBD(refClean, cache);
+        candidatos.push(...dbCandidatos);
+        console.log(`${contexto} Encontrados ${dbCandidatos.length} candidatos en BD`);
+    }
+
+    // 3. Ordenar por cercanía de versión (predecesor exacto primero)
+    candidatos.sort((a, b) => {
+        const idA = String(a.header.comunicadoId || '').toUpperCase();
+        const idB = String(b.header.comunicadoId || '').toUpperCase();
+
+        const indexA = predecesoresEsperados.indexOf(idA);
+        const indexB = predecesoresEsperados.indexOf(idB);
+
+        // Predecesores esperados primero (menor índice = más cercano)
+        if (indexA !== -1 && indexB !== -1) return indexA - indexB;
+        if (indexA !== -1) return -1;
+        if (indexB !== -1) return 1;
+
+        // Si ambos no son predecesores esperados, ordenar por fecha desc
+        const fechaA = new Date(a.header.fechaDoc || 0);
+        const fechaB = new Date(b.header.fechaDoc || 0);
+        return fechaB - fechaA;
+    });
+
+    // Limitar a 5 candidatos
+    const resultado = candidatos.slice(0, 5);
+    console.log(`${contexto} Retornando ${resultado.length} candidatos ordenados`);
+
+    return resultado;
+}
+
+/**
+ * Parsea versión de comunicadoId (duplicado local para evitar dependencias circulares)
+ */
+function _parseVersionLocal(comunicadoId) {
+    if (!comunicadoId) return { base: '', sufijo: '', index: 0 };
+    const cleanId = String(comunicadoId).toUpperCase().trim();
+    const match = cleanId.match(/^(L\d+)([A-Z])?$/);
+    if (match) {
+        const sufijo = match[2] || '';
+        return { base: match[1], sufijo, index: sufijo ? sufijo.charCodeAt(0) - 64 : 0 };
+    }
+    return { base: cleanId, sufijo: '', index: 0 };
+}
+
+/**
+ * Calcula los predecesores esperados para un comunicadoId.
+ * Ej: L50C → ["L50B", "L50A", "L50"]
+ *     L50A → ["L50"]
+ *     L50  → []
+ */
+function _calcularPredecesores(versionInfo) {
+    const predecesores = [];
+    if (versionInfo.index > 0) {
+        // Agregar predecesores en orden descendente
+        for (let i = versionInfo.index - 1; i >= 0; i--) {
+            if (i === 0) {
+                predecesores.push(versionInfo.base); // L50
+            } else {
+                predecesores.push(versionInfo.base + String.fromCharCode(64 + i)); // L50A, L50B, etc.
+            }
+        }
+    }
+    return predecesores;
+}
+
+/**
+ * Busca candidatos relacionados en la BD.
+ */
+function _buscarCandidatosEnBD(refCta, cache) {
+    const candidatos = [];
+
+    try {
+        // Buscar cuenta por refCta
+        const cta = cache.cuentas?.find(c =>
+            String(c.referencia).toUpperCase().trim() === refCta ||
+            String(c.cuenta).toUpperCase().trim() === refCta
+        );
+
+        if (!cta) return [];
+
+        // Buscar comunicados de esta cuenta
+        const comsRelacionados = cache.comunicados?.filter(c =>
+            String(c.idReferencia) === String(cta.id)
+        ) || [];
+
+        // Para cada comunicado, obtener header y líneas
+        for (const com of comsRelacionados) {
+            // Obtener datos generales
+            const dg = cache.datosGenerales?.find(d => String(d.idComunicado) === String(com.id));
+
+            // Construir header simplificado
+            const header = {
+                refCta: refCta,
+                comunicadoId: com.comunicado,
+                fechaDoc: dg?.fecha || com.fecha,
+                descripcion: dg?.descripcion || `${refCta}-${com.comunicado}`,
+                tipoRegistro: dg?.tipoRegistro || 'ORIGEN'
+            };
+
+            // Buscar líneas de presupuesto
+            const lineas = _obtenerLineasDeComunicado(com.id, cache);
+
+            candidatos.push({
+                source: 'BD',
+                header,
+                lineas
+            });
+        }
+
+    } catch (error) {
+        console.error('[_buscarCandidatosEnBD] Error:', error);
+    }
+
+    return candidatos;
+}
+
+/**
+ * Obtiene las líneas de presupuesto de un comunicado desde el cache.
+ */
+function _obtenerLineasDeComunicado(idComunicado, cache) {
+    const lineas = [];
+
+    try {
+        // Buscar actualizaciones del comunicado
+        const acts = cache.actualizaciones?.filter(a =>
+            String(a.idComunicado) === String(idComunicado)
+        ) || [];
+
+        if (acts.length === 0) return [];
+
+        // Tomar la última actualización (más reciente)
+        const ultimaAct = acts[acts.length - 1];
+
+        // Buscar líneas de esa actualización
+        const lineasAct = cache.presupuestoLineas?.filter(l =>
+            String(l.idActualizacion) === String(ultimaAct.id)
+        ) || [];
+
+        // Enriquecer con descripción
+        for (const linea of lineasAct) {
+            const desc = cache.descripcionLineas?.find(d =>
+                String(d.id) === String(linea.idLinea)
+            );
+
+            lineas.push({
+                concepto: desc?.descripcion || 'Sin descripción',
+                categoria: linea.categoria || 'DAÑO FISICO',
+                importe: parseFloat(linea.importe || 0)
+            });
+        }
+
+    } catch (error) {
+        console.error('[_obtenerLineasDeComunicado] Error:', error);
+    }
+
+    return lineas;
+}
+
+/**
  * Valida reglas matemáticas y de negocio críticas antes de aceptar la respuesta IA.
  * CAMBIO: Si hay diferencia entre total y suma de líneas, las LÍNEAS rigen (autocorrige totalPdf).
  */
@@ -127,7 +414,6 @@ function _validarLogicaNegocio(json) {
     // Regla Importe Cero = Cancelado (No es error)
     const totalDoc = parseFloat(json.header.totalPdf || 0);
     if (totalDoc === 0 && (!json.lineas || json.lineas.length === 0)) {
-        // Es un documento cancelado válido
         return { esValido: true };
     }
 
@@ -135,7 +421,7 @@ function _validarLogicaNegocio(json) {
     const sumaLineas = json.lineas.reduce((sum, l) => sum + (parseFloat(l.importe) || 0), 0);
     const diff = Math.abs(totalDoc - sumaLineas);
 
-    // NUEVO: Si hay diferencia, las líneas rigen. Autocorregir totalPdf.
+    // Si hay diferencia, las líneas rigen. Autocorregir totalPdf.
     if (diff > 1.0 && sumaLineas > 0) {
         console.warn(`[Validación IA] Autocorrigiendo totalPdf: ${totalDoc} -> ${sumaLineas} (Diferencia: ${diff})`);
         json.header.totalPdf = sumaLineas;
@@ -147,10 +433,16 @@ function _validarLogicaNegocio(json) {
 }
 
 /**
- * NUEVA: Envía PDF directamente a Gemini usando entrada multimodal.
+ * Envía PDF directamente a Gemini usando entrada multimodal.
  * Gemini 1.5/2.0 puede leer PDFs nativamente sin necesidad de OCR previo.
+ * @param {string} base64Content - Contenido del PDF en Base64
+ * @param {string} filename - Nombre del archivo
+ * @param {string} errorFeedback - Mensaje de error previo para retry
+ * @param {object} catalogs - Catálogos de entidades para matching
+ * @param {Array} existingConcepts - Conceptos de ubicación existentes del batch/BD
+ * @param {Array} relatedRecords - Registros relacionados para carry-forward
  */
-function _callGeminiWithPdf(base64Content, filename, errorFeedback = null, catalogs = null) {
+function _callGeminiWithPdf(base64Content, filename, errorFeedback = null, catalogs = null, existingConcepts = [], relatedRecords = []) {
     const apiKey = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY');
     if (!apiKey) throw new Error('GEMINI_API_KEY no configurada en Propiedades del Script.');
 
@@ -158,435 +450,335 @@ function _callGeminiWithPdf(base64Content, filename, errorFeedback = null, catal
 
     // Construcción del Prompt Alineado al Excel/CSV
     let promptSystem = `
-        Eres un Auditor de Ingeniería experto.
-        Tu misión es extraer datos de reportes técnicos (PDFs) para generar un registro idéntico al que realizaría un auditor humano en un Excel.
+    # PROMPT MAESTRO (v4.1) — Auditor de Ingeniería para Extracción de Presupuestos (PDF → JSON)
 
-        ## 🚨 REGLA PRIORITARIA - EXTRACCIÓN DE LÍNEAS DE PRESUPUESTO 🚨
-        
-        **ANTES de analizar el header**, BUSCA en el documento una tabla de "Resumen de presupuestos" que contenga columnas como:
-        - "DAÑO FÍSICO" (o similar: "Importe daño físico", "Daño Material")
-        - "REMOCIÓN Y DESAZOLVE" (o similar: "Desazolves", "Remoción")
-        - "CONCEPTO" o "NOMBRE DE INVENTARIO"
-        
-        **PARA CADA FILA de esa tabla**, genera UNA o DOS líneas en el array "lineas":
-        
-        - SI columna "DAÑO FÍSICO" > 0 → { "concepto": "[NOMBRE]", "categoria": "DAÑO FISICO", "importe": [valor] }
-        - SI columna "REMOCIÓN/DESAZOLVE" > 0 → { "concepto": "[MISMO NOMBRE]", "categoria": "DESAZOLVES", "importe": [valor] }
-        
-        **❌ NUNCA** uses la columna "IMPORTE" o "TOTAL" como importe de línea.
-        **❌ NUNCA** generes el array "lineas" vacío si hay una tabla de resumen.
-        **✅ SIEMPRE** genera al menos 1 línea si hay tabla de presupuestos.
+    **Rol:** Eres un Auditor de Ingeniería experto y Agente de Procesamiento de Datos.  
+    **Misión:** Extraer datos financieros/técnicos de reportes PDF para generar un JSON estructurado **idéntico** al registro de un auditor humano en Excel/CSV.  
+    **Salida:** **EXCLUSIVAMENTE JSON** (sin texto adicional, sin explicaciones, sin markdown).
 
-        ## PASO 0: DETECCIÓN DEL TIPO DE AJUSTADOR
-        
-        **PRIMERO**, identifica qué ajustador emitió el documento para aplicar las reglas correctas:
-        
-        ### INDICADORES DE CHARLES TAYLOR ADJUSTING:
-        - Logo "Charles Taylor" o "CTA" en el encabezado
-        - Referencias con prefijo "GL", "AM", "CT" (ej: "Ref. CTA: GL061410")
-        - Comunicados en formato "GL...-L05" donde L05 es el consecutivo
-        - Línea "Comunicado: GL061410-L05 (Estado, Municipio)"
-        
-        ### INDICADORES DE MILLER INTERNATIONAL:
-        - Logo "miller International" en el encabezado
-        - Texto "Technical Loss Adjusters"
-        - Referencias en formato "Ref. Miller: SR-164-2022"
-        - Referencias de siniestro "Ref. AGROASEMEX: SCNA-0017/2022"
-        - Número de comunicado junto a la fecha: "No. 847"
-        - Campo "Localidad afectada:" con distrito de riego explícito
-        
-        ---
-        
-        ## REGLAS PARA MILLER INTERNATIONAL
-        
-        Si detectas que es un documento de Miller International, aplica estas reglas:
-        
-        1. **comunicadoId**: 
-           - Busca "No. XXX" en el encabezado, junto a la fecha
-           - Ejemplo: "Ciudad de México, 19 de octubre de 2022 / No. 847"
-           - comunicadoId = "847" (solo el número)
-           - ⚠️ IGNORA el campo "Asunto:", NO contiene el comunicado
-        
-        2. **refCta (Referencia del Ajustador)**:
-           - Busca "Ref. Miller: XXX"
-           - Ejemplo: "Ref. Miller: SR-164-2022"
-           - refCta = "SR-164-2022"
-        
-        3. **refSiniestro**:
-           - Busca "Ref. AGROASEMEX: XXX" o similar
-           - Ejemplo: "Ref. AGROASEMEX: SCNA-0017/2022"
-           - refSiniestro = "SCNA-0017/2022"
-        
-        4. **distritoRiego**:
-           - Busca "Localidad afectada: XXX"
-           - Ejemplo: "Localidad afectada: Distrito de Riego 009, Valle de Juarez, Chihuahua"
-           - distritoRiego = "Distrito de Riego 009, Valle de Juarez, Chihuahua"
-        
-        5. **estado**:
-           - Extrae del final de "Localidad afectada" (después de la última coma)
-           - Ejemplo: "...Valle de Juarez, Chihuahua" → estado = "CHIHUAHUA"
-        
-        6. **ajustadorNombre**: 
-           - = "MILLER INTERNATIONAL"
-        
-        7. **aseguradora**:
-           - Extrae del campo "Ref. AGROASEMEX" el nombre de la aseguradora
-           - = "AGROASEMEX"
-        
-        8. **descripcion (HISTORIAL)**:
-           - Para origen: "{refCta}-{comunicadoId}"
-           - Ejemplo: "SR-164-2022-847"
-        
-        9. **⚠️ REGLA CRÍTICA - EXTRACCIÓN DE LÍNEAS EN MILLER**:
-        
-           Las tablas de Miller tienen estas columnas:
-           | N° | NOMBRE DE INVENTARIO | **DAÑO FÍSICO** | **REMOCIÓN Y DESAZOLVE** | IMPORTE |
-           
-           **DEBES GENERAR DOS LÍNEAS SEPARADAS** por cada fila (si el importe > 0):
-           
-           **LÍNEA 1: DAÑO FÍSICO**
-           - concepto: [NOMBRE DE INVENTARIO, ej: "CANAL RODEO"]
-           - categoria: "DAÑO FISICO"
-           - importe: [Valor de columna "DAÑO FÍSICO"] → 995719.34
-           
-           **LÍNEA 2: DESAZOLVES** (SOLO si el valor > 0)
-           - concepto: [MISMO NOMBRE DE INVENTARIO]
-           - categoria: "DESAZOLVES"
-           - importe: [Valor de columna "REMOCIÓN Y DESAZOLVE"] → 12149.26
-           
-           **EJEMPLO COMPLETO** para la tabla:
-           | P-01 | Canal Rodeo | $995,719.34 | $12,149.26 | $1,007,868.60 |
-           | P-02 | Presa Derivadora Parían | $96,795.73 | $17,227.73 | $114,023.46 |
-           | P-03 | Camino de operación lateral Tejabán | $27,029.59 | $0.00 | $27,029.59 |
-           
-           "lineas": [
-               { "concepto": "CANAL RODEO", "categoria": "DAÑO FISICO", "importe": 995719.34 },
-               { "concepto": "CANAL RODEO", "categoria": "DESAZOLVES", "importe": 12149.26 },
-               { "concepto": "PRESA DERIVADORA PARÍAN", "categoria": "DAÑO FISICO", "importe": 96795.73 },
-               { "concepto": "PRESA DERIVADORA PARÍAN", "categoria": "DESAZOLVES", "importe": 17227.73 },
-               { "concepto": "CAMINO DE OPERACIÓN LATERAL TEJABÁN", "categoria": "DAÑO FISICO", "importe": 27029.59 }
-           ]
-           
-           **❌ NUNCA HAGAS ESTO (INCORRECTO)**:
-           - ❌ Una sola línea con el importe TOTAL ($1,007,868.60)
-           - ❌ Ignorar la columna de REMOCIÓN Y DESAZOLVE
-           - ❌ Sumar ambas columnas en una sola línea
-        
-        ---
-        
-        ## REGLAS PARA CHARLES TAYLOR (REGLAS ORIGINALES)
-        
-        Si detectas que es un documento de Charles Taylor, aplica estas reglas:
+    ## 0) ENTRADAS DISPONIBLES (si el sistema te las proporciona)
+    - **PDF**: contenido completo del documento.
+    - **CATÁLOGOS** (opcional): listas válidas para *entity resolution* (aseguradoras, distritos, ajustadores, etc.).
+    - **REGISTRO_PREVIO** (opcional): datos del comunicado anterior, por ejemplo:
+    - \`prev.header\` (incluye \`refCta\`, \`comunicadoId\`, \`tipoRegistro\`, \`descripcion\`, etc.)
+    - \`prev.lineas\` (líneas del origen o del comunicado inmediato anterior)
 
-        ### ANÁLISIS CONTEXTUAL (LEE TODO EL DOCUMENTO PRIMERO)
-        
-        Antes de extraer datos, LEE y COMPRENDE el contexto completo del documento:
-        
-        1. **¿Es un comunicado ORIGEN o una ACTUALIZACIÓN?**
-           - Busca palabras clave: "Actualización", "sustituye", "revisado", "anexo actualizado"
-           - Si menciona comunicados anteriores (ej: "sustituye al L30A"), es ACTUALIZACIÓN
-        
-        2. **¿Sustituye TODO el presupuesto o solo PARTE?**
-           - "para esta ubicación en particular" → SUSTITUCION_PARCIAL
-           - "revisión integral" o múltiples ubicaciones → REEMPLAZO_TOTAL
-        
-        3. **¿Cuál es la ubicación/tramo afectado?**
-           - Busca en el texto: "área hidráulica del río X", "tramo Y", títulos como "P04 - Río X, GPS Y"
-           - Esta ubicación es el CONCEPTO de la línea, no los detalles (Preliminares, Acarreo)
-        
-        4. **¿Cuál es el monto total del presupuesto revisado?**
-           - Busca la columna "PRESUPUESTO REVISADO" o el TOTAL final
-           - IGNORA los desgloses (Precios Unitarios con UNIDAD, CANTIDAD, P.U.)
+    > Si \`REGISTRO_PREVIO\` **NO existe**, trabaja solo con el PDF actual.  
+    > Si \`REGISTRO_PREVIO\` **SÍ existe** y el PDF es actualización, aplica la lógica *carry-forward* (sección 8).
 
-        ## REGLAS CRÍTICAS DE TRANSFORMACIÓN:
+    - REGLAS IMPORTANTES: DEBERAS SEGIR PASO A PASO LA INSTRUCCIONES DEL PROMPT
 
-        1. **IDENTIFICACIÓN DEL CONSECUTIVO (comunicadoId)**:
-        
-        ⚠️ **PROCESO DE EXTRACCIÓN - SIGUE ESTOS PASOS EXACTOS**:
-        
-        **PASO 1**: Encuentra "Ref. CTA:" o similar en el documento.
-           - Ejemplo: "Ref. CTA: GL061410" → Esta es la REFERENCIA DEL AJUSTADOR (refCta)
-           - También puede ser: "AM...", "CT...", u otros prefijos
-        
-        **PASO 2**: Encuentra la línea "Comunicado:" que contiene la referencia + guión + consecutivo.
-           - Ejemplo: "Comunicado: GL061410-L05 (Chiapas, Villa Comaltitlán)"
-        
-        **PASO 3**: ELIMINA la referencia y el guión, CONSERVA SOLO el consecutivo.
-           - Del ejemplo "GL061410-L05":
-             - ❌ ELIMINAR: "GL061410-" (la referencia con guión)
-             - ✅ CONSERVAR: "L05" (el CONSECUTIVO)
-        
-        **RESULTADO**:
-        - refCta = "GL061410" (la referencia del ajustador, sin el guión)
-        - comunicadoId = "L05" (SOLO el consecutivo, empieza con "L")
-        
-        **MÁS EJEMPLOS**:
-        | Comunicado en PDF | refCta | comunicadoId (CONSECUTIVO) |
-        |-------------------|--------|---------------------------|
-        | GL061410-L05      | GL061410 | L05 |
-        | GL061410-L05A     | GL061410 | L05A |
-        | AM090123-L30B     | AM090123 | L30B |
-        | CT070059-L02      | CT070059 | L02 |
-        
-        **VALIDACIÓN FINAL**:
-        - ❌ Si comunicadoId contiene "GL", "AM", "CT" u otro prefijo de referencia, ESTÁS EQUIVOCADO
-        - ✅ comunicadoId SIEMPRE empieza con "L" seguido de número(s) y letra opcional
+    ## 1) LECTURA CONTEXTUAL (Regla de Oro)
+    1. Lectura total:** escanea el documento completo (páginas + anexos).
+    2. No concluyas temprano:** suele haber tablas relevantes después del “Resumen”.
+    3. No generes el JSON** hasta terminar el escaneo completo.
+    4. Si no encuentras algun dato importe, vuelve a revisar el documento.
 
-        2. **tipoRegistro (VERSIÓN)**: **DETECTAR SI ES ACTUALIZACIÓN**:
-        
-        ⚠️ **BUSCA EN TODO EL DOCUMENTO, NO SOLO EN EL ENCABEZADO**:
-        
-        **SEÑAL 1**: En la línea de "Comunicado:" aparece **(Actualización)** entre paréntesis.
-           - Ejemplo: "Comunicado: GL061410-L05A **(Actualización)** (Chiapas, Villa Comaltitlán)"
-           - → tipoRegistro = "L05A" (el consecutivo)
-        
-        **SEÑAL 2**: En el CUERPO del documento hay texto como "sustituyen" o "sustituye":
-           - ⚠️ **IMPORTANTE**: La línea de Comunicado puede NO decir "(Actualización)" pero el texto del documento SÍ lo indica.
-           
-           - **EJEMPLO REAL**:
-             - Encabezado: "Comunicado: GL069426-L19A (Chiapas, Tapachula)" ← NO dice Actualización
-             - Pero en el cuerpo dice: "Es importante mencionar que los montos antes citados **sustituyen** a los presentados en nuestro comunicado GL069426-L19"
-             - → tipoRegistro = "L19A" (porque dice "sustituyen" en el texto)
-             - → versionAnterior = "L19" (extraído de "sustituyen a... GL069426-L19")
-           
-           - Otro ejemplo: "...presupuestos revisados, mismos que **sustituyen** a los presentados en nuestro comunicado GL061410-L05"
-           - → tipoRegistro = "L05A"
-           - → versionAnterior = "L05"
-        
-        **SI NO HAY NINGUNA SEÑAL** (ni en encabezado NI en el cuerpo):
-           - No dice "(Actualización)" en ningún lado
-           - No hay frases con "sustituye" o "sustituyen" en TODO el documento
-           - → tipoRegistro = **"ORIGEN"**
-        
-        **RESUMEN**:
-        | Qué buscar | Dónde buscar | tipoRegistro |
-        |------------|--------------|--------------|
-        | "(Actualización)" | Línea Comunicado | = comunicadoId |
-        | "sustituyen a" / "sustituye al" | Cuerpo del documento | = comunicadoId |
-        | Ninguna señal | - | = "ORIGEN" |
+    ## 2) DETECCIÓN DE ORIGEN VS ACTUALIZACIÓN (tipoRegistro + versionAnterior)
+    
+    **tipoRegistro** solo puede ser:
+    - \`"ORIGEN"\`
+    - \`"ACTUALIZACION"\`
 
-        3. **versionAnterior** (Solo si es ACTUALIZACIÓN):
-           - Busca el comunicado anterior que es "sustituido" o "reemplazado".
-           - Ejemplo: "sustituyen a los presentados en nuestro comunicado **GL061410-L05**"
-             - Extraer SOLO el consecutivo: **"L05"** (NO "GL061410-L05")
-           - Si no menciona explícitamente, deja vacío.
+    ### 2.1 Señales de actualización (buscar en TODO el documento)
+    - SI EN LA LÍNEA DE COMUNICADO aparece \`(Actualización)\` o similar
+    - En texto: “sustituye”, “sustituyen”, “revisado”, “modifica”, “anexo actualizado”, “deja sin efectos”
+    - Referencias explícitas a comunicados anteriores: “...sustituye al ...-L30A”
+    - Si el \`comunicadoId\` tiene un sufijo de letra (L30A, L50B), ES UNA ACTUALIZACIÓN.
 
-        - **ubicacionEspecifica**: Si el documento menciona que solo afecta una ubicación/tramo específico.
-            - Busca frases como: "área hidráulica del río **Marabasco** en el tramo **El Rincón**"
-            - Esta ubicación DEBE incluirse en el concepto de TODAS las líneas.
-            - Formato: "Río {Nombre}, Tramo {Tramo} - {Concepto Original}"
+    **IMPORTANTE**
+    - **DEFAULT: tipoRegistro = "ORIGEN"** (asume origen siempre)
+    - **SOLO si encuentras señales de actualización** → tipoRegistro = "ACTUALIZACION"
 
-        - **tipoAccion (TIPO DE DOCUMENTO)**:
-            - Analiza el contexto del documento para determinar el tipo:
-            
-            ⚠️ **REGLA PRIORITARIA**: Si hay CUALQUIER tabla con columnas de montos/importes → **NO es INFORMATIVO**
-            
-            - **"INFORMATIVO"**: Comunicado SIN NINGUNA tabla de presupuesto/montos.
-                - **SOLO usar cuando**:
-                  - ❌ NO hay NINGUNA tabla con columnas de "Importe", "daño físico MX$", "desazolves MX$", "Importe MX$"
-                  - ❌ NO hay NINGÚN monto total en el documento (ej: "$10,107,333.30", "MX$12,034,248.34")
-                  - ✅ SOLO hay texto narrativo SIN números de presupuesto
-                  - ✅ Hay tabla con columnas "Ubicación" y "Comentario" (sin montos)
-                  - ✅ El documento menciona "actas de entrega", "estado de avance" SIN dar montos nuevos
-                - **RESULTADO**: 
-                  - tipoAccion = "INFORMATIVO"
-                  - lineas = [] (array vacío)
-                  - totalPdf = 0
-                  
-            - **SI HAY TABLA DE PRESUPUESTO O MONTOS → usar REEMPLAZO_TOTAL o SUSTITUCION_PARCIAL**
-            
-            - **"REEMPLAZO_TOTAL"**: El documento reemplaza COMPLETAMENTE al anterior.
-                - Indicadores: "revisión integral", "sustituye en su totalidad", múltiples ubicaciones/tramos.
-                - Se mantienen las ubicaciones/tramos especificos del origen, pero se cambian los montos de las ubicaciones o en su caso se adicionan ubicaciones nuevas.
-                - Extrae TODAS las líneas del presupuesto nuevo.
-                
-            - **"SUSTITUCION_PARCIAL"**: SOLO reemplaza UNA ubicación/tramo específico.
-                - Indicadores: "para esta ubicación en particular", "solo el tramo X".
-                - Se mantiene la ubicación/tramo especifico del origen, pero se cambia el monto de la ubicación o en su caso se adiciona una nueva ubicación.
+    ### 2.2 versionAnterior (solo si actualización)
+    - Si el texto menciona comunicado anterior (\`...GLxxxx-L30A...\`), extrae **SOLO el consecutivo** (\`"L30A"\`, no \`"GLxxxx-L30A"\`).
+    - Si no lo menciona explícitamente → deja vacío.
 
-                **REGLA CRÍTICA PARA SUSTITUCION_PARCIAL**:
-                
-                1. **BUSCA LA UBICACIÓN EN EL TEXTO CONTEXTUAL** (NO en la tabla):
-                   - Lee el párrafo que describe el monto, ejemplo:
-                     "hemos establecido un monto de MX$2,479,657.51... para resarcir los daños en el **bordo del río Arenas**"
-                   - Extrae: ubicación = "BORDO DEL RÍO ARENAS"
-                   - Extrae: importe = 2479657.51
-                
-                2. **IGNORA COMPLETAMENTE LA TABLA DE DESGLOSES**:
-                   - Las tablas con Preliminares, Demoliciones, Terracerías, Estructuras son PARTIDAS de precios unitarios
-                   - ❌ NUNCA extraigas estas como líneas
-                   - ✅ El importe ya está en el texto contextual
-                
-                3. **EXTRAE UNA SOLA LÍNEA**:
-                   - concepto = La ESTRUCTURA de riego (ej: "BORDO DEL RÍO ARENAS", "RÍO PALIZADA MARGEN IZQUIERDA")
-                   - importe = El monto total del texto (ej: $2,479,657.51)
-                   - categoria = "DAÑO FISICO"
+    ## 3) BÚSQUEDA DE MONTOS (SOLO LO QUE ESTÁ EN EL DOCUMENTO)
+    
+    **TU TAREA ES EXTRAER VISUALMENTE.** NO inventes, NO calcules, NO traigas datos del pasado. SOLO extrae lo que ves en tablas o párrafos de ESTE PDF.
 
-        - **descripcion (HISTORIAL)**: Construye la cadena de trazabilidad.
-            - Si es Nuevo Origen (Ej L04): "GL097117-L04"   
-            - Si es Nuevo Origen con sufijo (Ej L04C): "GL097117-L04C"
-            - Si es Actualización (Ej L04C): "GL097117-L04, L04C".
-            - Formato: "{REF_CTA}-{RAIZ}, {VERSION_ANTERIOR}, {VERSION_ACTUAL}"
-            - Ejemplo para L30A: "GL070059-L30, L30A".
-            - Ejemplo para L30B: "GL070059-L30, L30A, L30B".
-            - Ejemplo para L30C: "GL070059-L30, L30A, L30B, L30C".
+    ### A) TABLAS DE PRESUPUESTO (si existen)
+    Busca tablas con columnas: "DAÑO FÍSICO", "DESAZOLVES", "CONCEPTO", "REMOCIÓN"
+    - **“REMOCIÓN Y DESAZOLVE”** (o “Desazolves”, “Remoción”, etc.)
+    - **“CONCEPTO”** o **“NOMBRE DE INVENTARIO”**
+    - (Puede existir columna **“IMPORTE/TOTAL”**)
 
-        - **distritoRiego**: 
-            - Extracción: Localizar frases relacionadas con daños en infraestructura, por ejemplo: "daños registrados en infraestructura perteneciente al Distrito de Temporal Tecnificado 018 (DTT 018) Huixtla...".
-            - Identificación: Extraer el nombre del distrito mencionado (ej. "Distrito de Temporal Tecnificado 018 (DTT 018) Huixtla").
-            - Validación y Normalización: Comparar el texto extraído con el catálogo de distritos de riego.
-            - Coincidencia parcial: Si se detecta similitud por contexto (ej. "DTT 018 Huixtla"), realizar el cruce.
-            - Regla del nombre más completo:
-                - Caso A (Enriquecimiento): Si el nombre extraído del documento es más completo que el del catálogo, utilizar y actualizar con el nombre extraído (ej. sustituir "DTT 018 Huixtla" por "Distrito de Temporal Tecnificado 018 (DTT 018) Huixtla").
-                - Caso B (Estandarización): Si el catálogo ya posee el nombre completo y el documento usa una abreviatura, mantener el nombre oficial del catálogo.
-            - Valor por defecto: Si no se menciona ningún distrito, asignar "SIN DATO".
-            - Nota: Este campo es descriptivo y no determina la unicidad del comunicado.
+    ### 3.1 Row-Splitting (OBLIGATORIO)
+    **Por cada fila** con un concepto/ubicación:    
+    - Si **DAÑO FÍSICO > 0** → agrega línea:
+    \`{ "concepto": "[NOMBRE]", "categoria": "DAÑO FISICO", "importe": [valor] }\`
+    - Si **REMOCIÓN/DESAZOLVE > 0** → agrega línea:
+    \`{ "concepto": "[MISMO NOMBRE]", "categoria": "DESAZOLVES", "importe": [valor] }\`
 
-        -  **distritoRiegoAccion**: 
-            - Determina la acción a realizar en el catálogo basándose en la calidad del nombre extraído.
-            - Valores permitidos:
-                - "Actualiza": Se usa cuando el nombre extraído del documento es más completo o preciso que el que existe en la lista de distritos (ej. la lista tiene siglas y el documento el nombre completo).
-                - "Mantener": Se usa cuando el nombre de la lista es igual o más completo que el del documento, o cuando solo se requiere validación.
-            - Nota: Este campo es descriptivo y no determina la unicidad del comunicado.
+    ### 3.2 Prohibiciones absolutas
+    - **❌ NUNCA** uses la columna **“IMPORTE/TOTAL”** como importe de línea.
+    - **❌ NUNCA** sumes “DAÑO FÍSICO” + “REMOCIÓN/DESAZOLVE” en una sola línea.
+    - **❌ NUNCA** dejes \`lineas\` vacío **si encontraste** una tabla de resumen válida.
+    - **✅ SIEMPRE** genera al menos 1 línea si hay tabla válida.
 
-        2. **CATEGORIZACIÓN INTELIGENTE (Inferencia)**:
-        - El PDF NO tiene columna "Categoría", debes DEDUCIRLA del texto del 'concepto'.
-        - Reglas:
-            - "Desazolve", "Limpieza", "Extracción" -> **"DESAZOLVES"**
-            - "Mampostería", "Concreto", "Enrocamiento", "Bordo", "Camino", "Estructura" -> **"DAÑO FISICO"**
-            - "Supervisión" -> **"SUPERVISION"**
-        - **NUNCA** dejes este campo vacío.
+    ### B) MONTOS NARRATIVOS (si NO hay tablas)
+    **Si no encontraste tablas de presupuesto**, busca montos en el TEXTO:
+    
+    Busca frases como:
+    - "permitieron establecer un monto de MX$..."
+    - "soportar un monto de..."
+    - "presupuesto ajustado de..."
+    
+    **Extrae:**
+    - \`importe\`: el monto mencionado tras esas frases
+    - \`concepto\`: la ubicación del párrafo anterior (ej: "Unidad de Riego Aguas Blancas")
+    - \`categoria\`: "DAÑO FISICO" por defecto
+    
+    **IGNORAR montos de:** "monto solicitado por la empresa", "monto asignado asciende a"
 
-        3. **FILTRADO DE TABLAS (Limpieza)**:
-        - **IGNORA** tablas de "Precios Unitarios" (que tengan columnas de materiales, maquinaria, P.U.).
-        - **EXTRAE SOLO** las tablas de "Resumen" o "Presupuesto" que describan tramos o ubicaciones (Ríos, Márgenes).
-        - Ignora filas de subtotales o encabezados de tramo que no tengan importe propio.
-        
-        4. **⚠️ REGLA CRÍTICA - BÚSQUEDA DE TABLA CON DOS CATEGORÍAS**:
-        
-        **PASO 1: BUSCA** en el documento una tabla que tenga columnas con estos nombres o similares:
-        - "DAÑO FÍSICO" o "Importe daño físico" o "Daño Material"
-        - "REMOCIÓN Y DESAZOLVE" o "Importe Remoción" o "Desazolves" o "Desazolve"
-        - "IMPORTE" o "TOTAL" (columna de suma)
-        
-        **PASO 2: CUANDO ENCUENTRES ESA TABLA**, para CADA FILA que tenga un concepto/ubicación:
-        
-        SI la columna "DAÑO FÍSICO" tiene valor > 0:
-        → GENERA una línea con categoria = "DAÑO FISICO" y ese importe
-        
-        SI la columna "REMOCIÓN Y DESAZOLVE" tiene valor > 0:
-        → GENERA OTRA línea con categoria = "DESAZOLVES" y ese importe
-        
-        **NUNCA** uses la columna "IMPORTE" (el total) como importe de línea.
-        **SIEMPRE** usa los valores de las columnas separadas.
-        
-        CUANDO VEAS UNA TABLA CON ESTAS DOS COLUMNAS:
-        | Concepto | **Importe daño físico MX$** | **Importe Remoción, desazolves MX$** | Importe MX$ |
-        
-        DEBES GENERAR **DOS LÍNEAS SEPARADAS** usando los TOTALES de cada columna:
-        
-        **LÍNEA 1: DAÑO FÍSICO**
-        - concepto: [UBICACIÓN del texto, ej: "BORDO DEL RÍO ARENAS"]
-        - categoria: "DAÑO FISICO"
-        - importe: [TOTAL de columna "Importe daño físico"] → 2379831.72
-        
-        **LÍNEA 2: DESAZOLVES** 
-        - concepto: [MISMA UBICACIÓN]
-        - categoria: "DESAZOLVES"
-        - importe: [TOTAL de columna "Importe Remoción, desazolves"] → 99825.79
-        
-        **EJEMPLO COMPLETO** para la tabla que muestras:
-        "lineas": [
-            { "concepto": "BORDO DEL RÍO ARENAS", "categoria": "DAÑO FISICO", "importe": 2379831.72 },
-            { "concepto": "BORDO DEL RÍO ARENAS", "categoria": "DESAZOLVES", "importe": 99825.79 }
-        ]
-        
-        **EJEMPLO 2 - CHARLES TAYLOR CON UNA SOLA FILA**:
-        Si la tabla tiene UNA sola fila de concepto pero DOS columnas de importe:
-        | N° | CONCEPTO | DAÑO FÍSICO | REMOCIÓN Y DESAZOLVE | IMPORTE |
-        | P-01 | Canal Principal Margen Izquierda | $3,085,059.14 | $657,268.25 | $3,742,327.39 |
-        
-        DEBES GENERAR **DOS LÍNEAS**:
-        "lineas": [
-            { "concepto": "CANAL PRINCIPAL MARGEN IZQUIERDA", "categoria": "DAÑO FISICO", "importe": 3085059.14 },
-            { "concepto": "CANAL PRINCIPAL MARGEN IZQUIERDA", "categoria": "DESAZOLVES", "importe": 657268.25 }
-        ]
-        
-        **EJEMPLO 3 - DESCRIPCIÓN LARGA DE OBRA**:
-        | N° | CONCEPTO | DAÑO FÍSICO | REMOCIÓN Y DESAZOLVE | IMPORTE |
-        | P-01 | Obra de Protección a base de Tablaestaca Margen Derecha del Río Atoyac | $6,612,752.18 | $27,792.33 | $6,640,544.51 |
-        
-        DEBES GENERAR **DOS LÍNEAS**:
-        "lineas": [
-            { "concepto": "OBRA DE PROTECCIÓN A BASE DE TABLAESTACA MARGEN DERECHA DEL RÍO ATOYAC", "categoria": "DAÑO FISICO", "importe": 6612752.18 },
-            { "concepto": "OBRA DE PROTECCIÓN A BASE DE TABLAESTACA MARGEN DERECHA DEL RÍO ATOYAC", "categoria": "DESAZOLVES", "importe": 27792.33 }
-        ]
-        
-        ⚠️ **NO HAGAS ESTO (INCORRECTO)**:
-        - ❌ Una sola línea con importe total (suma de ambas columnas)
-        - ❌ Ignorar la columna de REMOCIÓN Y DESAZOLVE aunque sea pequeña
-        - ❌ Líneas separadas por concepto (Preliminares, Demoliciones, etc.)
-        - ❌ Incluir "- DAÑO FÍSICO" en el concepto
+    ## 4) [SECCIÓN ELIMINADA - NO REALIZAR CARRY-FORWARD]
+    **IMPORTANTE:** El sistema se encargará de fusionar con datos históricos. Tu trabajo es reportar **SOLO** las líneas y montos que aparecen explícitamente en **ESTE DOCUMENTO PDF**.
+    - Si el PDF solo lista las modificaciones, extrae SOLO esas modificaciones.
+    - Si el PDF lista todo el presupuesto completo, extrae todo.
+    - **NO** agregues líneas de "registros previos" que no estén visualmente en este PDF.
 
-        ## FORMATO JSON ESPERADO (Alineado a CSV):
+    ## 5) DETECCIÓN DEL AJUSTADOR (MILLER vs CTA)
+    Identifica el emisor para aplicar reglas correctas.
+
+    ### 5.1 Indicadores MILLER INTERNATIONAL
+    - Logo/encabezado “Miller International”
+    - Texto “Technical Loss Adjusters”
+    - \`Ref. Miller: SR-...\`
+    - \`Ref. AGROASEMEX: ...\`
+    - \`Ciudad de México, [fecha] / No. [###]\`
+    - \`Localidad afectada: ...\`
+
+    ### 5.2 Indicadores CHARLES TAYLOR ADJUSTING (CTA)
+    - Logo “Charles Taylor” o “CTA”
+    - Referencias con prefijo \`GL\`, \`AM\`, \`CT\` (ej. \`Ref. CTA: GL061410\`)
+    - Línea tipo: \`Comunicado: GL061410-L05 (...)\`
+    - Comunicados \`GLxxxx-Lxx\` (Lxx = consecutivo)
+
+    **Si hay conflicto de señales**, elige el ajustador con más evidencia y agrega advertencia.
+
+    ## 6) EXTRACCIÓN DE IDENTIFICADORES (CRÍTICO)
+    ### 6.1 Reglas MILLER
+    - \`comunicadoId\`: extrae el número tras \`No.\` junto a la fecha (ej. “No. 847” → \`"847"\`)
+    - \`refCta\`: extrae de \`Ref. Miller: SR-164-2022\` → \`"SR-164-2022"\`
+    - \`refSiniestro\`: extrae de \`Ref. AGROASEMEX: ...\`
+    - \`distritoRiego\`: de \`Localidad afectada: ...\` (transcribe)
+    - \`estado\`: último elemento después de la última coma en “Localidad afectada” (normaliza a MAYÚSCULAS)
+    - \`ajustadorNombre\`: \`"MILLER INTERNATIONAL"\`
+
+    ### 6.2 Reglas CTA (PASOS EXACTOS)
+    **PASO 1:** Encuentra \`Ref. CTA:\` o equivalente → eso es \`refCta\` (ej. \`"GL061410"\`).  
+    **PASO 2:** Encuentra la línea \`Comunicado:\` que contiene \`refCta\` + guion + consecutivo (ej. \`GL061410-L05A\`).  
+    **PASO 3:** Separa:
+    - \`refCta\` = parte **antes** del guion (ej. \`GL061410\`)
+    - \`comunicadoId\` = parte **después** del guion (ej. \`L05A\`)
+
+    **VALIDACIÓN**
+    - \`comunicadoId\` **SIEMPRE** empieza con \`"L"\` (L + número(s) + letra opcional)
+    - **❌ Si contiene “GL/AM/CT”** dentro de \`comunicadoId\`, estás mal → corrige.
+
+    ## 7) DECISIÓN DEL TIPO DE ACCIÓN (tipoAccion)
+    Valores permitidos:
+    - \`"REEMPLAZO_TOTAL"\`
+    - \`"SUSTITUCION_PARCIAL"\`
+    - \`"INFORMATIVO"\`
+
+    ### 7.1 Regla prioritaria (montos)
+    - Si existe **cualquier** tabla con importes/costos → **NO** es informativo.
+    - Si NO hay tablas pero hay “monto soportado / presupuesto ajustado / monto establecido” → hay monto narrativo.
+
+    ### 7.2 Clasificación
+    - \`"INFORMATIVO"\`: no hay tablas de importes **y** no hay monto final soportado (solo narrativa).
+    - \`"REEMPLAZO_TOTAL"\`: hay tablas de presupuesto (especialmente resúmenes) que representan el presupuesto reportado en el comunicado.
+    - \`"SUSTITUCION_PARCIAL"\`: el texto indica explícitamente que el ajuste aplica a **una ubicación/tramo en particular** (“para esta ubicación”, “solo el tramo…”, etc.) **o** solo se reporta un monto final narrativo para una ubicación.
+
+    ## 8) CONSTRUCCIÓN DE \`lineas\` (con limpieza + rescate)
+    ### 8.1 Filtro de ruido (IGNORAR)
+    - Tablas de **Precios Unitarios** (materiales, maquinaria, P.U., unidad, cantidad, etc.)
+    - **Hojas generadoras** (largo/ancho/alto/croquis)
+    - Subtotales/encabezados de tramo sin importe propio
+
+    ### 8.2 Prioridad A — Tablas con dos categorías (Daño Físico / Desazolves)
+    Si existen → aplica **Row-Splitting** (sección 1) para todas las filas válidas.
+
+    ### 8.3 Prioridad B — Tablas con una sola categoría o sin columna explícita
+    Si hay tabla de “resumen/presupuesto” por ubicaciones pero no separa categorías:
+    - Usa el monto de la columna de costo **que corresponda a la ubicación** (no partidas).
+    - Categoría por inferencia:
+    - Si el concepto menciona “desazolve/limpieza/extracción” → \`"DESAZOLVES"\`
+    - En otro caso → \`"DAÑO FISICO"\`
+
+    ### 8.4 Prioridad C — Modo rescate narrativo (solo si NO hay tablas de costos)
+    Busca frases:
+    - “nos permitió establecer un monto de…”
+    - “soportar un monto de…”
+    - “presupuesto ajustado de…”
+
+    **Extrae**
+    - \`importe\`: ese monto final soportado
+    - \`concepto\`: la ubicación/tramo descrito en el mismo párrafo o el inmediato anterior
+    - \`categoria\`: \`"DAÑO FISICO"\` salvo que el texto diga explícitamente desazolve/limpieza
+    
+    **⚠️ IMPORTANTE: IGNORAR estos montos (no son el soportado):**
+    - "monto solicitado por la empresa" - "monto asignado asciende a" - "presupuesto del contratista"
+
+    ## 9) CAMPOS DEL HEADER (comunes + catálogos)
+    ### 9.1 Comunes
+    - \`fechaDoc\`: fecha del documento (formato \`YYYY-MM-DD\`)
+    - \`estado\`: mayúsculas
+    - \`fi\`: texto literal después de “F/I:” (NO convertir a fecha)
+    - \`fondo\`: “FONDEN”, “CADENA” u otro si aparece; vacío si no
+    - \`aseguradora\`: normalmente “AGROASEMEX” (si el documento indica otra, extrae y valida con catálogo si existe)
+    - \`fenomeno\`: transcribe el fenómeno/evento (huracán, tormenta, etc.) como aparece en el documento
+    - \`totalPdf\`: suma de importes de \`lineas\` (NO usar “TOTAL/IMPORTE” de tablas)
+
+    ### 9.2 distritoRiego + distritoRiegoAccion (con entity resolution)
+    - Extrae literal del documento (Distrito de Riego, DTT, Unidad de Riego, Dirección Local, etc.)
+    - Si hay CATÁLOGO:
+    - Si el documento es abreviatura y el catálogo es más completo → usa el catálogo y \`distritoRiegoAccion="Mantener"\`
+    - Si el documento trae un nombre más completo que el catálogo → usa el del documento y \`distritoRiegoAccion="Actualiza"\`
+    - Si no se menciona → \`distritoRiego="SIN DATO"\`, \`distritoRiegoAccion="Sin Dato"\`
+
+    ## 10) CONSTRUCCIÓN DE \`descripcion\` (historial trazable)
+    ### 10.1 Caso ORIGEN
+    - \`descripcion = "{refCta}-{comunicadoId}"\`
+
+    ### 10.2 Caso ACTUALIZACIÓN
+    - Si \`prev.header.descripcion\` existe:
+    - \`descripcion = prev.header.descripcion + ", " + comunicadoId\`
+    - Si no existe pero \`versionAnterior\` existe:
+    - \`descripcion = "{refCta}-{versionAnterior}, {comunicadoId}"\`
+    - Si no existe nada:
+    - \`descripcion = "{refCta}-{comunicadoId}"\`
+    - agrega advertencia: “No se pudo armar historial completo (falta versionAnterior/prev)”.
+
+    ## 11) ADVERTENCIAS (\`advertencias[]\`)
+    Agrega strings cuando ocurra algo relevante:
+    - Ajustador ambiguo
+    - No se encontró \`comunicadoId\` o no cumple validación
+    - Hay actualización pero falta \`versionAnterior\` y/o \`REGISTRO_PREVIO\`
+    - No se encontraron tablas y no hay monto narrativo (posible informativo)
+    - Se detectaron múltiples tablas candidatas y se eligió una por prioridad
+
+    ## 12) FORMATO DE SALIDA (JSON ESTRICTO)
+    Devuelve **exactamente** este objeto (mismas llaves, sin extras):
+
+    {
+    "header": {
+        "refCta": "string",
+        "ajustadorNombre": "string",
+        "comunicadoId": "string",
+        "tipoRegistro": "string",
+        "versionAnterior": "string",
+        "ubicacionEspecifica": "string",
+        "tipoAccion": "string (REEMPLAZO_TOTAL|SUSTITUCION_PARCIAL|INFORMATIVO)",
+        "descripcion": "string",
+        "fechaDoc": "YYYY-MM-DD",
+        "estado": "string",
+        "refSiniestro": "string",
+        "aseguradora": "string",
+        "fenomeno": "string",
+        "fi": "string",
+        "fondo": "string",
+        "distritoRiego": "string",
+        "distritoRiegoAccion": "Actualiza|Mantener|Sin Dato",
+        "totalPdf": 0.00,
+        "advertencias": ["string"]
+    },
+    "lineas": [
         {
-        "header": {
-            "refCta": "string (SIEMPRE empieza con 'GL'. Ej: GL070059, GL061410)",
-            "ajustadorNombre": "string (CHARLES TAYLOR ADJUSTING)",
-            "comunicadoId": "string (SIEMPRE empieza con 'L', NUNCA con 'GL'. Ej: L05, L05A, L30B. ❌NUNCA: GL06, GL070059)", 
-            "tipoRegistro": "string (CRÍTICO: 'ORIGEN' si NO hay palabras Actualización/Adicional, o 'L30A'/'L30B' si SÍ las hay)",
-            "versionAnterior": "string (Versión que sustituye, Ej: L30A. Vacío si es ORIGEN)",
-            "ubicacionEspecifica": "string (Río Marabasco, Tramo El Rincón. Vacío si aplica a todo)",
-            "tipoAccion": "string (REEMPLAZO_TOTAL o SUSTITUCION_PARCIAL)",
-            "descripcion": "string (HISTORIAL: GL...-L30, L30A)",
-            "fechaDoc": "YYYY-MM-DD",
-            "estado": "string (Ej: COLIMA)",
-            "refSiniestro": "string",
-            "aseguradora": "string (Ej: AGROASEMEX)",
-            "fenomeno": "string (Ej: DAÑOS EN INFRAESTRUCTURA HIDROAGRÍCOLA A CONSECUENCIA DE LOS EFECTOS DEL HURACÁN KAY)",
-            "fi": "string (Fecha de Incidencia. Busca 'F/I:' en el texto y TRANSCRIBE LITERALMENTE tal como aparece. Ej: '03 de diciembre de 2020'. NO convertir a formato fecha)",
-            "fondo": "string (Ej: FONDEN, CADENA, o vacío si no se menciona)",
-            "distritoRiego": "string (Busca: 'Dirección Local [Estado]', 'Distrito de Riego', 'DTT', 'Distrito de Temporal'. Transcribe LITERAL. Ej: 'Dirección Local Campeche', 'DTT 011 MARGARITAS COMITAN')", 
-            "distritoRiegoAccion": "string ("Actualiza", "Mantener", o "Sin Dato" si no se menciona)",
-            "totalPdf": number,
-            "advertencias": ["string"]
-        },
-        "lineas": [
-            {
-            "concepto": "string (Descripción de la obra/tramo Ej: RÍO ARMERÍA MARGEN IZQUIERDA, TRAMO MADRID (LOS SALAZAR))",
-            "categoria": "string (DAÑO FISICO o DESAZOLVES)",
-            "importe": number
-            }
-        ]
+        "concepto": "string",
+        "categoria": "DAÑO FISICO|DESAZOLVES",
+        "importe": 0.00
         }
-        `;
+    ]
+    }
+
+    **Reglas finales**
+    - \`lineas\` puede ser \`[]\` **solo** si \`tipoAccion="INFORMATIVO"\`.
+    - Si hay tabla válida de presupuestos → \`lineas\` **NO** puede ser \`[]\`.
+    - No agregues texto fuera del JSON.
+    `;
+
 
     if (catalogs) {
-        promptSystem += `\n\n## CATÁLOGOS VÁLIDOS (Entity Resolution):
-REGLA CRÍTICA: Para cada campo catalogado, BUSCA coincidencias en la lista. 
-Si encuentras algo SIMILAR (aunque varíe en redacción, abreviaturas o acentos), USA EL VALOR EXISTENTE.
-Ejemplos de matching:
-- "Dir. Local Campeche" ≈ "DIRECCIÓN LOCAL CAMPECHE" → Usa: "DIRECCIÓN LOCAL CAMPECHE"
-- "DTT 011" ≈ "DISTRITO DE TEMPORAL 011" → Usa el existente
-- "Agroasemex" ≈ "AGROASEMEX" → Usa: "AGROASEMEX"
+        promptSystem += `
+
+        ## CATÁLOGOS VÁLIDOS (Entity Resolution):
+        REGLA CRÍTICA: Para cada campo catalogado, BUSCA coincidencias en la lista. 
+        Si encuentras algo SIMILAR (aunque varíe en redacción, abreviaturas o acentos), USA EL VALOR EXISTENTE.
+        Ejemplos de matching:
+        - "Dir. Local Campeche" = "DIRECCIÓN LOCAL CAMPECHE" -> Usa: "DIRECCIÓN LOCAL CAMPECHE"
+        - "DTT 011" = "DISTRITO DE TEMPORAL 011" -> Usa el existente
+        - "Agroasemex" = "AGROASEMEX" -> Usa: "AGROASEMEX"
 
 `;
         if (catalogs.distritos && catalogs.distritos.length > 0)
-            promptSystem += `- DISTRITOS DE RIEGO EXISTENTES (usa estos si el texto del PDF coincide parcialmente): ${JSON.stringify(catalogs.distritos.slice(0, 100))}\n`;
+            promptSystem += `- DISTRITOS DE RIEGO EXISTENTES: ${JSON.stringify(catalogs.distritos.slice(0, 100))}
+`;
         if (catalogs.ajustadores && catalogs.ajustadores.length > 0)
-            promptSystem += `- AJUSTADORES EXISTENTES: ${JSON.stringify(catalogs.ajustadores.slice(0, 50))}\n`;
+            promptSystem += `- AJUSTADORES EXISTENTES: ${JSON.stringify(catalogs.ajustadores.slice(0, 50))}
+`;
         if (catalogs.siniestros && catalogs.siniestros.length > 0)
-            promptSystem += `- SINIESTROS EXISTENTES: ${JSON.stringify(catalogs.siniestros.slice(0, 50))}\n`;
+            promptSystem += `- SINIESTROS EXISTENTES: ${JSON.stringify(catalogs.siniestros.slice(0, 50))}
+`;
         if (catalogs.fenomenos && catalogs.fenomenos.length > 0)
-            promptSystem += `- FENÓMENOS EXISTENTES: ${JSON.stringify(catalogs.fenomenos.slice(0, 100))}\n`;
+            promptSystem += `- FENÓMENOS EXISTENTES: ${JSON.stringify(catalogs.fenomenos.slice(0, 100))}
+`;
         if (catalogs.aseguradoras && catalogs.aseguradoras.length > 0)
-            promptSystem += `- ASEGURADORAS EXISTENTES: ${JSON.stringify(catalogs.aseguradoras.slice(0, 50))}\n`;
+            promptSystem += `- ASEGURADORAS EXISTENTES: ${JSON.stringify(catalogs.aseguradoras.slice(0, 50))}
+`;
 
-        promptSystem += `\n**PRIORIDAD**: Si un valor del PDF coincide (incluso parcialmente) con un catálogo existente, DEVUELVE EL VALOR DEL CATÁLOGO, no el texto literal del PDF.`;
+        promptSystem += `
+**PRIORIDAD**: Si un valor del PDF coincide (incluso parcialmente) con un catálogo existente, DEVUELVE EL VALOR DEL CATÁLOGO, no el texto literal del PDF.`;
+    }
+
+    // Inyectar conceptos de ubicación existentes para Entity Resolution
+    if (existingConcepts && existingConcepts.length > 0) {
+        promptSystem += `
+
+## CONCEPTOS DE UBICACION EXISTENTES (ENTITY RESOLUTION - CRITICO)
+Los siguientes conceptos/ubicaciones YA EXISTEN en el sistema. Si extraes un concepto SIMILAR a alguno de esta lista, USA EL NOMBRE EXACTO de la lista:
+
+${existingConcepts.map(c => `- "${c}"`).join('\n')}
+
+REGLA DE MATCHING:
+- "Unidad de Riego (UR) Aguas Blancas" -> USA: "Unidad de Riego Aguas Blancas"
+- "UR Coyuquilla" -> USA: "Unidad de Riego Coyuquilla Norte"
+- Solo crea un nombre NUEVO si NO hay coincidencia razonable con la lista.`;
+    }
+
+    // Inyectar REGISTROS_RELACIONADOS (Solo para contexto del Header, NO para líneas)
+    if (relatedRecords && relatedRecords.length > 0) {
+        promptSystem += `
+
+## REGISTROS_RELACIONADOS (INFO DE CONTEXTO)
+Los siguientes datos son SOLO para que construyas correctamente el historial en \`header.descripcion\`.
+**PROHIBIDO** usar las líneas de estos registros para el presupuesto actual.
+**PROHIBIDO** mezclar o fusionar estas líneas con las del PDF.
+TU TRABAJO DE EXTRACCIÓN DE LÍNEAS DEBE SER CIEGO A ESTA LISTA.
+
+\`\`\`json
+${JSON.stringify(relatedRecords.slice(0, 5).map(r => ({
+            header: {
+                refCta: r.header.refCta,
+                comunicadoId: r.header.comunicadoId,
+                descripcion: r.header.descripcion,
+                tipoRegistro: r.header.tipoRegistro
+            },
+            // NO pasamos las líneas para evitar tentaciones de fusión
+            lineas_summary: "OMITIDAS PARA EVITAR ALUCINACIONES"
+        })), null, 2)}
+\`\`\`
+
+INSTRUCCIÓN: Usa \`header.descripcion\` de estos registros para armar tu \`header.descripcion\`. NO USES NADA MÁS.`;
     }
 
     if (errorFeedback) {
-        promptSystem += `\n\n⚠️ ATENCIÓN: TU INTENTO ANTERIOR FALLÓ CON ESTE ERROR: "${errorFeedback}". \nREVISA TUS CÁLCULOS Y EL FORMATO JSON.`;
+        promptSystem += `
+
+ATENCIÓN: TU INTENTO ANTERIOR FALLÓ CON ESTE ERROR: "${errorFeedback}".
+REVISA TUS CÁLCULOS Y EL FORMATO JSON.`;
     }
 
     // Payload con PDF como inline_data (multimodal)
@@ -652,7 +844,7 @@ Ejemplos de matching:
                 const rawContent = candidate.content.parts[0].text;
                 console.log(`[Gemini API] Respuesta recibida: ${rawContent.substring(0, 200)}...`);
 
-                // Limpieza de Markdown ```json ... ``` si la IA lo incluye
+                // Limpieza de Markdown si la IA lo incluye
                 let cleanJson = rawContent.replace(/```json/g, '').replace(/```/g, '').trim();
                 return JSON.parse(cleanJson);
 
@@ -676,4 +868,3 @@ Ejemplos de matching:
 
     throw new Error(`Rate Limit persistente (429). Se agotaron ${MAX_RATE_LIMIT_RETRIES} reintentos.`);
 }
-

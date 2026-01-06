@@ -79,6 +79,21 @@ function fetchComunicadoCatalogs() {
         const aseguradoras = leerCatalogo('aseguradoras');
         const empresas = leerCatalogo('empresas');
 
+        // NUEVO: Obtener categorías únicas de presupuestoLineas
+        // Esto permite que el dropdown del modal "Desglose Presupuestal" tenga todas las categorías usadas históricamente.
+        const lineas = leerCatalogo('presupuestoLineas') || [];
+        const categoriasSet = new Set(['DAÑO FISICO', 'DESAZOLVES']); // Defaults requeridos (text only)
+        lineas.forEach(l => {
+            if (l.categoria) {
+                let cat = l.categoria.toString().trim().toUpperCase();
+                // Normalize legacy codes
+                if (cat === '1') cat = 'DAÑO FISICO';
+                if (cat === '2') cat = 'DESAZOLVES';
+                categoriasSet.add(cat);
+            }
+        });
+        const categorias = Array.from(categoriasSet).map(c => ({ id: c, nombre: c })); // Formato objeto para consistencia
+
         // 4. Procesar datos (ordenar)
         const processResponse = (data) => {
             if (Array.isArray(data)) {
@@ -101,6 +116,7 @@ function fetchComunicadoCatalogs() {
                 ajustadores: processResponse(ajustadores),
                 aseguradoras: processResponse(aseguradoras),
                 empresas: processResponse(empresas),
+                categorias: processResponse(categorias),
                 debugLogs: debugLog
             }
         };
@@ -726,13 +742,45 @@ function enriquecerComunicado(comunicado) {
         const lineasResponse = readAllRows('presupuestoLineas');
         const todasLasLineas = (lineasResponse.success && lineasResponse.data) ? lineasResponse.data : [];
 
+        // NUEVO: Leer descripciones de líneas
+        const descripcionesResponse = readAllRows('descripcionLineas');
+        const todasLasDescripciones = (descripcionesResponse.success && descripcionesResponse.data) ? descripcionesResponse.data : [];
+
+        // Mapa ID -> Descripción para acceso rápido
+        const mapDescripciones = new Map();
+        todasLasDescripciones.forEach(d => {
+            mapDescripciones.set(String(d.id), d); // d tiene {id, descripcion, categoria}
+        });
+
         if (actualizacionesPresResponse.success && actualizacionesPresResponse.data) {
             actualizacionesPresupuesto = actualizacionesPresResponse.data
                 .filter(a => String(a.idComunicado) === String(comunicado.id))
                 .sort((a, b) => Number(a.consecutivo) - Number(b.consecutivo))
                 .map(a => {
                     // Filtrar hijos para esta actualización
-                    const misLineas = todasLasLineas.filter(l => String(l.idActualizacion) === String(a.id));
+                    const misLineas = (typeof calcularEstadoVersion === 'function' ? (calcularEstadoVersion(comunicado.id, a.id).lineas || []) : todasLasLineas.filter(l => String(l.idActualizacion) === String(a.id)))
+                        .map(l => {
+                            // JOINT: Buscar descripción y categoría base
+                            const descObj = mapDescripciones.get(String(l.idLinea));
+
+                            // Lógica de Categoría:
+                            // 1. Usar categoría de la línea de presupuesto si existe (prioridad)
+                            // 2. Si es código numérico, mapear a texto legible
+                            // 3. Fallback a categoría de la definición de la línea
+                            let catRaw = l.categoria || (descObj ? descObj.categoria : '') || '';
+                            let catFinal = catRaw;
+
+                            if (String(catRaw) === '1') catFinal = 'DAÑO FISICO';
+                            if (String(catRaw) === '2') catFinal = 'DESAZOLVES';
+
+                            return {
+                                ...l,
+                                descripcion: descObj ? descObj.descripcion : (l.descripcion || ''), // Populate Description
+                                categoria: catFinal // Populate Normalized Category
+                            };
+                        })
+                        .sort((x, y) => (Number(x.consecutivo) || 999999) - (Number(y.consecutivo) || 999999));
+
                     return {
                         id: a.id,
                         revision: a.esOrigen == 1 ? 'Origen' : (a.revision || ''),
@@ -743,7 +791,7 @@ function enriquecerComunicado(comunicado) {
                         montoSupervision: a.montoSupervisión || 0,
                         esOrigen: a.esOrigen == 1,
                         idPresupuesto: a.idPresupuesto || null,
-                        lineas: misLineas // <--- Nueva propiedad inyectada
+                        lineas: misLineas
                     };
                 });
         }

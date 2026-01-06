@@ -11,7 +11,6 @@
             fileInput: document.getElementById('file-input'),
             fileInfo: document.getElementById('file-info'),
             filenameDisplay: document.getElementById('filename-display'),
-            filenameDisplay: document.getElementById('filename-display'),
             btnAnalizar: document.getElementById('btn-analizar'),
             btnAnalizarPdf: document.getElementById('btn-analizar-pdf'), // NEW Button
             loader: document.getElementById('import-loader'),
@@ -117,6 +116,9 @@
             let total = files.length;
             let procesados = 0;
 
+            // Mapa de conceptos por refCta para propagar entre documentos del mismo comunicado
+            const conceptosPorRef = new Map();
+
             for (let i = 0; i < total; i++) {
                 const file = files[i];
                 const msg = `🤖 IA Analizando (${i + 1}/${total}): ${file.name}`;
@@ -126,8 +128,54 @@
                     // 1. Leer Archivo a Base64
                     const base64 = await _readFileAsBase64(file);
 
-                    // 2. Enviar a Backend (IA + Extracción)
-                    let resIA = await serverCall('procesarPdfIA', { content: base64, filename: file.name });
+                    // 2. Intentar extraer refCta y comunicadoId del nombre del archivo
+                    // Patrón: GL123456-L01.pdf, GL123456_L01.pdf, o incluso L01A.pdf (si solo tiene ID) 
+                    // Pero la regex debe ser robusta.
+                    // Prioridad: "GL123456-L30A"
+                    let refCta = null;
+                    let comIdPre = null;
+
+                    const fullMatch = file.name.match(/^([A-Z]{2}\d+)[-_]?(L\d+[A-Z]?)?/i);
+                    if (fullMatch) {
+                        refCta = fullMatch[1].toUpperCase();
+                        comIdPre = fullMatch[2] ? fullMatch[2].toUpperCase() : null;
+                    }
+
+                    // Si no, buscar solo Lxx pattern si no hay Ref
+                    if (!comIdPre) {
+                        const lMatch = file.name.match(/(L\d+[A-Z]?)/i);
+                        if (lMatch) comIdPre = lMatch[1].toUpperCase();
+                    }
+
+                    // Obtener conceptos: primero del batch, si no hay → cargar de BD
+                    let existingConcepts = refCta ? (conceptosPorRef.get(refCta) || []) : [];
+
+                    if (existingConcepts.length === 0 && refCta) {
+                        // Intentar cargar conceptos desde BD (registros previos)
+                        try {
+                            const conceptosDB = await serverCall('cargarConceptosPorRefCta', refCta);
+                            if (Array.isArray(conceptosDB) && conceptosDB.length > 0) {
+                                existingConcepts = conceptosDB;
+                                conceptosPorRef.set(refCta, conceptosDB); // Cachear para siguientes docs
+                                console.log(`[Batch] ${file.name}: Cargados ${conceptosDB.length} conceptos desde BD`);
+                            }
+                        } catch (dbErr) {
+                            console.warn(`[Batch] No se pudieron cargar conceptos de BD para ${refCta}:`, dbErr);
+                        }
+                    }
+
+                    console.log(`[Batch] ${file.name}: refCta=${refCta}, comIdPre=${comIdPre}, conceptos=${existingConcepts.length}`);
+
+                    // 3. Enviar a Backend (IA + Extracción) con conceptos existentes
+                    // También pasar resultados ya procesados para carry-forward de registros relacionados
+                    let resIA = await serverCall('procesarPdfIA', {
+                        content: base64,
+                        filename: file.name,
+                        existingConcepts: existingConcepts,
+                        refCta: refCta,          // <--- NUEVO
+                        comunicadoId: comIdPre,  // <--- NUEVO (Para búsqueda de contexto anticipada)
+                        batchResults: RESULTADOS_BATCH.filter(r => r.esValido && r.rawPayload) // Solo enviar resultados válidos con payload
+                    });
 
                     console.log('DEBUG resIA', resIA);
 
@@ -145,7 +193,15 @@
                         // Adaptador: Si serverCall devolvió la data directa (sin wrapper success), úsala.
                         const datosIA = resIA.success ? resIA.data : resIA;
 
-                        // 3. Analizar Datos vs DB (Previsualización)
+                        // 4. Acumular conceptos extraídos para propagación en batch
+                        if (resIA.extractedConcepts && refCta) {
+                            const currentConcepts = conceptosPorRef.get(refCta) || [];
+                            const newConcepts = [...new Set([...currentConcepts, ...resIA.extractedConcepts])];
+                            conceptosPorRef.set(refCta, newConcepts);
+                            console.log(`[Batch] ${file.name}: Acumulados ${newConcepts.length} conceptos para ${refCta}`);
+                        }
+
+                        // 5. Analizar Datos vs DB (Previsualización)
                         // IMPORTANTE: Pasar documentos previos como contexto de lote para detectar padres
                         const analisis = await serverCall('analizarExtraccionIA', datosIA, RESULTADOS_BATCH);
 
@@ -185,6 +241,36 @@
 
             // FIN: Renderizar Resultados Batch
             _showLoader(false);
+
+            // Ordenar resultados por refCta, fecha del documento, y secuencia de comunicado
+            RESULTADOS_BATCH.sort((a, b) => {
+                // Primero por refCta
+                const refA = (a.ref || '').toUpperCase();
+                const refB = (b.ref || '').toUpperCase();
+                if (refA !== refB) return refA.localeCompare(refB);
+
+                // Luego por fecha del documento
+                const fechaA = a.fecha ? new Date(a.fecha) : new Date(0);
+                const fechaB = b.fecha ? new Date(b.fecha) : new Date(0);
+                if (fechaA.getTime() !== fechaB.getTime()) return fechaA - fechaB;
+
+                // Finalmente por secuencia de comunicado (tiebreaker para misma fecha)
+                const parseVersion = (id) => {
+                    if (!id) return { base: '', index: 0 };
+                    const match = String(id).toUpperCase().match(/^(L\d+)([A-Z])?$/);
+                    if (match) {
+                        const sufijo = match[2] || '';
+                        return { base: match[1], index: sufijo ? sufijo.charCodeAt(0) - 64 : 0 };
+                    }
+                    return { base: id, index: 0 };
+                };
+
+                const vA = parseVersion(a.comunicado);
+                const vB = parseVersion(b.comunicado);
+                return vA.index - vB.index;
+            });
+
+            console.log('[Batch] Orden final:', RESULTADOS_BATCH.map(r => `${r.ref}-${r.comunicado} (${r.fecha})`).join(', '));
 
             // Construir estructura compatible con _renderResultados
             const reportData = {
@@ -228,9 +314,6 @@
 
         const reset = () => {
             currentFile = null;
-            dom.fileInput.value = '';
-            dom.fileInfo.classList.add('d-none');
-            dom.btnAnalizar.disabled = true;
             dom.fileInput.value = '';
             dom.fileInfo.classList.add('d-none');
             dom.btnAnalizar.disabled = true;
@@ -468,6 +551,30 @@
             }
         };
 
+        // Función global para expandir/contraer filas de detalle
+        globalThis._toggleRowDetail = (rowIndex) => {
+            const detailRow = document.getElementById(`row-${rowIndex}-detail`);
+            const chevron = document.getElementById(`row-${rowIndex}-chevron`);
+
+            if (detailRow) {
+                const isHidden = detailRow.classList.contains('d-none');
+
+                if (isHidden) {
+                    detailRow.classList.remove('d-none');
+                    if (chevron) {
+                        chevron.classList.remove('bi-chevron-right');
+                        chevron.classList.add('bi-chevron-down');
+                    }
+                } else {
+                    detailRow.classList.add('d-none');
+                    if (chevron) {
+                        chevron.classList.remove('bi-chevron-down');
+                        chevron.classList.add('bi-chevron-right');
+                    }
+                }
+            }
+        };
+
         const _renderResultados = (data) => {
             // dom.previewContainer.classList.remove('d-none'); // Handled by setStage
             dom.previewBody.innerHTML = '';
@@ -551,7 +658,6 @@
                         analisisBadges.push('<span class="badge bg-danger ms-1"><i class="bi bi-exclamation-triangle me-1"></i>Posible Duplicado (Monto)</span>');
                     } else if (d.analisis.comunicado?.status === 'REEMPLAZAR') {
                         analisisBadges.push('<span class="badge bg-primary ms-1"><i class="bi bi-pencil-square me-1"></i>Actualización Detectada</span>');
-                        // Mostrar Cambios
                         if (d.analisis.comunicado.cambios && d.analisis.comunicado.cambios.length > 0) {
                             d.analisis.comunicado.cambios.forEach(change => {
                                 analisisBadges.push(`<span class="badge bg-light text-dark border ms-1"><small>${change}</small></span>`);
@@ -564,30 +670,82 @@
                     }
                 }
 
+                // Calcular número de partidas e importe
+                const lineas = d.rawPayload?.lineas || [];
+                const numPartidas = lineas.length;
+                const importePartidas = lineas.reduce((sum, l) => sum + (parseFloat(l.importe) || 0), 0);
+                const hasLineas = numPartidas > 0;
+
+                // Generar HTML de la fila expandida con las líneas
+                let expandedRowHtml = '';
+                if (hasLineas) {
+                    const lineasHtml = lineas.map((l, li) => `
+                        <tr class="table-light">
+                            <td class="ps-4 text-muted small">${li + 1}</td>
+                            <td class="small" colspan="2">${l.concepto || l.descripcion || 'Sin descripción'}</td>
+                            <td class="small text-center">${l.categoria || '-'}</td>
+                            <td class="small text-end font-monospace fw-semibold">$${parseFloat(l.importe || 0).toLocaleString('es-MX', { minimumFractionDigits: 2 })}</td>
+                            <td colspan="3"></td>
+                        </tr>
+                    `).join('');
+
+                    expandedRowHtml = `
+                        <tr id="row-${i}-detail" class="d-none">
+                            <td colspan="9" class="p-0">
+                                <div class="bg-light border-top border-bottom">
+                                    <table class="table table-sm mb-0 ms-4" style="width: calc(100% - 2rem);">
+                                        <thead>
+                                            <tr class="text-muted" style="font-size: 0.75rem;">
+                                                <th style="width: 40px;">#</th>
+                                                <th colspan="2">Concepto / Ubicación</th>
+                                                <th class="text-center">Categoría</th>
+                                                <th class="text-end">Importe</th>
+                                                <th colspan="3"></th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            ${lineasHtml}
+                                            <tr class="fw-bold bg-white">
+                                                <td colspan="4" class="text-end">Total:</td>
+                                                <td class="text-end font-monospace text-primary">$${importePartidas.toLocaleString('es-MX', { minimumFractionDigits: 2 })}</td>
+                                                <td colspan="3"></td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </td>
+                        </tr>
+                    `;
+                }
+
                 return `
-                    <tr id="row-${i}">
+                    <tr id="row-${i}" class="${hasLineas ? 'cursor-pointer' : ''}" ${hasLineas ? `onclick="_toggleRowDetail(${i})"` : ''}>
+                        <td class="text-center">
+                            ${hasLineas ? `<i class="bi bi-chevron-right text-muted" id="row-${i}-chevron"></i>` : ''}
+                        </td>
                         <td class="fw-bold">
                             ${d.ref || '-'}
                             ${analisisBadges.join('')}
                         </td>
                         <td>${d.comunicado || '-'}</td>
-                        <td><small class="text-muted">${d.tipo || 'UNK'}</small></td> 
-                        <td class="text-end font-monospace">${d.monto ? '$' + parseFloat(d.monto).toLocaleString() : '-'}</td>
-                        <td class="text-end font-monospace text-muted small">${d.sumaLineas ? '$' + parseFloat(d.sumaLineas).toLocaleString() : '-'}</td>
+                        <td><small class="text-muted">${d.tipo || 'UNK'}</small></td>
+                        <td class="text-center">
+                            ${hasLineas ? `<span class="badge bg-secondary">${numPartidas}</span>` : '-'}
+                        </td>
+                        <td class="text-end font-monospace ${hasLineas ? 'fw-semibold' : 'text-muted'}">
+                            ${hasLineas ? '$' + importePartidas.toLocaleString('es-MX', { minimumFractionDigits: 2 }) : '-'}
+                        </td>
                         <td class="text-center">${badgeEstado}</td>
                         <td class="small ${d.esValido ? 'text-muted' : 'text-danger'}">
                             ${d.motivo || ''}
-                            ${d.analisis.advertencias && d.analisis.advertencias.length > 0 ?
+                            ${d.analisis?.advertencias && d.analisis.advertencias.length > 0 ?
                         `<br>${d.analisis.advertencias.map(a => `<span class="badge bg-warning text-dark me-1"><i class="bi bi-exclamation-triangle me-1"></i>${a}</span>`).join('')}` : ''}
-                            ${d.analisis.comunicado.debug ?
-                        `<br><span style="font-size:0.7em; opacity:0.7; font-family:monospace;">
-                                [DBG: CSV="${d.analisis.comunicado.debug.csvEstado}" | RES=${d.analisis.comunicado.debug.resId} | DB=${d.analisis.comunicado.debug.dbId}]
-                                </span>` : ''}
                         </td>
                         <td class="text-center" id="row-status-${i}">
                             ${d.esValido && d.status !== 'OMITIDO' ? '<i class="bi bi-circle text-muted small"></i>' : '-'}
                         </td>
                     </tr>
+                    ${expandedRowHtml}
                 `;
             }).join('');
 
@@ -727,53 +885,48 @@
      */
     globalThis.Comunicados = (() => {
         'use strict';
-        console.log('🚀 Iniciando ejecución de componente Comunicados');
+        try {
+            console.log('🚀 Iniciando ejecución de componente Comunicados');
 
-        // Estado local del componente
-        let state = {
-            comunicados: [],
-            catalogs: { estados: [], distritosRiego: [], siniestros: [] },
-            loading: false,
-            error: null,
-            isEditing: false,
-            filters: {
-                search: '',
-                status: 'all',
-                year: 'all',
-                stateFilter: null // Nuevo filtro para el mapa
-            },
-            filters: {
-                search: '',
-                status: 'all',
-                year: 'all',
-                stateFilter: null // Nuevo filtro para el mapa
-            },
-            sort: {
-                column: 'fecha',
-                direction: 'desc'
-            },
-            viewMode: 'list' // 'list' or 'map'
-        };
+            // Estado local del componente
+            let state = {
+                comunicados: [],
+                catalogs: { estados: [], distritosRiego: [], siniestros: [] },
+                loading: false,
+                error: null,
+                isEditing: false,
+                filters: {
+                    search: '',
+                    status: 'all',
+                    year: 'all',
+                    stateFilter: null // Nuevo filtro para el mapa
+                },
+                sort: {
+                    column: 'fecha',
+                    direction: 'desc'
+                },
+                viewMode: 'list' // 'list' or 'map'
+            };
 
-        // Referencias al DOM
-        let dom = {};
-        let modalInstance = null;
-        let comunicadoActual = null;
+            // Referencias al DOM
+            let dom = {};
+            let modalInstance = null;
+            let comunicadoActual = null;
 
-        /**
-         * Utilidad local para escapar HTML
-         */
-        function escapeHtml(s) {
-            return String(s ?? '').replace(/[&<>"']/g, m => ({
-                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-            }[m]));
-        }
+            /**
+             * Utilidad local para escapar HTML
+             */
+            function escapeHtml(s) {
+                return String(s ?? '').replace(/[&<>"']/g, m => ({
+                    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+                }[m]));
+            }
 
-        /**
-         * Renderiza el spinner inicial
-         */
-        function _renderSpinnerInicial(container) {
-            container.innerHTML = `
+            /**
+             * Renderiza el spinner inicial
+             */
+            function _renderSpinnerInicial(container) {
+                container.innerHTML = `
                 <section class="card shadow-sm">
                     <div class="card-body text-center p-5">
                         <div class="spinner-border text-primary" role="status"></div>
@@ -781,845 +934,845 @@
                     </div>
                 </section>
             `;
-        }
-
-        /**
-         * Carga el HTML del componente desde el servidor
-         */
-        async function _mount(container) {
-            console.log('=== PASO 2: Cargar HTML del componente Comunicados ===');
-            _renderSpinnerInicial(container);
-
-            try {
-                await new Promise((resolve, reject) => {
-                    google.script.run
-                        .withSuccessHandler(html => {
-                            container.innerHTML = html;
-                            console.log('✅ PASO 2 completado');
-                            resolve(html);
-                        })
-                        .withFailureHandler(error => {
-                            reject(error);
-                        })
-                        .include('comunicados');
-                });
-            } catch (error) {
-                console.error('❌ PASO 2 falló:', error);
-                throw error;
-            }
-        }
-
-        /**
-         * Cachea referencias a elementos del DOM
-         */
-        function _cacheDomElements() {
-            dom.loader = document.getElementById('comunicados-loader');
-            dom.tableContainer = document.getElementById('comunicados-table-container');
-            dom.tbody = document.getElementById('lista-comunicados-body');
-            dom.errorAlert = document.getElementById('comunicados-error');
-            dom.emptyState = document.getElementById('comunicados-empty');
-            dom.totalBadge = document.getElementById('total-comunicados-badge');
-            dom.btnRecargar = document.getElementById('btnRecargarComunicados');
-
-            // Elementos del modal
-            dom.modal = document.getElementById('modalDetalleComunicado');
-            dom.modalLoader = document.getElementById('modal-comunicado-loader');
-            dom.modalContent = document.getElementById('modal-comunicado-content');
-            dom.modalError = document.getElementById('modal-comunicado-error');
-            dom.btnGuardar = document.getElementById('btnGuardarComunicado');
-            dom.btnEditar = document.getElementById('btnEditarComunicado');
-
-            // Inputs del modal
-            dom.inputDistrito = document.getElementById('detalle-distrito');
-            dom.inputSiniestro = document.getElementById('detalle-siniestro');
-            dom.avisoDistrito = document.getElementById('aviso-nuevo-distrito');
-            dom.avisoSiniestro = document.getElementById('aviso-nuevo-siniestro');
-
-            // Referencias a avisos para validación
-            dom.avisoFenomeno = document.getElementById('aviso-nuevo-fenomeno');
-            dom.avisoFi = document.getElementById('aviso-nuevo-fi');
-            dom.avisoFondo = document.getElementById('aviso-nuevo-fondo');
-
-            if (dom.btnRecargar) {
-                dom.btnRecargar.addEventListener('click', () => {
-                    _loadComunicados();
-                });
             }
 
-            if (dom.btnGuardar) {
-                dom.btnGuardar.addEventListener('click', () => {
-                    _guardarCambios();
-                });
-            }
+            /**
+             * Carga el HTML del componente desde el servidor
+             */
+            async function _mount(container) {
+                console.log('=== PASO 2: Cargar HTML del componente Comunicados ===');
+                _renderSpinnerInicial(container);
 
-            if (dom.btnEditar) {
-                dom.btnEditar.addEventListener('click', () => {
-                    _toggleEdicion(true);
-                });
-            }
-
-            // Listeners para detectar nuevos registros
-            // Configurados aquí en _cacheDomElements para que se ejecuten siempre
-            if (dom.inputDistrito) {
-                dom.inputDistrito.addEventListener('input', () => {
-                    console.log('📝 INPUT evento en distrito');
-                    _verificarNuevoRegistro('distrito');
-                });
-            }
-            if (dom.inputSiniestro) {
-                dom.inputSiniestro.addEventListener('input', () => {
-                    console.log('📝 INPUT evento en siniestro');
-                    _verificarNuevoRegistro('siniestro');
-                    _actualizarDetallesSiniestro();
-                });
-            }
-
-
-            // Inicializar instancia del modal
-            if (dom.modal && typeof bootstrap !== 'undefined') {
-                modalInstance = new bootstrap.Modal(dom.modal);
-
-                // Poblar listas desplegables cuando el modal se muestra (garantiza que DOM esté listo)
-                dom.modal.addEventListener('shown.bs.modal', () => {
-                    console.log('🔔 Modal mostrado, poblando combobox híbridos...');
-                    _poblarCombobox('distrito', state.catalogs.distritosRiego, 'distritoRiego');
-                    _poblarCombobox('siniestro', state.catalogs.siniestros, 'siniestro');
-                    _setupComboboxFilter('distrito', state.catalogs.distritosRiego, 'distritoRiego');
-                    _setupComboboxFilter('siniestro', state.catalogs.siniestros, 'siniestro');
-                });
-
-                dom.modal.addEventListener('hidden.bs.modal', () => {
-                    _toggleEdicion(false); // Resetear al cerrar
-                });
-            }
-
-            // Dashboard & Filters Refs
-            dom.dashboard = document.getElementById('dashboard-container');
-            dom.statTotal = document.getElementById('stat-total');
-            dom.statTotalContratista = document.getElementById('stat-total-contratista');
-            dom.statTotalSupervision = document.getElementById('stat-total-supervision');
-
-            dom.filterSearch = document.getElementById('filter-search');
-            dom.filterStatus = document.getElementById('filter-status');
-            dom.filterYear = document.getElementById('filter-year');
-            dom.btnClearFilters = document.getElementById('btn-clear-filters');
-
-            // Delete Modal Elements
-            dom.modalDeleteList = document.getElementById('modalConfirmDeleteListado');
-            dom.btnConfirmDeleteList = document.getElementById('btn-confirm-delete-list');
-
-            if (dom.btnConfirmDeleteList) {
-                dom.btnConfirmDeleteList.addEventListener('click', _handleDeleteConfirm);
-            }
-            if (dom.modalDeleteList && typeof bootstrap !== 'undefined') {
-                dom.modalInstanceDelete = new bootstrap.Modal(dom.modalDeleteList);
-            }
-
-            // Listeners Filtros
-            if (dom.filterSearch) {
-                dom.filterSearch.addEventListener('input', (e) => _handleFilterChange('search', e.target.value));
-            }
-            if (dom.filterStatus) {
-                dom.filterStatus.addEventListener('change', (e) => _handleFilterChange('status', e.target.value));
-            }
-            if (dom.filterYear) {
-                dom.filterYear.addEventListener('change', (e) => _handleFilterChange('year', e.target.value));
-            }
-            if (dom.btnClearFilters) {
-                dom.btnClearFilters.addEventListener('click', () => {
-                    // Reset inputs
-                    dom.filterSearch.value = '';
-                    dom.filterStatus.value = 'all';
-                    dom.filterYear.value = 'all';
-                    // Reset state
-                    state.filters = { search: '', status: 'all', year: 'all', stateFilter: null };
-                    _renderTable();
-                });
-            }
-
-            // Map Toggles & Elements
-            dom.toggleList = document.getElementById('view-list');
-            dom.toggleMap = document.getElementById('view-map');
-            dom.mapContainer = document.getElementById('map-section-container');
-            // dom.svgMap = document.getElementById('svg-map-mexico'); // No longer needed for SVG map
-            // dom.mapTooltip = document.getElementById('map-tooltip'); // No longer needed for SVG map
-
-            if (dom.toggleList) {
-                dom.toggleList.addEventListener('change', () => _switchView('list'));
-            }
-            if (dom.toggleMap) {
-                dom.toggleMap.addEventListener('change', () => _switchView('map'));
-            }
-
-            // Google Charts Integracion
-            if (dom.mapContainer && !document.getElementById('gcharts-loader')) {
-                const script = document.createElement('script');
-                script.id = 'gcharts-loader';
-                script.src = 'https://www.gstatic.com/charts/loader.js';
-                script.onload = () => {
-                    google.charts.load('current', {
-                        'packages': ['geochart'],
-                        // Optional: 'apiKey': 'YOUR_KEY_HERE' if high usage, but usually fine for free tier
+                try {
+                    await new Promise((resolve, reject) => {
+                        google.script.run
+                            .withSuccessHandler(html => {
+                                container.innerHTML = html;
+                                console.log('✅ PASO 2 completado');
+                                resolve(html);
+                            })
+                            .withFailureHandler(error => {
+                                reject(error);
+                            })
+                            .include('comunicados');
                     });
-                    google.charts.setOnLoadCallback(() => {
-                        state.googleChartsLoaded = true;
-                        console.log('Google Charts loaded.');
+                } catch (error) {
+                    console.error('❌ PASO 2 falló:', error);
+                    throw error;
+                }
+            }
+
+            /**
+             * Cachea referencias a elementos del DOM
+             */
+            function _cacheDomElements() {
+                dom.loader = document.getElementById('comunicados-loader');
+                dom.tableContainer = document.getElementById('comunicados-table-container');
+                dom.tbody = document.getElementById('lista-comunicados-body');
+                dom.errorAlert = document.getElementById('comunicados-error');
+                dom.emptyState = document.getElementById('comunicados-empty');
+                dom.totalBadge = document.getElementById('total-comunicados-badge');
+                dom.btnRecargar = document.getElementById('btnRecargarComunicados');
+
+                // Elementos del modal
+                dom.modal = document.getElementById('modalDetalleComunicado');
+                dom.modalLoader = document.getElementById('modal-comunicado-loader');
+                dom.modalContent = document.getElementById('modal-comunicado-content');
+                dom.modalError = document.getElementById('modal-comunicado-error');
+                dom.btnGuardar = document.getElementById('btnGuardarComunicado');
+                dom.btnEditar = document.getElementById('btnEditarComunicado');
+
+                // Inputs del modal
+                dom.inputDistrito = document.getElementById('detalle-distrito');
+                dom.inputSiniestro = document.getElementById('detalle-siniestro');
+                dom.avisoDistrito = document.getElementById('aviso-nuevo-distrito');
+                dom.avisoSiniestro = document.getElementById('aviso-nuevo-siniestro');
+
+                // Referencias a avisos para validación
+                dom.avisoFenomeno = document.getElementById('aviso-nuevo-fenomeno');
+                dom.avisoFi = document.getElementById('aviso-nuevo-fi');
+                dom.avisoFondo = document.getElementById('aviso-nuevo-fondo');
+
+                if (dom.btnRecargar) {
+                    dom.btnRecargar.addEventListener('click', () => {
+                        _loadComunicados();
                     });
-                };
-                document.head.appendChild(script);
-            }
-        }
-
-        function _switchView(mode) {
-            state.viewMode = mode;
-            if (mode === 'map') {
-                if (dom.tableContainer) dom.tableContainer.classList.add('d-none');
-                if (dom.mapContainer) {
-                    dom.mapContainer.classList.remove('d-none');
-                    _drawMap(); // Draw Map
-                }
-            } else {
-                if (dom.mapContainer) dom.mapContainer.classList.add('d-none');
-                if (dom.tableContainer) dom.tableContainer.classList.remove('d-none');
-            }
-        }
-
-        /**
-         * Dibuja el mapa usando Google Charts
-         */
-        function _drawMap() {
-            const container = document.getElementById('geochart-container');
-            const loader = document.getElementById('map-loader');
-
-            if (!container || !state.googleChartsLoaded || !google.visualization) {
-                if (loader) loader.textContent = 'Cargando librería de mapas...';
-                // Retry if library not ready
-                if (!state.googleChartsLoaded) setTimeout(_drawMap, 500);
-                return;
-            }
-
-            if (loader) loader.classList.add('d-none');
-
-            // 1. Prepare Data
-            const counts = {};
-            state.comunicados.forEach(c => {
-                let nombre = (c.estado || '').trim();
-                // Google Charts expects standard names
-                if (nombre.includes('Veracruz')) nombre = 'Veracruz';
-                if (nombre.includes('Michoacán')) nombre = 'Michoacán';
-                if (nombre.includes('México') && !nombre.includes('Ciudad')) nombre = 'State of Mexico'; // Special case
-                if (nombre.includes('CDMX') || nombre.includes('Ciudad de México')) nombre = 'Mexico City';
-
-                if (nombre) {
-                    counts[nombre] = (counts[nombre] || 0) + 1;
-                }
-            });
-
-            const chartData = [['State', 'Comunicados']];
-            Object.keys(counts).forEach(k => {
-                chartData.push([k, counts[k]]);
-            });
-
-            if (chartData.length === 1) {
-                chartData.push(['Mexico', 0]); // Empty map fallback
-            }
-
-            const data = google.visualization.arrayToDataTable(chartData);
-
-            // 2. Options
-            const options = {
-                region: 'MX', // Mexico
-                resolution: 'provinces',
-                displayMode: 'regions',
-                colorAxis: { colors: ['#cff4fc', '#0d6efd', '#0a58ca'] }, // Light blue to Dark blue
-                backgroundColor: 'transparent',
-                datalessRegionColor: '#f8f9fa',
-                defaultColor: '#f5f5f5',
-                tooltip: { textStyle: { color: '#444' }, showColorCode: true }
-            };
-
-            // 3. Draw
-            const chart = new google.visualization.GeoChart(container);
-
-            // Interaction
-            google.visualization.events.addListener(chart, 'select', () => {
-                const selection = chart.getSelection();
-                if (selection.length > 0) {
-                    const item = selection[0];
-                    if (item.row != null) {
-                        const selectedState = data.getValue(item.row, 0);
-                        console.log('Selected State:', selectedState);
-
-                        // Map Google name back to our filter format
-                        let filterName = selectedState;
-                        if (selectedState === 'State of Mexico') filterName = 'Estado de México';
-                        if (selectedState === 'Mexico City') filterName = 'Ciudad de México';
-
-                        // Filter
-                        state.filters.stateFilter = filterName;
-                        dom.toggleList.click(); // Switch to list
-                        _renderTable();
-                    }
-                }
-            });
-
-            chart.draw(data, options);
-        }
-
-        // Removed old SVG functions _setupMapInteractions, _resetMapActiveState, _updateMapStats
-
-        /**
-         * Verifica si el valor ingresado es nuevo o existe en el catálogo
-         */
-        function _verificarNuevoRegistro(tipo) {
-            let input, aviso, valoresUnicos;
-
-            // Configurar según el tipo de campo
-            switch (tipo) {
-                case 'distrito':
-                    input = dom.inputDistrito;
-                    aviso = dom.avisoDistrito;
-                    valoresUnicos = (state.catalogs.distritosRiego || []).map(d =>
-                        String(d.distritoRiego || d.nombre || '').toLowerCase().trim()
-                    );
-                    break;
-                case 'siniestro':
-                    input = dom.inputSiniestro;
-                    aviso = dom.avisoSiniestro;
-                    valoresUnicos = (state.catalogs.siniestros || []).map(s =>
-                        String(s.siniestro || s.nombre || '').toLowerCase().trim()
-                    );
-                    break;
-                case 'fenomeno':
-                    input = dom.inputFenomeno;
-                    aviso = dom.avisoFenomeno;
-                    valoresUnicos = [...new Set((state.catalogs.siniestros || [])
-                        .map(s => String(s.fenomeno || '').trim())
-                        .filter(f => f)
-                        .map(f => f.toLowerCase())
-                    )];
-                    break;
-                case 'fi':
-                    input = dom.inputFi;
-                    aviso = dom.avisoFi;
-                    valoresUnicos = [...new Set((state.catalogs.siniestros || [])
-                        .map(s => String(s.fi || '').trim())
-                        .filter(f => f)
-                        .map(f => f.toLowerCase())
-                    )];
-                    break;
-                case 'fondo':
-                    input = dom.inputFondo;
-                    aviso = dom.avisoFondo;
-                    valoresUnicos = [...new Set((state.catalogs.siniestros || [])
-                        .map(s => String(s.fondo || '').trim())
-                        .filter(f => f)
-                        .map(f => f.toLowerCase())
-                    )];
-                    break;
-                default:
-                    return;
-            }
-
-            if (!input || !aviso) {
-                console.log(`⚠️ _verificarNuevoRegistro(${tipo}): input o aviso no encontrado`, { input, aviso });
-                return;
-            }
-
-            const valor = input.value.trim();
-            if (!valor) {
-                aviso.classList.add('d-none');
-                return;
-            }
-
-            const existe = valoresUnicos.includes(valor.toLowerCase());
-
-            if (tipo === 'siniestro' || tipo === 'distrito') {
-                console.log(`🔍 Verificando ${tipo}:`, {
-                    valor,
-                    existe,
-                    valoresUnicos: valoresUnicos.slice(0, 5),
-                    totalEnCatalogo: valoresUnicos.length
-                });
-            }
-
-            if (!existe) {
-                aviso.classList.remove('d-none');
-                console.log(`✅ Mostrando aviso para ${tipo} nuevo`);
-            } else {
-                aviso.classList.add('d-none');
-                console.log(`ℹ️ ${tipo} existe en catálogo, ocultando aviso`);
-            }
-        }
-
-        /**
-         * Actualiza los campos readonly de siniestro cuando se selecciona uno existente
-         * Y habilita fenómeno/fi/fondo si es un siniestro NUEVO
-         */
-        function _actualizarDetallesSiniestro() {
-            const valor = dom.inputSiniestro.value.trim();
-
-            const campoFenomeno = document.getElementById('detalle-fenomeno');
-            const campoFi = document.getElementById('detalle-fi');
-            const campoFondo = document.getElementById('detalle-fondo');
-
-            if (!valor) {
-                // Si está vacío, limpiar y dejar readonly
-                if (campoFenomeno) {
-                    campoFenomeno.value = '';
-                    campoFenomeno.setAttribute('readonly', 'true');
-                    campoFenomeno.classList.remove('bg-white');
-                    campoFenomeno.classList.add('bg-light');
-                }
-                if (campoFi) {
-                    campoFi.value = '';
-                    campoFi.setAttribute('readonly', 'true');
-                    campoFi.classList.remove('bg-white');
-                    campoFi.classList.add('bg-light');
-                }
-                if (campoFondo) {
-                    campoFondo.value = '';
-                    campoFondo.setAttribute('readonly', 'true');
-                    campoFondo.classList.remove('bg-white');
-                    campoFondo.classList.add('bg-light');
-                }
-                // Ocultar advertencias
-                if (dom.avisoFenomeno) dom.avisoFenomeno.classList.add('d-none');
-                if (dom.avisoFi) dom.avisoFi.classList.add('d-none');
-                if (dom.avisoFondo) dom.avisoFondo.classList.add('d-none');
-                return;
-            }
-
-            const siniestroEncontrado = state.catalogs.siniestros.find(s =>
-                String(s.siniestro || s.nombre || '').toLowerCase() === valor.toLowerCase()
-            );
-
-            if (siniestroEncontrado) {
-                // SINIESTRO EXISTE → Auto-completar y dejar readonly
-                if (campoFenomeno) {
-                    campoFenomeno.value = siniestroEncontrado.fenomeno || '';
-                    campoFenomeno.setAttribute('readonly', 'true');
-                    campoFenomeno.classList.remove('bg-white');
-                    campoFenomeno.classList.add('bg-light');
-                }
-                if (campoFi) {
-                    campoFi.value = siniestroEncontrado.fi || '';
-                    campoFi.setAttribute('readonly', 'true');
-                    campoFi.classList.remove('bg-white');
-                    campoFi.classList.add('bg-light');
-                }
-                if (campoFondo) {
-                    campoFondo.value = siniestroEncontrado.fondo || '';
-                    campoFondo.setAttribute('readonly', 'true');
-                    campoFondo.classList.remove('bg-white');
-                    campoFondo.classList.add('bg-light');
-                }
-                // Ocultar advertencias
-                if (dom.avisoFenomeno) dom.avisoFenomeno.classList.add('d-none');
-                if (dom.avisoFi) dom.avisoFi.classList.add('d-none');
-                if (dom.avisoFondo) dom.avisoFondo.classList.add('d-none');
-            } else {
-                // SINIESTRO NUEVO → Limpiar, habilitar para edición y mostrar advertencias
-                if (campoFenomeno) {
-                    campoFenomeno.value = '';
-                    campoFenomeno.removeAttribute('readonly');
-                    campoFenomeno.classList.remove('bg-light');
-                    campoFenomeno.classList.add('bg-white');
-                    campoFenomeno.placeholder = 'Ingrese el tipo de fenómeno (ej: Granizo, Helada, Inundación...)';
-                }
-                if (campoFi) {
-                    campoFi.value = '';
-                    campoFi.removeAttribute('readonly');
-                    campoFi.classList.remove('bg-light');
-                    campoFi.classList.add('bg-white');
-                    campoFi.placeholder = 'Ingrese el FI correspondiente al siniestro';
-                }
-                if (campoFondo) {
-                    campoFondo.value = '';
-                    campoFondo.removeAttribute('readonly');
-                    campoFondo.classList.remove('bg-light');
-                    campoFondo.classList.add('bg-white');
-                    campoFondo.placeholder = 'Ingrese el fondo asegurador (ej: FONDEN, CADENA...)';
-                }
-                // Mostrar advertencias
-                if (dom.avisoFenomeno) dom.avisoFenomeno.classList.remove('d-none');
-                if (dom.avisoFi) dom.avisoFi.classList.remove('d-none');
-                if (dom.avisoFondo) dom.avisoFondo.classList.remove('d-none');
-            }
-        }
-
-        function _toggleEdicion(habilitar) {
-            state.isEditing = habilitar;
-            const inputs = document.querySelectorAll('#form-detalle-comunicado input:not([readonly]), #form-detalle-comunicado select, #form-detalle-comunicado textarea');
-            inputs.forEach(input => {
-                // Excepciones: campos que siempre son readonly (fenomeno, fondo, fi se llenan auto)
-                if (['detalle-fenomeno', 'detalle-fondo', 'detalle-fi'].includes(input.id)) return;
-                input.disabled = !habilitar;
-            });
-
-            // Ya no hay botones separados de dropdown, los inputs manejan el dropdown directamente
-
-            if (dom.btnEditar) {
-                if (habilitar) dom.btnEditar.classList.add('d-none');
-                else dom.btnEditar.classList.remove('d-none');
-            }
-
-            if (dom.btnGuardar) {
-                if (habilitar) dom.btnGuardar.classList.remove('d-none');
-                else dom.btnGuardar.classList.add('d-none');
-            }
-        }
-
-        /**
-         * Muestra el estado de carga
-         */
-        function _renderLoading() {
-            if (dom.loader) dom.loader.classList.remove('d-none');
-            if (dom.tableContainer) dom.tableContainer.classList.add('d-none');
-            if (dom.errorAlert) dom.errorAlert.classList.add('d-none');
-            if (dom.emptyState) dom.emptyState.classList.add('d-none');
-        }
-
-        /**
-         * Carga los catálogos
-         */
-        async function _loadCatalogs() {
-            console.log('Iniciando carga de catálogos...');
-            try {
-                const response = await serverCall('fetchComunicadoCatalogs');
-                console.log('Respuesta cruda de catálogos:', response);
-
-                // serverCall devuelve response.data directamente si success es true.
-                // Por lo tanto, 'response' aquí ES el objeto de datos.
-
-                if (response && response.debugLogs) {
-                    console.log('--- LOGS DEL SERVIDOR (fetchComunicadoCatalogs) ---');
-                    response.debugLogs.forEach(log => console.log(`SERVER: ${log}`));
-                    console.log('-------------------------------------------------');
                 }
 
-                // Verificamos si tenemos los arrays esperados
-                if (response && (response.estados || response.distritosRiego)) {
-                    state.catalogs = response;
-                    console.log('Catálogos asignados al estado:', state.catalogs);
-                    console.log(`Estados cargados: ${state.catalogs.estados ? state.catalogs.estados.length : 0}`);
-
-                    // Intentar poblar inmediatamente si el DOM está listo
-                    _poblarSelectEstados();
-                    _poblarDatalists();
-                } else {
-                    console.error('Respuesta de catálogos inválida o sin éxito:', response);
+                if (dom.btnGuardar) {
+                    dom.btnGuardar.addEventListener('click', () => {
+                        _guardarCambios();
+                    });
                 }
-            } catch (error) {
-                console.error('Error cargando catálogos:', error);
-            }
-        }
 
-        function _poblarSelectEstados() {
-            const select = document.getElementById('detalle-estado');
-            if (!select) {
-                console.warn('Select de estados NO encontrado en el DOM al intentar poblar.');
-                return;
-            }
-
-            if (!state.catalogs.estados || state.catalogs.estados.length === 0) {
-                console.warn('No hay estados en el catálogo para poblar.');
-                console.log('Estado del catálogo:', state.catalogs);
-                return;
-            }
-
-            console.log(`Poblando select de estados con ${state.catalogs.estados.length} opciones.`);
-
-            select.innerHTML = '<option value="">Seleccione un estado...</option>';
-            state.catalogs.estados.forEach(est => {
-                const option = document.createElement('option');
-                const id = est.id !== undefined ? est.id : (est.idEstado || est.ID || est.id_estado || est.clave || est.Clave);
-                const nombre = est.estado || est.nombre || est.Estado || est.entidad || est.Entidad;
-
-                if (id !== null && id !== undefined && String(id).trim() !== '') {
-                    option.value = String(id);
-                    option.textContent = nombre || 'Sin nombre';
-                    select.appendChild(option);
-                } else {
-                    console.warn('Estado sin ID válido omitido:', est);
+                if (dom.btnEditar) {
+                    dom.btnEditar.addEventListener('click', () => {
+                        _toggleEdicion(true);
+                    });
                 }
-            });
-        }
 
-        function _poblarDatalists() {
-            // Poblar los combobox híbridos
-            _poblarCombobox('distrito', state.catalogs.distritosRiego, 'distritoRiego');
-            _poblarCombobox('siniestro', state.catalogs.siniestros, 'siniestro');
-
-            // Configurar el filtrado en tiempo real
-            _setupComboboxFilter('distrito', state.catalogs.distritosRiego, 'distritoRiego');
-            _setupComboboxFilter('siniestro', state.catalogs.siniestros, 'siniestro');
-        }
-
-        function _poblarCombobox(tipo, catalogo, campoNombre) {
-            const dropdownList = document.getElementById(`dropdown-${tipo}-list`);
-            if (!dropdownList || !catalogo) return;
-
-            dropdownList.innerHTML = '';
-            catalogo.forEach(item => {
-                const valor = String(item[campoNombre] || item.nombre || '');
-                if (!valor) return; // Saltar si está vacío
-
-                const li = document.createElement('li');
-                li.innerHTML = `<a class="dropdown-item" href="#" data-value="${escapeHtml(valor)}">${escapeHtml(valor)}</a>`;
-
-                li.querySelector('a').addEventListener('click', (e) => {
-                    e.preventDefault();
-                    const input = document.getElementById(`detalle-${tipo}`);
-                    input.value = valor;
-
-                    // Trigger change para actualizar detalles de siniestro si aplica
-                    if (tipo === 'siniestro') {
+                // Listeners para detectar nuevos registros
+                // Configurados aquí en _cacheDomElements para que se ejecuten siempre
+                if (dom.inputDistrito) {
+                    dom.inputDistrito.addEventListener('input', () => {
+                        console.log('📝 INPUT evento en distrito');
+                        _verificarNuevoRegistro('distrito');
+                    });
+                }
+                if (dom.inputSiniestro) {
+                    dom.inputSiniestro.addEventListener('input', () => {
+                        console.log('📝 INPUT evento en siniestro');
+                        _verificarNuevoRegistro('siniestro');
                         _actualizarDetallesSiniestro();
+                    });
+                }
+
+
+                // Inicializar instancia del modal
+                if (dom.modal && typeof bootstrap !== 'undefined') {
+                    modalInstance = new bootstrap.Modal(dom.modal);
+
+                    // Poblar listas desplegables cuando el modal se muestra (garantiza que DOM esté listo)
+                    dom.modal.addEventListener('shown.bs.modal', () => {
+                        console.log('🔔 Modal mostrado, poblando combobox híbridos...');
+                        _poblarCombobox('distrito', state.catalogs.distritosRiego, 'distritoRiego');
+                        _poblarCombobox('siniestro', state.catalogs.siniestros, 'siniestro');
+                        _setupComboboxFilter('distrito', state.catalogs.distritosRiego, 'distritoRiego');
+                        _setupComboboxFilter('siniestro', state.catalogs.siniestros, 'siniestro');
+                    });
+
+                    dom.modal.addEventListener('hidden.bs.modal', () => {
+                        _toggleEdicion(false); // Resetear al cerrar
+                    });
+                }
+
+                // Dashboard & Filters Refs
+                dom.dashboard = document.getElementById('dashboard-container');
+                dom.statTotal = document.getElementById('stat-total');
+                dom.statTotalContratista = document.getElementById('stat-total-contratista');
+                dom.statTotalSupervision = document.getElementById('stat-total-supervision');
+
+                dom.filterSearch = document.getElementById('filter-search');
+                dom.filterStatus = document.getElementById('filter-status');
+                dom.filterYear = document.getElementById('filter-year');
+                dom.btnClearFilters = document.getElementById('btn-clear-filters');
+
+                // Delete Modal Elements
+                dom.modalDeleteList = document.getElementById('modalConfirmDeleteListado');
+                dom.btnConfirmDeleteList = document.getElementById('btn-confirm-delete-list');
+
+                if (dom.btnConfirmDeleteList) {
+                    dom.btnConfirmDeleteList.addEventListener('click', _handleDeleteConfirm);
+                }
+                if (dom.modalDeleteList && typeof bootstrap !== 'undefined') {
+                    dom.modalInstanceDelete = new bootstrap.Modal(dom.modalDeleteList);
+                }
+
+                // Listeners Filtros
+                if (dom.filterSearch) {
+                    dom.filterSearch.addEventListener('input', (e) => _handleFilterChange('search', e.target.value));
+                }
+                if (dom.filterStatus) {
+                    dom.filterStatus.addEventListener('change', (e) => _handleFilterChange('status', e.target.value));
+                }
+                if (dom.filterYear) {
+                    dom.filterYear.addEventListener('change', (e) => _handleFilterChange('year', e.target.value));
+                }
+                if (dom.btnClearFilters) {
+                    dom.btnClearFilters.addEventListener('click', () => {
+                        // Reset inputs
+                        dom.filterSearch.value = '';
+                        dom.filterStatus.value = 'all';
+                        dom.filterYear.value = 'all';
+                        // Reset state
+                        state.filters = { search: '', status: 'all', year: 'all', stateFilter: null };
+                        _renderTable();
+                    });
+                }
+
+                // Map Toggles & Elements
+                dom.toggleList = document.getElementById('view-list');
+                dom.toggleMap = document.getElementById('view-map');
+                dom.mapContainer = document.getElementById('map-section-container');
+                // dom.svgMap = document.getElementById('svg-map-mexico'); // No longer needed for SVG map
+                // dom.mapTooltip = document.getElementById('map-tooltip'); // No longer needed for SVG map
+
+                if (dom.toggleList) {
+                    dom.toggleList.addEventListener('change', () => _switchView('list'));
+                }
+                if (dom.toggleMap) {
+                    dom.toggleMap.addEventListener('change', () => _switchView('map'));
+                }
+
+                // Google Charts Integracion
+                if (dom.mapContainer && !document.getElementById('gcharts-loader')) {
+                    const script = document.createElement('script');
+                    script.id = 'gcharts-loader';
+                    script.src = 'https://www.gstatic.com/charts/loader.js';
+                    script.onload = () => {
+                        google.charts.load('current', {
+                            'packages': ['geochart'],
+                            // Optional: 'apiKey': 'YOUR_KEY_HERE' if high usage, but usually fine for free tier
+                        });
+                        google.charts.setOnLoadCallback(() => {
+                            state.googleChartsLoaded = true;
+                            console.log('Google Charts loaded.');
+                        });
+                    };
+                    document.head.appendChild(script);
+                }
+            }
+
+            function _switchView(mode) {
+                state.viewMode = mode;
+                if (mode === 'map') {
+                    if (dom.tableContainer) dom.tableContainer.classList.add('d-none');
+                    if (dom.mapContainer) {
+                        dom.mapContainer.classList.remove('d-none');
+                        _drawMap(); // Draw Map
                     }
-                    _verificarNuevoRegistro(tipo);
+                } else {
+                    if (dom.mapContainer) dom.mapContainer.classList.add('d-none');
+                    if (dom.tableContainer) dom.tableContainer.classList.remove('d-none');
+                }
+            }
+
+            /**
+             * Dibuja el mapa usando Google Charts
+             */
+            function _drawMap() {
+                const container = document.getElementById('geochart-container');
+                const loader = document.getElementById('map-loader');
+
+                if (!container || !state.googleChartsLoaded || !google.visualization) {
+                    if (loader) loader.textContent = 'Cargando librería de mapas...';
+                    // Retry if library not ready
+                    if (!state.googleChartsLoaded) setTimeout(_drawMap, 500);
+                    return;
+                }
+
+                if (loader) loader.classList.add('d-none');
+
+                // 1. Prepare Data
+                const counts = {};
+                state.comunicados.forEach(c => {
+                    let nombre = (c.estado || '').trim();
+                    // Google Charts expects standard names
+                    if (nombre.includes('Veracruz')) nombre = 'Veracruz';
+                    if (nombre.includes('Michoacán')) nombre = 'Michoacán';
+                    if (nombre.includes('México') && !nombre.includes('Ciudad')) nombre = 'State of Mexico'; // Special case
+                    if (nombre.includes('CDMX') || nombre.includes('Ciudad de México')) nombre = 'Mexico City';
+
+                    if (nombre) {
+                        counts[nombre] = (counts[nombre] || 0) + 1;
+                    }
                 });
 
-                dropdownList.appendChild(li);
-            });
-        }
+                const chartData = [['State', 'Comunicados']];
+                Object.keys(counts).forEach(k => {
+                    chartData.push([k, counts[k]]);
+                });
 
-        function _setupComboboxFilter(tipo, catalogo, campoNombre) {
-            const input = document.getElementById(`detalle-${tipo}`);
-            const dropdownList = document.getElementById(`dropdown-${tipo}-list`);
+                if (chartData.length === 1) {
+                    chartData.push(['Mexico', 0]); // Empty map fallback
+                }
 
-            console.log(`🔧 _setupComboboxFilter para ${tipo}:`, { input: !!input, dropdownList: !!dropdownList });
+                const data = google.visualization.arrayToDataTable(chartData);
 
-            if (!input || !dropdownList) return;
+                // 2. Options
+                const options = {
+                    region: 'MX', // Mexico
+                    resolution: 'provinces',
+                    displayMode: 'regions',
+                    colorAxis: { colors: ['#cff4fc', '#0d6efd', '#0a58ca'] }, // Light blue to Dark blue
+                    backgroundColor: 'transparent',
+                    datalessRegionColor: '#f8f9fa',
+                    defaultColor: '#f5f5f5',
+                    tooltip: { textStyle: { color: '#444' }, showColorCode: true }
+                };
 
-            // Evitar agregar listeners duplicados
-            if (input.dataset.filterConfigured === 'true') {
-                console.log(`⚠️ Filtro para ${tipo} ya configurado, saltando...`);
-                return;
+                // 3. Draw
+                const chart = new google.visualization.GeoChart(container);
+
+                // Interaction
+                google.visualization.events.addListener(chart, 'select', () => {
+                    const selection = chart.getSelection();
+                    if (selection.length > 0) {
+                        const item = selection[0];
+                        if (item.row != null) {
+                            const selectedState = data.getValue(item.row, 0);
+                            console.log('Selected State:', selectedState);
+
+                            // Map Google name back to our filter format
+                            let filterName = selectedState;
+                            if (selectedState === 'State of Mexico') filterName = 'Estado de México';
+                            if (selectedState === 'Mexico City') filterName = 'Ciudad de México';
+
+                            // Filter
+                            state.filters.stateFilter = filterName;
+                            dom.toggleList.click(); // Switch to list
+                            _renderTable();
+                        }
+                    }
+                });
+
+                chart.draw(data, options);
             }
-            input.dataset.filterConfigured = 'true';
-            console.log(`✅ Configurando listener para ${tipo}`);
 
-            input.addEventListener('input', () => {
-                console.log(`📝 Input event en ${tipo}: "${input.value}"`);
+            // Removed old SVG functions _setupMapInteractions, _resetMapActiveState, _updateMapStats
 
-                const searchTerm = input.value.toLowerCase();
-                const items = dropdownList.querySelectorAll('.dropdown-item');
-                let hasVisibleItems = false;
+            /**
+             * Verifica si el valor ingresado es nuevo o existe en el catálogo
+             */
+            function _verificarNuevoRegistro(tipo) {
+                let input, aviso, valoresUnicos;
 
-                items.forEach(item => {
-                    const text = item.textContent.toLowerCase();
-                    if (text.includes(searchTerm)) {
-                        item.parentElement.style.display = '';
-                        hasVisibleItems = true;
+                // Configurar según el tipo de campo
+                switch (tipo) {
+                    case 'distrito':
+                        input = dom.inputDistrito;
+                        aviso = dom.avisoDistrito;
+                        valoresUnicos = (state.catalogs.distritosRiego || []).map(d =>
+                            String(d.distritoRiego || d.nombre || '').toLowerCase().trim()
+                        );
+                        break;
+                    case 'siniestro':
+                        input = dom.inputSiniestro;
+                        aviso = dom.avisoSiniestro;
+                        valoresUnicos = (state.catalogs.siniestros || []).map(s =>
+                            String(s.siniestro || s.nombre || '').toLowerCase().trim()
+                        );
+                        break;
+                    case 'fenomeno':
+                        input = dom.inputFenomeno;
+                        aviso = dom.avisoFenomeno;
+                        valoresUnicos = [...new Set((state.catalogs.siniestros || [])
+                            .map(s => String(s.fenomeno || '').trim())
+                            .filter(f => f)
+                            .map(f => f.toLowerCase())
+                        )];
+                        break;
+                    case 'fi':
+                        input = dom.inputFi;
+                        aviso = dom.avisoFi;
+                        valoresUnicos = [...new Set((state.catalogs.siniestros || [])
+                            .map(s => String(s.fi || '').trim())
+                            .filter(f => f)
+                            .map(f => f.toLowerCase())
+                        )];
+                        break;
+                    case 'fondo':
+                        input = dom.inputFondo;
+                        aviso = dom.avisoFondo;
+                        valoresUnicos = [...new Set((state.catalogs.siniestros || [])
+                            .map(s => String(s.fondo || '').trim())
+                            .filter(f => f)
+                            .map(f => f.toLowerCase())
+                        )];
+                        break;
+                    default:
+                        return;
+                }
+
+                if (!input || !aviso) {
+                    console.log(`⚠️ _verificarNuevoRegistro(${tipo}): input o aviso no encontrado`, { input, aviso });
+                    return;
+                }
+
+                const valor = input.value.trim();
+                if (!valor) {
+                    aviso.classList.add('d-none');
+                    return;
+                }
+
+                const existe = valoresUnicos.includes(valor.toLowerCase());
+
+                if (tipo === 'siniestro' || tipo === 'distrito') {
+                    console.log(`🔍 Verificando ${tipo}:`, {
+                        valor,
+                        existe,
+                        valoresUnicos: valoresUnicos.slice(0, 5),
+                        totalEnCatalogo: valoresUnicos.length
+                    });
+                }
+
+                if (!existe) {
+                    aviso.classList.remove('d-none');
+                    console.log(`✅ Mostrando aviso para ${tipo} nuevo`);
+                } else {
+                    aviso.classList.add('d-none');
+                    console.log(`ℹ️ ${tipo} existe en catálogo, ocultando aviso`);
+                }
+            }
+
+            /**
+             * Actualiza los campos readonly de siniestro cuando se selecciona uno existente
+             * Y habilita fenómeno/fi/fondo si es un siniestro NUEVO
+             */
+            function _actualizarDetallesSiniestro() {
+                const valor = dom.inputSiniestro.value.trim();
+
+                const campoFenomeno = document.getElementById('detalle-fenomeno');
+                const campoFi = document.getElementById('detalle-fi');
+                const campoFondo = document.getElementById('detalle-fondo');
+
+                if (!valor) {
+                    // Si está vacío, limpiar y dejar readonly
+                    if (campoFenomeno) {
+                        campoFenomeno.value = '';
+                        campoFenomeno.setAttribute('readonly', 'true');
+                        campoFenomeno.classList.remove('bg-white');
+                        campoFenomeno.classList.add('bg-light');
+                    }
+                    if (campoFi) {
+                        campoFi.value = '';
+                        campoFi.setAttribute('readonly', 'true');
+                        campoFi.classList.remove('bg-white');
+                        campoFi.classList.add('bg-light');
+                    }
+                    if (campoFondo) {
+                        campoFondo.value = '';
+                        campoFondo.setAttribute('readonly', 'true');
+                        campoFondo.classList.remove('bg-white');
+                        campoFondo.classList.add('bg-light');
+                    }
+                    // Ocultar advertencias
+                    if (dom.avisoFenomeno) dom.avisoFenomeno.classList.add('d-none');
+                    if (dom.avisoFi) dom.avisoFi.classList.add('d-none');
+                    if (dom.avisoFondo) dom.avisoFondo.classList.add('d-none');
+                    return;
+                }
+
+                const siniestroEncontrado = state.catalogs.siniestros.find(s =>
+                    String(s.siniestro || s.nombre || '').toLowerCase() === valor.toLowerCase()
+                );
+
+                if (siniestroEncontrado) {
+                    // SINIESTRO EXISTE → Auto-completar y dejar readonly
+                    if (campoFenomeno) {
+                        campoFenomeno.value = siniestroEncontrado.fenomeno || '';
+                        campoFenomeno.setAttribute('readonly', 'true');
+                        campoFenomeno.classList.remove('bg-white');
+                        campoFenomeno.classList.add('bg-light');
+                    }
+                    if (campoFi) {
+                        campoFi.value = siniestroEncontrado.fi || '';
+                        campoFi.setAttribute('readonly', 'true');
+                        campoFi.classList.remove('bg-white');
+                        campoFi.classList.add('bg-light');
+                    }
+                    if (campoFondo) {
+                        campoFondo.value = siniestroEncontrado.fondo || '';
+                        campoFondo.setAttribute('readonly', 'true');
+                        campoFondo.classList.remove('bg-white');
+                        campoFondo.classList.add('bg-light');
+                    }
+                    // Ocultar advertencias
+                    if (dom.avisoFenomeno) dom.avisoFenomeno.classList.add('d-none');
+                    if (dom.avisoFi) dom.avisoFi.classList.add('d-none');
+                    if (dom.avisoFondo) dom.avisoFondo.classList.add('d-none');
+                } else {
+                    // SINIESTRO NUEVO → Limpiar, habilitar para edición y mostrar advertencias
+                    if (campoFenomeno) {
+                        campoFenomeno.value = '';
+                        campoFenomeno.removeAttribute('readonly');
+                        campoFenomeno.classList.remove('bg-light');
+                        campoFenomeno.classList.add('bg-white');
+                        campoFenomeno.placeholder = 'Ingrese el tipo de fenómeno (ej: Granizo, Helada, Inundación...)';
+                    }
+                    if (campoFi) {
+                        campoFi.value = '';
+                        campoFi.removeAttribute('readonly');
+                        campoFi.classList.remove('bg-light');
+                        campoFi.classList.add('bg-white');
+                        campoFi.placeholder = 'Ingrese el FI correspondiente al siniestro';
+                    }
+                    if (campoFondo) {
+                        campoFondo.value = '';
+                        campoFondo.removeAttribute('readonly');
+                        campoFondo.classList.remove('bg-light');
+                        campoFondo.classList.add('bg-white');
+                        campoFondo.placeholder = 'Ingrese el fondo asegurador (ej: FONDEN, CADENA...)';
+                    }
+                    // Mostrar advertencias
+                    if (dom.avisoFenomeno) dom.avisoFenomeno.classList.remove('d-none');
+                    if (dom.avisoFi) dom.avisoFi.classList.remove('d-none');
+                    if (dom.avisoFondo) dom.avisoFondo.classList.remove('d-none');
+                }
+            }
+
+            function _toggleEdicion(habilitar) {
+                state.isEditing = habilitar;
+                const inputs = document.querySelectorAll('#form-detalle-comunicado input:not([readonly]), #form-detalle-comunicado select, #form-detalle-comunicado textarea');
+                inputs.forEach(input => {
+                    // Excepciones: campos que siempre son readonly (fenomeno, fondo, fi se llenan auto)
+                    if (['detalle-fenomeno', 'detalle-fondo', 'detalle-fi'].includes(input.id)) return;
+                    input.disabled = !habilitar;
+                });
+
+                // Ya no hay botones separados de dropdown, los inputs manejan el dropdown directamente
+
+                if (dom.btnEditar) {
+                    if (habilitar) dom.btnEditar.classList.add('d-none');
+                    else dom.btnEditar.classList.remove('d-none');
+                }
+
+                if (dom.btnGuardar) {
+                    if (habilitar) dom.btnGuardar.classList.remove('d-none');
+                    else dom.btnGuardar.classList.add('d-none');
+                }
+            }
+
+            /**
+             * Muestra el estado de carga
+             */
+            function _renderLoading() {
+                if (dom.loader) dom.loader.classList.remove('d-none');
+                if (dom.tableContainer) dom.tableContainer.classList.add('d-none');
+                if (dom.errorAlert) dom.errorAlert.classList.add('d-none');
+                if (dom.emptyState) dom.emptyState.classList.add('d-none');
+            }
+
+            /**
+             * Carga los catálogos
+             */
+            async function _loadCatalogs() {
+                console.log('Iniciando carga de catálogos...');
+                try {
+                    const response = await serverCall('fetchComunicadoCatalogs');
+                    console.log('Respuesta cruda de catálogos:', response);
+
+                    // serverCall devuelve response.data directamente si success es true.
+                    // Por lo tanto, 'response' aquí ES el objeto de datos.
+
+                    if (response && response.debugLogs) {
+                        console.log('--- LOGS DEL SERVIDOR (fetchComunicadoCatalogs) ---');
+                        response.debugLogs.forEach(log => console.log(`SERVER: ${log}`));
+                        console.log('-------------------------------------------------');
+                    }
+
+                    // Verificamos si tenemos los arrays esperados
+                    if (response && (response.estados || response.distritosRiego)) {
+                        state.catalogs = response;
+                        console.log('Catálogos asignados al estado:', state.catalogs);
+                        console.log(`Estados cargados: ${state.catalogs.estados ? state.catalogs.estados.length : 0}`);
+
+                        // Intentar poblar inmediatamente si el DOM está listo
+                        _poblarSelectEstados();
+                        _poblarDatalists();
                     } else {
-                        item.parentElement.style.display = 'none';
+                        console.error('Respuesta de catálogos inválida o sin éxito:', response);
+                    }
+                } catch (error) {
+                    console.error('Error cargando catálogos:', error);
+                }
+            }
+
+            function _poblarSelectEstados() {
+                const select = document.getElementById('detalle-estado');
+                if (!select) {
+                    console.warn('Select de estados NO encontrado en el DOM al intentar poblar.');
+                    return;
+                }
+
+                if (!state.catalogs.estados || state.catalogs.estados.length === 0) {
+                    console.warn('No hay estados en el catálogo para poblar.');
+                    console.log('Estado del catálogo:', state.catalogs);
+                    return;
+                }
+
+                console.log(`Poblando select de estados con ${state.catalogs.estados.length} opciones.`);
+
+                select.innerHTML = '<option value="">Seleccione un estado...</option>';
+                state.catalogs.estados.forEach(est => {
+                    const option = document.createElement('option');
+                    const id = est.id !== undefined ? est.id : (est.idEstado || est.ID || est.id_estado || est.clave || est.Clave);
+                    const nombre = est.estado || est.nombre || est.Estado || est.entidad || est.Entidad;
+
+                    if (id !== null && id !== undefined && String(id).trim() !== '') {
+                        option.value = String(id);
+                        option.textContent = nombre || 'Sin nombre';
+                        select.appendChild(option);
+                    } else {
+                        console.warn('Estado sin ID válido omitido:', est);
+                    }
+                });
+            }
+
+            function _poblarDatalists() {
+                // Poblar los combobox híbridos
+                _poblarCombobox('distrito', state.catalogs.distritosRiego, 'distritoRiego');
+                _poblarCombobox('siniestro', state.catalogs.siniestros, 'siniestro');
+
+                // Configurar el filtrado en tiempo real
+                _setupComboboxFilter('distrito', state.catalogs.distritosRiego, 'distritoRiego');
+                _setupComboboxFilter('siniestro', state.catalogs.siniestros, 'siniestro');
+            }
+
+            function _poblarCombobox(tipo, catalogo, campoNombre) {
+                const dropdownList = document.getElementById(`dropdown-${tipo}-list`);
+                if (!dropdownList || !catalogo) return;
+
+                dropdownList.innerHTML = '';
+                catalogo.forEach(item => {
+                    const valor = String(item[campoNombre] || item.nombre || '');
+                    if (!valor) return; // Saltar si está vacío
+
+                    const li = document.createElement('li');
+                    li.innerHTML = `<a class="dropdown-item" href="#" data-value="${escapeHtml(valor)}">${escapeHtml(valor)}</a>`;
+
+                    li.querySelector('a').addEventListener('click', (e) => {
+                        e.preventDefault();
+                        const input = document.getElementById(`detalle-${tipo}`);
+                        input.value = valor;
+
+                        // Trigger change para actualizar detalles de siniestro si aplica
+                        if (tipo === 'siniestro') {
+                            _actualizarDetallesSiniestro();
+                        }
+                        _verificarNuevoRegistro(tipo);
+                    });
+
+                    dropdownList.appendChild(li);
+                });
+            }
+
+            function _setupComboboxFilter(tipo, catalogo, campoNombre) {
+                const input = document.getElementById(`detalle-${tipo}`);
+                const dropdownList = document.getElementById(`dropdown-${tipo}-list`);
+
+                console.log(`🔧 _setupComboboxFilter para ${tipo}:`, { input: !!input, dropdownList: !!dropdownList });
+
+                if (!input || !dropdownList) return;
+
+                // Evitar agregar listeners duplicados
+                if (input.dataset.filterConfigured === 'true') {
+                    console.log(`⚠️ Filtro para ${tipo} ya configurado, saltando...`);
+                    return;
+                }
+                input.dataset.filterConfigured = 'true';
+                console.log(`✅ Configurando listener para ${tipo}`);
+
+                input.addEventListener('input', () => {
+                    console.log(`📝 Input event en ${tipo}: "${input.value}"`);
+
+                    const searchTerm = input.value.toLowerCase();
+                    const items = dropdownList.querySelectorAll('.dropdown-item');
+                    let hasVisibleItems = false;
+
+                    items.forEach(item => {
+                        const text = item.textContent.toLowerCase();
+                        if (text.includes(searchTerm)) {
+                            item.parentElement.style.display = '';
+                            hasVisibleItems = true;
+                        } else {
+                            item.parentElement.style.display = 'none';
+                        }
+                    });
+
+                    // NOTA: Las validaciones se manejan en _cacheDomElements
+                });
+            }
+
+            /**
+             * Maneja cambios en los filtros
+             */
+            function _handleFilterChange(key, value) {
+                state.filters[key] = key === 'search' ? value.toLowerCase() : value;
+                _renderTable(); // Re-renderizar tabla con nuevos filtros
+            }
+
+            /**
+             * Filtra los datos según el estado de los filtros
+             */
+            function _filterData() {
+                let data = [...state.comunicados];
+
+                // 1. Filtro Texto (Search)
+                if (state.filters.search) {
+                    const term = state.filters.search;
+                    data = data.filter(item => {
+                        const combinado = [
+                            item.comunicado,
+                            item.descripcion,
+                            item.contratista,
+                            item.estado,
+                            item.siniestro
+                        ].join(' ').toLowerCase();
+                        return combinado.includes(term);
+                    });
+                }
+
+                // 2. Filtro Estado (Status)
+                if (state.filters.status !== 'all') {
+                    data = data.filter(item => {
+                        const tieneSiniestro = item.siniestro && item.siniestro.trim() !== '';
+                        if (state.filters.status === 'con_siniestro') return tieneSiniestro;
+                        if (state.filters.status === 'sin_siniestro') return !tieneSiniestro;
+                        return true;
+                    });
+                }
+
+                // 3. Filtro Año
+                if (state.filters.year !== 'all') {
+                    data = data.filter(item => {
+                        if (!item.fecha) return false;
+                        const f = String(item.fecha); // Esperamos string YYYY-MM-DD o similar
+                        return f.includes(state.filters.year);
+                    });
+                }
+
+                // 4. Filtro Mapa (Estado)
+                if (state.filters.stateFilter) {
+                    data = data.filter(item => {
+                        const st = (item.estado || '').toLowerCase();
+                        const filter = state.filters.stateFilter.toLowerCase();
+                        return st.includes(filter) || filter.includes(st);
+                    });
+                }
+
+                return data;
+            }
+
+            /**
+             * Calcula estadísticas para el dashboard
+             */
+            function _calculateStats(data) {
+                if (!dom.dashboard) return;
+
+                // Total de comunicados
+                const total = data.length;
+
+                // Suma total de presupuestos (Contratista/Obra)
+                const totalContratista = data.reduce((sum, d) => sum + (parseFloat(d.presupuesto) || 0), 0);
+
+                // Suma total de montos de supervisión
+                const totalSupervision = data.reduce((sum, d) => sum + (parseFloat(d.montoSupervision) || 0), 0);
+
+                // Render DOM
+                dom.statTotal.textContent = total;
+                dom.statTotalContratista.textContent = _formatCurrency(totalContratista);
+                dom.statTotalSupervision.textContent = _formatCurrency(totalSupervision);
+
+                // Mostrar el dashboard si hay datos
+                if (total > 0) {
+                    dom.dashboard.classList.remove('d-none');
+                }
+            }
+
+            /**
+             * Carga los comunicados desde el servidor
+             */
+            async function _loadComunicados() {
+                state.loading = true;
+                _renderLoading();
+
+                try {
+                    if (state.catalogs.estados.length === 0) {
+                        await _loadCatalogs();
+                    }
+
+                    const comunicados = await serverCall('readAllComunicados');
+                    state.comunicados = comunicados || [];
+                    _calculateStats(state.comunicados); // Actualizar Dashboard
+                    if (state.viewMode === 'map') _drawMap(); // Redraw if map active
+                    _renderTable(); // Render tabla (filtrada)
+                } catch (error) {
+                    console.error('Error cargando comunicados:', error);
+                    state.error = error.message;
+                    _renderError(error.message);
+                } finally {
+                    state.loading = false;
+                    if (dom.loader) dom.loader.classList.add('d-none');
+                }
+            }
+
+            /**
+             * Maneja el cambio de ordenamiento
+             */
+            function _handleSort(column) {
+                if (state.sort.column === column) {
+                    // Toggle direction
+                    state.sort.direction = state.sort.direction === 'asc' ? 'desc' : 'asc';
+                } else {
+                    // New column, default to asc (except for date maybe? logic implies default asc usually)
+                    state.sort.column = column;
+                    state.sort.direction = 'asc';
+                }
+                _renderTable();
+            }
+
+            /**
+             * Actualiza los iconos de ordenamiento en la cabecera
+             */
+            function _updateSortIcons() {
+                // Reset all icons
+                const headers = ['descripcion', 'fecha', 'estado', 'contratista', 'presupuesto', 'montoSupervision'];
+                headers.forEach(key => {
+                    const icon = document.getElementById(`sort-icon-${key}`);
+                    if (icon) {
+                        icon.className = 'bi bi-arrow-down-up small text-muted ms-1'; // Default neutral
                     }
                 });
 
-                // NOTA: Las validaciones se manejan en _cacheDomElements
-            });
-        }
-
-        /**
-         * Maneja cambios en los filtros
-         */
-        function _handleFilterChange(key, value) {
-            state.filters[key] = key === 'search' ? value.toLowerCase() : value;
-            _renderTable(); // Re-renderizar tabla con nuevos filtros
-        }
-
-        /**
-         * Filtra los datos según el estado de los filtros
-         */
-        function _filterData() {
-            let data = [...state.comunicados];
-
-            // 1. Filtro Texto (Search)
-            if (state.filters.search) {
-                const term = state.filters.search;
-                data = data.filter(item => {
-                    const combinado = [
-                        item.comunicado,
-                        item.descripcion,
-                        item.contratista,
-                        item.estado,
-                        item.siniestro
-                    ].join(' ').toLowerCase();
-                    return combinado.includes(term);
-                });
-            }
-
-            // 2. Filtro Estado (Status)
-            if (state.filters.status !== 'all') {
-                data = data.filter(item => {
-                    const tieneSiniestro = item.siniestro && item.siniestro.trim() !== '';
-                    if (state.filters.status === 'con_siniestro') return tieneSiniestro;
-                    if (state.filters.status === 'sin_siniestro') return !tieneSiniestro;
-                    return true;
-                });
-            }
-
-            // 3. Filtro Año
-            if (state.filters.year !== 'all') {
-                data = data.filter(item => {
-                    if (!item.fecha) return false;
-                    const f = String(item.fecha); // Esperamos string YYYY-MM-DD o similar
-                    return f.includes(state.filters.year);
-                });
-            }
-
-            // 4. Filtro Mapa (Estado)
-            if (state.filters.stateFilter) {
-                data = data.filter(item => {
-                    const st = (item.estado || '').toLowerCase();
-                    const filter = state.filters.stateFilter.toLowerCase();
-                    return st.includes(filter) || filter.includes(st);
-                });
-            }
-
-            return data;
-        }
-
-        /**
-         * Calcula estadísticas para el dashboard
-         */
-        function _calculateStats(data) {
-            if (!dom.dashboard) return;
-
-            // Total de comunicados
-            const total = data.length;
-
-            // Suma total de presupuestos (Contratista/Obra)
-            const totalContratista = data.reduce((sum, d) => sum + (parseFloat(d.presupuesto) || 0), 0);
-
-            // Suma total de montos de supervisión
-            const totalSupervision = data.reduce((sum, d) => sum + (parseFloat(d.montoSupervision) || 0), 0);
-
-            // Render DOM
-            dom.statTotal.textContent = total;
-            dom.statTotalContratista.textContent = _formatCurrency(totalContratista);
-            dom.statTotalSupervision.textContent = _formatCurrency(totalSupervision);
-
-            // Mostrar el dashboard si hay datos
-            if (total > 0) {
-                dom.dashboard.classList.remove('d-none');
-            }
-        }
-
-        /**
-         * Carga los comunicados desde el servidor
-         */
-        async function _loadComunicados() {
-            state.loading = true;
-            _renderLoading();
-
-            try {
-                if (state.catalogs.estados.length === 0) {
-                    await _loadCatalogs();
-                }
-
-                const comunicados = await serverCall('readAllComunicados');
-                state.comunicados = comunicados || [];
-                _calculateStats(state.comunicados); // Actualizar Dashboard
-                if (state.viewMode === 'map') _drawMap(); // Redraw if map active
-                _renderTable(); // Render tabla (filtrada)
-            } catch (error) {
-                console.error('Error cargando comunicados:', error);
-                state.error = error.message;
-                _renderError(error.message);
-            } finally {
-                state.loading = false;
-                if (dom.loader) dom.loader.classList.add('d-none');
-            }
-        }
-
-        /**
-         * Maneja el cambio de ordenamiento
-         */
-        function _handleSort(column) {
-            if (state.sort.column === column) {
-                // Toggle direction
-                state.sort.direction = state.sort.direction === 'asc' ? 'desc' : 'asc';
-            } else {
-                // New column, default to asc (except for date maybe? logic implies default asc usually)
-                state.sort.column = column;
-                state.sort.direction = 'asc';
-            }
-            _renderTable();
-        }
-
-        /**
-         * Actualiza los iconos de ordenamiento en la cabecera
-         */
-        function _updateSortIcons() {
-            // Reset all icons
-            const headers = ['descripcion', 'fecha', 'estado', 'contratista', 'presupuesto', 'montoSupervision'];
-            headers.forEach(key => {
-                const icon = document.getElementById(`sort-icon-${key}`);
-                if (icon) {
-                    icon.className = 'bi bi-arrow-down-up small text-muted ms-1'; // Default neutral
-                }
-            });
-
-            // Set active icon
-            const activeIcon = document.getElementById(`sort-icon-${state.sort.column}`);
-            if (activeIcon) {
-                if (state.sort.direction === 'asc') {
-                    activeIcon.className = 'bi bi-arrow-up text-primary ms-1';
-                } else {
-                    activeIcon.className = 'bi bi-arrow-down text-primary ms-1';
+                // Set active icon
+                const activeIcon = document.getElementById(`sort-icon-${state.sort.column}`);
+                if (activeIcon) {
+                    if (state.sort.direction === 'asc') {
+                        activeIcon.className = 'bi bi-arrow-up text-primary ms-1';
+                    } else {
+                        activeIcon.className = 'bi bi-arrow-down text-primary ms-1';
+                    }
                 }
             }
-        }
 
-        /**
-         * Renderiza la tabla de comunicados
-         */
-        /**
-         * Renderiza la tabla de comunicados
-         */
-        function _renderTable() {
-            if (!state.comunicados || state.comunicados.length === 0) {
-                if (dom.emptyState) dom.emptyState.classList.remove('d-none');
-                if (dom.totalBadge) dom.totalBadge.textContent = '0';
-                return;
-            }
-
-            if (dom.tableContainer) dom.tableContainer.classList.remove('d-none');
-
-            // Actualizar badge total (siempre muestra el total real o el filtrado? Mejor el filtrado para feedback visual)
-            const filteredData = _filterData();
-            if (dom.totalBadge) dom.totalBadge.textContent = filteredData.length;
-
-            // Ordenar por fecha descendente (más recientes primero)
-            const { column, direction } = state.sort;
-            const comunicadosOrdenados = [...filteredData].sort((a, b) => {
-                let valA = a[column];
-                let valB = b[column];
-
-                // Handle null/undefined
-                if (valA == null) valA = '';
-                if (valB == null) valB = '';
-
-                // Numeric sorting for money fields
-                if (['presupuesto', 'montoSupervision'].includes(column)) {
-                    valA = parseFloat(valA) || 0;
-                    valB = parseFloat(valB) || 0;
-                } else {
-                    // String sorting (case insensitive)
-                    valA = String(valA).toLowerCase();
-                    valB = String(valB).toLowerCase();
+            /**
+             * Renderiza la tabla de comunicados
+             */
+            /**
+             * Renderiza la tabla de comunicados
+             */
+            function _renderTable() {
+                if (!state.comunicados || state.comunicados.length === 0) {
+                    if (dom.emptyState) dom.emptyState.classList.remove('d-none');
+                    if (dom.totalBadge) dom.totalBadge.textContent = '0';
+                    return;
                 }
 
-                if (valA < valB) return direction === 'asc' ? -1 : 1;
-                if (valA > valB) return direction === 'asc' ? 1 : -1;
-                return 0;
-            });
+                if (dom.tableContainer) dom.tableContainer.classList.remove('d-none');
 
-            _updateSortIcons();
+                // Actualizar badge total (siempre muestra el total real o el filtrado? Mejor el filtrado para feedback visual)
+                const filteredData = _filterData();
+                if (dom.totalBadge) dom.totalBadge.textContent = filteredData.length;
 
-            const html = comunicadosOrdenados.map(com => `
+                // Ordenar por fecha descendente (más recientes primero)
+                const { column, direction } = state.sort;
+                const comunicadosOrdenados = [...filteredData].sort((a, b) => {
+                    let valA = a[column];
+                    let valB = b[column];
+
+                    // Handle null/undefined
+                    if (valA == null) valA = '';
+                    if (valB == null) valB = '';
+
+                    // Numeric sorting for money fields
+                    if (['presupuesto', 'montoSupervision'].includes(column)) {
+                        valA = parseFloat(valA) || 0;
+                        valB = parseFloat(valB) || 0;
+                    } else {
+                        // String sorting (case insensitive)
+                        valA = String(valA).toLowerCase();
+                        valB = String(valB).toLowerCase();
+                    }
+
+                    if (valA < valB) return direction === 'asc' ? -1 : 1;
+                    if (valA > valB) return direction === 'asc' ? 1 : -1;
+                    return 0;
+                });
+
+                _updateSortIcons();
+
+                const html = comunicadosOrdenados.map(com => `
                 <tr>
                     <!-- Referencia y Comunicado Corto eliminados. Descripción es ahora la primera columna 'Comunicado' -->
                     <td class="ps-4 fw-semibold text-primary text-truncate" style="max-width: 350px;" title="${escapeHtml(com.descripcion || '')}">
@@ -1644,278 +1797,287 @@
                 </tr>
             `).join('');
 
-            if (dom.tbody) dom.tbody.innerHTML = html;
-        }
-
-        /**
-         * Abre el detalle del comunicado en MODAL (Vista Rápida)
-         */
-        function abrirModal(idComunicado) {
-            if (!idComunicado) return;
-            const com = state.comunicados.find(c => String(c.id) === String(idComunicado));
-            if (!com) {
-                console.warn('Comunicado no encontrado en memoria:', idComunicado);
-                return;
+                if (dom.tbody) dom.tbody.innerHTML = html;
             }
 
-            comunicadoActual = com;
-            _poblarFormulario(com);
+            /**
+             * Abre el detalle del comunicado en MODAL (Vista Rápida)
+             */
+            function abrirModal(idComunicado) {
+                if (!idComunicado) return;
+                const com = state.comunicados.find(c => String(c.id) === String(idComunicado));
+                if (!com) {
+                    console.warn('Comunicado no encontrado en memoria:', idComunicado);
+                    return;
+                }
 
-            // Asegurar modo lectura al abrir
-            _toggleEdicion(false);
+                comunicadoActual = com;
+                _poblarFormulario(com);
 
-            // FIX: Asegurar que se muestra el contenido y se oculta el loader
-            if (dom.modalLoader) dom.modalLoader.classList.add('d-none');
-            if (dom.modalContent) dom.modalContent.classList.remove('d-none');
-            if (dom.modalError) dom.modalError.classList.add('d-none');
+                // Asegurar modo lectura al abrir
+                _toggleEdicion(false);
 
-            if (modalInstance) {
-                modalInstance.show();
-            } else {
-                console.error('Instancia del modal no inicializada');
+                // FIX: Asegurar que se muestra el contenido y se oculta el loader
+                if (dom.modalLoader) dom.modalLoader.classList.add('d-none');
+                if (dom.modalContent) dom.modalContent.classList.remove('d-none');
+                if (dom.modalError) dom.modalError.classList.add('d-none');
+
+                if (modalInstance) {
+                    modalInstance.show();
+                } else {
+                    console.error('Instancia del modal no inicializada');
+                }
             }
-        }
 
-        /**
-         * Formatea moneda
-         */
-        function _formatCurrency(val) {
-            const num = parseFloat(val) || 0;
-            return '$' + num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-        }
-
-        /**
-         * Muestra un mensaje de error
-         */
-        function _renderError(message) {
-            if (dom.errorAlert) {
-                dom.errorAlert.textContent = message;
-                dom.errorAlert.classList.remove('d-none');
+            /**
+             * Formatea moneda
+             */
+            function _formatCurrency(val) {
+                const num = parseFloat(val) || 0;
+                return '$' + num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
             }
-        }
 
-        /**
-         * Formatea una fecha para el input date (YYYY-MM-DD)
-         */
-        function _formatearFechaInput(fecha) {
-            if (!fecha) return '';
-            try {
-                if (typeof fecha === 'string') {
-                    if (fecha.includes('/')) {
-                        const partes = fecha.split('/');
-                        if (partes.length === 3) {
-                            const dia = partes[0].padStart(2, '0');
-                            const mes = partes[1].padStart(2, '0');
-                            const anio = partes[2];
-                            return `${anio}-${mes}-${dia}`;
+            /**
+             * Muestra un mensaje de error
+             */
+            function _renderError(message) {
+                if (dom.errorAlert) {
+                    dom.errorAlert.textContent = message;
+                    dom.errorAlert.classList.remove('d-none');
+                }
+            }
+
+            /**
+             * Formatea una fecha para el input date (YYYY-MM-DD)
+             */
+            function _formatearFechaInput(fecha) {
+                if (!fecha) return '';
+                try {
+                    if (typeof fecha === 'string') {
+                        if (fecha.includes('/')) {
+                            const partes = fecha.split('/');
+                            if (partes.length === 3) {
+                                const dia = partes[0].padStart(2, '0');
+                                const mes = partes[1].padStart(2, '0');
+                                const anio = partes[2];
+                                return `${anio}-${mes}-${dia}`;
+                            }
                         }
+                        if (fecha.includes('T')) {
+                            return fecha.split('T')[0];
+                        }
+                        return fecha;
                     }
-                    if (fecha.includes('T')) {
-                        return fecha.split('T')[0];
+                    if (fecha instanceof Date) {
+                        return fecha.toISOString().split('T')[0];
                     }
-                    return fecha;
+                } catch (e) {
+                    console.error('Error formateando fecha:', fecha, e);
                 }
-                if (fecha instanceof Date) {
-                    return fecha.toISOString().split('T')[0];
-                }
-            } catch (e) {
-                console.error('Error formateando fecha:', fecha, e);
+                return '';
             }
-            return '';
-        }
 
-        /**
-         * Navega a la vista de detalle del comunicado (Gestión Completa)
-         */
-        async function verDetalle(idComunicado) {
-            if (!idComunicado) return;
-            // Guardar ID en sesión para que la nueva vista lo recupere
-            sessionStorage.setItem('currentComunicadoId', String(idComunicado));
-            // Navegar a la nueva ruta
-            location.hash = '#/comunicado-detalle';
-        }
+            /**
+             * Navega a la vista de detalle del comunicado (Gestión Completa)
+             */
+            async function verDetalle(idComunicado) {
+                if (!idComunicado) return;
+                // Guardar ID en sesión para que la nueva vista lo recupere
+                sessionStorage.setItem('currentComunicadoId', String(idComunicado));
+                // Navegar a la nueva ruta
+                location.hash = '#/comunicado-detalle';
+            }
 
-        /**
-         * Pobla el formulario del modal con los datos del comunicado
-         */
-        function _poblarFormulario(com) {
-            // Campos básicos
-            const setVal = (id, val) => {
-                const el = document.getElementById(id);
-                if (el) el.value = val || '';
-            };
-
-            setVal('detalle-comunicado', com.comunicado);
-            setVal('detalle-fecha', _formatearFechaInput(com.fecha));
-            setVal('detalle-descripcion', com.descripcion);
-
-            // Estado (Select)
-            setVal('detalle-estado', com.idEstado);
-
-            // Combobox Híbridos
-            setVal('detalle-distrito', com.distrito);
-            setVal('detalle-siniestro', com.siniestro);
-
-            // Siniestro Detalles (Fenomeno, FI, Fondo)
-            setVal('detalle-fenomeno', com.fenomeno);
-            setVal('detalle-fi', com.fi);
-            setVal('detalle-fondo', com.fondo);
-
-            // Forzar actualización visual de readonly/bg-color para siniestro
-            _actualizarDetallesSiniestro();
-        }
-
-        /**
-         * Guarda los cambios del comunicado
-         */
-        async function _guardarCambios() {
-            if (!comunicadoActual) return;
-
-            dom.btnGuardar.disabled = true;
-            dom.btnGuardar.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Guardando...';
-
-            try {
-                const updates = {
-                    comunicado: document.getElementById('detalle-comunicado').value,
-                    fecha: document.getElementById('detalle-fecha').value,
-                    idEstado: document.getElementById('detalle-estado').value,
-                    descripcion: document.getElementById('detalle-descripcion').value,
-                    distrito: document.getElementById('detalle-distrito').value,
-                    siniestro: document.getElementById('detalle-siniestro').value,
-                    fenomeno: document.getElementById('detalle-fenomeno').value,
-                    fi: document.getElementById('detalle-fi').value,
-                    fondo: document.getElementById('detalle-fondo').value
+            /**
+             * Pobla el formulario del modal con los datos del comunicado
+             */
+            function _poblarFormulario(com) {
+                // Campos básicos
+                const setVal = (id, val) => {
+                    const el = document.getElementById(id);
+                    if (el) el.value = val || '';
                 };
 
-                console.log('💾 Guardando comunicado con datos:', updates);
+                setVal('detalle-comunicado', com.comunicado);
+                setVal('detalle-fecha', _formatearFechaInput(com.fecha));
+                setVal('detalle-descripcion', com.descripcion);
 
-                await serverCall('updateComunicado', comunicadoActual.id, updates);
+                // Estado (Select)
+                setVal('detalle-estado', com.idEstado);
 
-                if (modalInstance) modalInstance.hide();
-                await _loadComunicados();
+                // Combobox Híbridos
+                setVal('detalle-distrito', com.distrito);
+                setVal('detalle-siniestro', com.siniestro);
 
-                // Usar SweetAlert2 si está disponible (globalThis.Swal)
-                const swal = globalThis.Swal;
-                if (swal) {
-                    swal.fire({
-                        icon: 'success',
-                        title: 'Actualizado',
-                        text: 'Comunicado actualizado correctamente',
-                        timer: 1500,
-                        showConfirmButton: false
-                    });
+                // Siniestro Detalles (Fenomeno, FI, Fondo)
+                setVal('detalle-fenomeno', com.fenomeno);
+                setVal('detalle-fi', com.fi);
+                setVal('detalle-fondo', com.fondo);
+
+                // Forzar actualización visual de readonly/bg-color para siniestro
+                _actualizarDetallesSiniestro();
+            }
+
+            /**
+             * Guarda los cambios del comunicado
+             */
+            async function _guardarCambios() {
+                if (!comunicadoActual) return;
+
+                dom.btnGuardar.disabled = true;
+                dom.btnGuardar.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Guardando...';
+
+                try {
+                    const updates = {
+                        comunicado: document.getElementById('detalle-comunicado').value,
+                        fecha: document.getElementById('detalle-fecha').value,
+                        idEstado: document.getElementById('detalle-estado').value,
+                        descripcion: document.getElementById('detalle-descripcion').value,
+                        distrito: document.getElementById('detalle-distrito').value,
+                        siniestro: document.getElementById('detalle-siniestro').value,
+                        fenomeno: document.getElementById('detalle-fenomeno').value,
+                        fi: document.getElementById('detalle-fi').value,
+                        fondo: document.getElementById('detalle-fondo').value
+                    };
+
+                    console.log('💾 Guardando comunicado con datos:', updates);
+
+                    await serverCall('updateComunicado', comunicadoActual.id, updates);
+
+                    if (modalInstance) modalInstance.hide();
+                    await _loadComunicados();
+
+                    // Usar SweetAlert2 si está disponible (globalThis.Swal)
+                    const swal = globalThis.Swal;
+                    if (swal) {
+                        swal.fire({
+                            icon: 'success',
+                            title: 'Actualizado',
+                            text: 'Comunicado actualizado correctamente',
+                            timer: 1500,
+                            showConfirmButton: false
+                        });
+                    } else {
+                        alert('Comunicado actualizado correctamente');
+                    }
+
+                } catch (error) {
+                    console.error('Error guardando cambios:', error);
+                    dom.modalError.textContent = error.message;
+                    dom.modalError.classList.remove('d-none');
+                } finally {
+                    dom.btnGuardar.disabled = false;
+                    dom.btnGuardar.innerHTML = '<i class="bi bi-save"></i> Guardar Cambios';
+                }
+            }
+
+            /**
+             * Lógica de Eliminación (Listado)
+             */
+            let itemsToDeleteId = null;
+
+            function confirmarEliminar(id) {
+                console.log('Solicitud de eliminación para:', id);
+                if (!id) return;
+                itemsToDeleteId = id;
+
+                if (dom.modalInstanceDelete) {
+                    dom.modalInstanceDelete.show();
                 } else {
-                    alert('Comunicado actualizado correctamente');
-                }
-
-            } catch (error) {
-                console.error('Error guardando cambios:', error);
-                dom.modalError.textContent = error.message;
-                dom.modalError.classList.remove('d-none');
-            } finally {
-                dom.btnGuardar.disabled = false;
-                dom.btnGuardar.innerHTML = '<i class="bi bi-save"></i> Guardar Cambios';
-            }
-        }
-
-        /**
-         * Lógica de Eliminación (Listado)
-         */
-        let itemsToDeleteId = null;
-
-        function confirmarEliminar(id) {
-            console.log('Solicitud de eliminación para:', id);
-            if (!id) return;
-            itemsToDeleteId = id;
-
-            if (dom.modalInstanceDelete) {
-                dom.modalInstanceDelete.show();
-            } else {
-                // Fallback
-                if (confirm('¿Confirma que desea eliminar este comunicado y TODOS sus datos asociados?\nEsta acción no se puede deshacer.')) {
-                    _handleDeleteConfirm();
+                    // Fallback
+                    if (confirm('¿Confirma que desea eliminar este comunicado y TODOS sus datos asociados?\nEsta acción no se puede deshacer.')) {
+                        _handleDeleteConfirm();
+                    }
                 }
             }
-        }
 
-        async function _handleDeleteConfirm() {
-            if (!itemsToDeleteId) return;
+            async function _handleDeleteConfirm() {
+                if (!itemsToDeleteId) return;
 
-            const btn = dom.btnConfirmDeleteList;
-            const originalText = btn ? btn.innerHTML : '';
-            if (btn) {
-                btn.disabled = true;
-                btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Eliminando...';
-            }
-
-            try {
-                const res = await serverCall('deleteComunicado', itemsToDeleteId);
-                console.log('Delete result:', res);
-
-                if (dom.modalInstanceDelete) dom.modalInstanceDelete.hide();
-
-                // Mostrar éxito
-                const swal = globalThis.Swal;
-                if (swal) {
-                    swal.fire({
-                        icon: 'success',
-                        title: 'Eliminado',
-                        text: 'El comunicado y todos sus datos han sido eliminados.',
-                        timer: 1500,
-                        showConfirmButton: false
-                    });
-                } else {
-                    alert('Comunicado eliminado correctamente.');
-                }
-
-                // Recargar tabla
-                _loadComunicados();
-
-            } catch (error) {
-                console.error('Error eliminando:', error);
-                alert('Error al eliminar: ' + error.message);
-            } finally {
-                itemsToDeleteId = null;
+                const btn = dom.btnConfirmDeleteList;
+                const originalText = btn ? btn.innerHTML : '';
                 if (btn) {
-                    btn.disabled = false;
-                    btn.innerHTML = originalText || 'Eliminar';
+                    btn.disabled = true;
+                    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Eliminando...';
+                }
+
+                try {
+                    const res = await serverCall('deleteComunicado', itemsToDeleteId);
+                    console.log('Delete result:', res);
+
+                    if (dom.modalInstanceDelete) dom.modalInstanceDelete.hide();
+
+                    // Mostrar éxito
+                    const swal = globalThis.Swal;
+                    if (swal) {
+                        swal.fire({
+                            icon: 'success',
+                            title: 'Eliminado',
+                            text: 'El comunicado y todos sus datos han sido eliminados.',
+                            timer: 1500,
+                            showConfirmButton: false
+                        });
+                    } else {
+                        alert('Comunicado eliminado correctamente.');
+                    }
+
+                    // Recargar tabla
+                    _loadComunicados();
+
+                } catch (error) {
+                    console.error('Error eliminando:', error);
+                    alert('Error al eliminar: ' + error.message);
+                } finally {
+                    itemsToDeleteId = null;
+                    if (btn) {
+                        btn.disabled = false;
+                        btn.innerHTML = originalText || 'Eliminar';
+                    }
                 }
             }
+
+            /**
+             * Función de inicialización principal
+             */
+            const init = async (container) => {
+                try {
+                    await _mount(container);
+                    _cacheDomElements();
+                    await _loadComunicados(); // Esto cargará catálogos también
+
+                    // Inicializar módulo de importación si está disponible (Modal)
+                    if (globalThis.Importacion) {
+                        Importacion.mount();
+                    }
+
+                    console.log('✅ Componente Comunicados listo');
+                } catch (error) {
+                    console.error('❌ FALLO CRÍTICO EN LA CARGA de Comunicados:', error);
+                    container.innerHTML = `<div class="alert alert-danger">Error fatal al cargar: ${error.message}</div>`;
+                }
+            };
+
+            const mount = async (container) => init(container);
+
+            // Exportar componente
+            return {
+                init,
+                mount,
+                abrirModal,
+                verDetalle,
+                confirmarEliminar,
+                recargar: _loadComunicados,
+                ordenar: _handleSort
+            };
+
+        } catch (e) {
+            console.error('❌ CRITICAL ERROR INITIALIZING COMUNICADOS:', e);
+            // Return minimal fallback to prevent total crash
+            return {
+                init: () => console.error('Componente Comunicados falló al inicializar:', e),
+                mount: () => { },
+                render: () => '<div class="alert alert-danger">Error crítico cargando módulo Comunicados. Revise la consola.</div>'
+            };
         }
-
-        /**
-         * Función de inicialización principal
-         */
-        const init = async (container) => {
-            try {
-                await _mount(container);
-                _cacheDomElements();
-                await _loadComunicados(); // Esto cargará catálogos también
-
-                // Inicializar módulo de importación si está disponible (Modal)
-                if (globalThis.Importacion) {
-                    Importacion.mount();
-                }
-
-                console.log('✅ Componente Comunicados listo');
-            } catch (error) {
-                console.error('❌ FALLO CRÍTICO EN LA CARGA de Comunicados:', error);
-                container.innerHTML = `<div class="alert alert-danger">Error fatal al cargar: ${error.message}</div>`;
-            }
-        };
-
-        const mount = async (container) => init(container);
-
-        // Exportar componente
-        return {
-            init,
-            mount,
-            abrirModal,
-            verDetalle,
-            confirmarEliminar,
-            recargar: _loadComunicados,
-            ordenar: _handleSort
-        };
-
     })();
 </script>

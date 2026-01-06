@@ -97,11 +97,12 @@
                         <table class="table table-hover align-middle mb-0 small table-striped">
                             <thead class="bg-light sticky-top">
                                 <tr>
+                                    <th style="width: 30px;"></th>
                                     <th>Referencia</th>
                                     <th>Comunicado</th>
                                     <th>Tipo</th>
-                                    <th class="text-end">Total Doc</th>
-                                    <th class="text-end">Líneas</th>
+                                    <th class="text-center">No. Partidas</th>
+                                    <th class="text-end">Importe Partidas</th>
                                     <th class="text-center">Estado</th>
                                     <th>Detalles</th>
                                     <th class="text-center col-progress">Progreso</th>
@@ -196,6 +197,19 @@
         border-color: #0d6efd;
         background-color: #e9ecef !important;
         transform: scale(1.01);
+    }
+
+    /* Expandable Row Styles */
+    .cursor-pointer {
+        cursor: pointer;
+    }
+
+    .cursor-pointer:hover {
+        background-color: #f8f9fa !important;
+    }
+
+    .cursor-pointer td:first-child i {
+        transition: transform 0.2s ease;
     }
 
     /* AI Robot Loader Styles */
