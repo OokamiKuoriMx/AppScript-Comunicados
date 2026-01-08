@@ -2467,6 +2467,258 @@ function _loadCatalogsCache() {
     };
 }
 
+/**
+ * ============================================================================
+ * EXTRACCIÓN DIFERENCIAL: Obtener Estado del Presupuesto para Schema Injection
+ * ============================================================================
+ * Obtiene el estado consolidado (snapshot actual) del presupuesto para una referencia.
+ * Usado para inyectar al prompt de la IA las líneas que DEBE buscar en el PDF.
+ * 
+ * @param {string} refAjustador - Referencia del ajustador (ej: "GL098774")
+ * @param {object} cache - Cache de catálogos pre-cargados
+ * @returns {Array} Lista de líneas vigentes con formato para inyección IA:
+ *   [{id_bd, clave, descripcion_corta, categoria, importe_actual, comunicado_origen}]
+ */
+function getBudgetState(refAjustador, cache) {
+    const contexto = '[getBudgetState]';
+    if (!refAjustador || !cache) {
+        console.log(`${contexto} Sin referencia o cache. Retornando array vacío.`);
+        return [];
+    }
+
+    const refClean = String(refAjustador).toUpperCase().trim();
+    console.log(`${contexto} Buscando estado de presupuesto para: ${refClean}`);
+
+    // 1. Buscar cuenta por referencia
+    const cuenta = cache.cuentas?.find(c =>
+        String(c.referencia || '').toUpperCase().trim() === refClean ||
+        String(c.cuenta || '').toUpperCase().trim() === refClean
+    );
+
+    if (!cuenta) {
+        console.log(`${contexto} Cuenta no encontrada para ${refClean}. Retornando array vacío.`);
+        return [];
+    }
+
+    // 2. Obtener todos los comunicados de esta cuenta
+    const comunicados = cache.comunicados?.filter(c =>
+        String(c.idReferencia) === String(cuenta.id)
+    ) || [];
+
+    if (comunicados.length === 0) {
+        console.log(`${contexto} Sin comunicados para cuenta ${cuenta.id}. Retornando array vacío.`);
+        return [];
+    }
+
+    // 3. Construir estado consolidado (última versión vigente de cada línea)
+    // Usamos Map para deduplicar por idLinea
+    const lineasConsolidadas = new Map(); // idLinea -> objeto línea
+
+    // Cargar presupuestoLineas si no está en cache
+    let presupuestoLineas = cache.presupuestoLineas;
+    if (!presupuestoLineas) {
+        const response = readAllRows('presupuestoLineas');
+        presupuestoLineas = (response.success && response.data) ? response.data : [];
+    }
+
+    // Construir mapa de actualizaciones para acceso rápido
+    const actualizacionesPorCom = new Map();
+    cache.actualizaciones?.forEach(a => {
+        const comId = String(a.idComunicado);
+        if (!actualizacionesPorCom.has(comId)) {
+            actualizacionesPorCom.set(comId, []);
+        }
+        actualizacionesPorCom.get(comId).push(a);
+    });
+
+    // Para cada comunicado de la cuenta, obtener sus líneas
+    for (const com of comunicados) {
+        const comId = String(com.id);
+        const actualizaciones = actualizacionesPorCom.get(comId) || [];
+
+        if (actualizaciones.length === 0) continue;
+
+        // Ordenar por consecutivo descendente para tomar la más reciente
+        actualizaciones.sort((a, b) => Number(b.consecutivo) - Number(a.consecutivo));
+        const ultimaAct = actualizaciones[0];
+
+        // Obtener líneas de esta actualización
+        const lineasDeAct = presupuestoLineas.filter(l =>
+            String(l.idActualizacion) === String(ultimaAct.id) &&
+            (l.esVigente === true || l.esVigente === 'true' || l.esVigente === 1)
+        );
+
+        for (const linea of lineasDeAct) {
+            const idLinea = String(linea.idLinea);
+
+            // Buscar descripción en cache
+            const desc = cache.descripcionLineas?.find(d =>
+                String(d.id) === idLinea
+            );
+
+            // Solo agregar si no existe o si esta versión es más reciente
+            // (el consecutivo más alto gana)
+            const existing = lineasConsolidadas.get(idLinea);
+            if (!existing || Number(ultimaAct.consecutivo) > Number(existing._consecutivo)) {
+                lineasConsolidadas.set(idLinea, {
+                    id_bd: idLinea,
+                    id_linea_presupuesto: linea.id,
+                    clave: linea.clave || desc?.clave || null,
+                    descripcion_corta: desc?.descripcion || 'Sin descripción',
+                    categoria: _normalizarCategoria(linea.categoria || desc?.categoria),
+                    importe_actual: parseFloat(linea.importe || 0),
+                    comunicado_origen: com.comunicado,
+                    _consecutivo: ultimaAct.consecutivo // Interno para comparación
+                });
+            }
+        }
+    }
+
+    // 4. Limpiar campos internos y retornar
+    const resultado = Array.from(lineasConsolidadas.values()).map(l => {
+        delete l._consecutivo;
+        return l;
+    });
+
+    console.log(`${contexto} ✓ ${resultado.length} líneas vigentes encontradas para ${refClean}`);
+    return resultado;
+}
+
+/**
+ * Normaliza la categoría a formato estándar (1=DAÑO FISICO, 2=DESAZOLVES)
+ */
+function _normalizarCategoria(cat) {
+    if (!cat) return 'DAÑO FISICO';
+    const catStr = String(cat).toUpperCase().trim();
+    if (catStr === '2' || catStr.includes('DESAZOLVE')) return 'DESAZOLVES';
+    return 'DAÑO FISICO';
+}
+
+/**
+ * ============================================================================
+ * FUSIÓN DIFERENCIAL: Merge Inteligente de Líneas
+ * ============================================================================
+ * Fusiona los cambios reportados por la IA con el estado vigente del presupuesto.
+ * Implementa lógica de MANTENER/ACTUALIZAR/CANCELAR/CREAR.
+ * 
+ * @param {Array} lineasIA - Array de líneas extraídas por la IA del PDF
+ * @param {Array} estadoVigente - Estado actual del presupuesto (de getBudgetState)
+ * @param {string} comunicadoId - ID del comunicado siendo procesado
+ * @param {object} opciones - Opciones de fusión
+ *   - esReemplazoTotal {boolean}: Si true, las líneas no encontradas se ponen a $0
+ *   - toleranciaImporte {number}: Diferencia mínima para considerar cambio (default: 0.01)
+ * @returns {object} {lineasFinales, estadisticas}
+ */
+function fusionarResultados(lineasIA, estadoVigente, comunicadoId, opciones = {}) {
+    const contexto = '[fusionarResultados]';
+    const esReemplazoTotal = opciones.esReemplazoTotal || false;
+    const tolerancia = opciones.toleranciaImporte || 0.01;
+
+    const lineasFinales = [];
+    const stats = { mantenidas: 0, actualizadas: 0, canceladas: 0, nuevas: 0 };
+
+    // Normalización para matching
+    const _normKey = (concepto, categoria) => {
+        const normConcepto = String(concepto || '').toUpperCase().trim()
+            .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+            .replace(/\s+/g, ' ');
+        const normCat = _normalizarCategoria(categoria);
+        return `${normConcepto}|${normCat}`;
+    };
+
+    // Indexar líneas de la IA para búsqueda rápida
+    const mapaIA = new Map();
+    (lineasIA || []).forEach(l => {
+        const key = _normKey(l.concepto, l.categoria);
+        mapaIA.set(key, {
+            ...l,
+            importe: parseFloat(l.importe || 0),
+            _procesada: false
+        });
+    });
+
+    console.log(`${contexto} Iniciando fusión: ${estadoVigente.length} líneas vigentes vs ${lineasIA?.length || 0} líneas de IA`);
+
+    // 1. Procesar líneas existentes (del estado vigente)
+    for (const linea of estadoVigente) {
+        const key = _normKey(linea.descripcion_corta, linea.categoria);
+        const coincidencia = mapaIA.get(key);
+
+        if (!coincidencia) {
+            // Línea NO aparece en el PDF actual
+            if (esReemplazoTotal) {
+                // Reemplazo total: Cancelar (poner a $0)
+                lineasFinales.push({
+                    ...linea,
+                    importe: 0,
+                    accion: 'CANCELAR',
+                    origen: `Cancelado por ${comunicadoId} (Reemplazo Total)`
+                });
+                stats.canceladas++;
+            } else {
+                // Actualización parcial: Mantener valor anterior
+                lineasFinales.push({
+                    ...linea,
+                    accion: 'MANTENER',
+                    origen: 'Mantenido (no mencionado en PDF)'
+                });
+                stats.mantenidas++;
+            }
+        } else {
+            // Línea SÍ aparece en el PDF
+            const importeNuevo = coincidencia.importe;
+            const importeAnterior = linea.importe_actual || 0;
+            const diferencia = Math.abs(importeNuevo - importeAnterior);
+
+            if (diferencia > tolerancia) {
+                // Hay cambio de importe
+                lineasFinales.push({
+                    ...linea,
+                    importe: importeNuevo,
+                    importe_anterior: importeAnterior,
+                    accion: importeNuevo === 0 ? 'CANCELAR' : 'ACTUALIZAR',
+                    origen: `Actualizado por ${comunicadoId}`
+                });
+                stats.actualizadas++;
+            } else {
+                // Mismo importe, mantener
+                lineasFinales.push({
+                    ...linea,
+                    accion: 'MANTENER',
+                    origen: 'Sin cambios'
+                });
+                stats.mantenidas++;
+            }
+
+            // Marcar como procesada
+            coincidencia._procesada = true;
+        }
+    }
+
+    // 2. Procesar líneas nuevas (en IA pero no en estado vigente)
+    mapaIA.forEach((lineaIA, key) => {
+        if (!lineaIA._procesada) {
+            lineasFinales.push({
+                id_bd: null, // Se generará al insertar
+                clave: null,
+                descripcion_corta: lineaIA.concepto,
+                categoria: _normalizarCategoria(lineaIA.categoria),
+                importe: lineaIA.importe,
+                accion: 'CREAR',
+                origen: `Creado por ${comunicadoId}`
+            });
+            stats.nuevas++;
+        }
+    });
+
+    console.log(`${contexto} ✓ Fusión completada: ${stats.mantenidas} mantenidas, ${stats.actualizadas} actualizadas, ${stats.canceladas} canceladas, ${stats.nuevas} nuevas`);
+
+    return {
+        lineasFinales: lineasFinales,
+        estadisticas: stats
+    };
+}
+
 function _updateCache(cache, tableKey, newIds, originalKeys, keyField) {
     // Actualiza el cache local con los nuevos registros insertados
     // originalKeys es array de strings (nombres) o array de keys si es compuesto

@@ -89,10 +89,15 @@ function procesarPdfIA(payload, optFilename) {
         }
 
         // === CONSULTA BD: Obtener contexto preciso con formato {header, lineas} ===
+        // ACTUALIZADO: _consultarContextoBD ahora retorna {registros, expectedLines}
         let registrosContextoBD = [];
+        let expectedLines = []; // NUEVO: Líneas esperadas para Schema Injection
+
         if (payload.refCta && payload.comunicadoId && cache) {
-            registrosContextoBD = _consultarContextoBD(payload.refCta, payload.comunicadoId, cache);
-            console.log(`[${contexto}] Contexto BD: ${registrosContextoBD.length} registros con formato unificado`);
+            const contextoBD = _consultarContextoBD(payload.refCta, payload.comunicadoId, cache);
+            registrosContextoBD = contextoBD.registros || [];
+            expectedLines = contextoBD.expectedLines || [];
+            console.log(`[${contexto}] Contexto BD: ${registrosContextoBD.length} registros, ${expectedLines.length} líneas esperadas`);
         }
 
         // Loop de Intentos con Auto-Corrección (PASADA 2)
@@ -147,7 +152,17 @@ function procesarPdfIA(payload, optFilename) {
 
                 console.log(`[${contexto}] Total contexto unificado: ${registrosContextoUnificado.length} registros`);
 
-                const jsonResponse = _callGeminiWithPdf(base64Content, filename, lastError, catalogsContext, existingConcepts, registrosContextoUnificado);
+                // =========================================================================
+                // FLUJO BIFURCADO: Determinar modo ORIGEN vs ACTUALIZACIÓN
+                // =========================================================================
+                // REGLA CLAVE:
+                // - Si expectedLines.length === 0 → MODO ORIGEN (extracción total)
+                // - Si expectedLines.length > 0  → MODO ACTUALIZACIÓN (extracción diferencial)
+                // =========================================================================
+                const esOrigen = expectedLines.length === 0;
+                console.log(`[${contexto}] MODO DE EXTRACCIÓN: ${esOrigen ? 'ORIGEN (Línea Base)' : 'ACTUALIZACIÓN (Diferencial)'} [${expectedLines.length} líneas previas]`);
+
+                const jsonResponse = _callGeminiWithPdf(base64Content, filename, lastError, catalogsContext, existingConcepts, registrosContextoUnificado, expectedLines, esOrigen);
 
                 // Validar Lógica de Negocio básica (Suma)
                 const validacion = _validarLogicaNegocio(jsonResponse);
@@ -697,12 +712,38 @@ function _consultarContextoBD(refAjustador, comunicadoId, cache) {
             String(r.header.comunicadoId).toUpperCase() !== String(comunicadoId).toUpperCase()
         );
 
-        console.log(`${contexto} ✓ Retornando ${resultado.length} registros de contexto BD`);
-        return resultado;
+        // 7. NUEVO: Construir lista plana de conceptos esperados para Schema Injection
+        // Esta lista se inyecta al prompt para que la IA busque importes ESPECÍFICOS
+        const expectedLines = [];
+        for (const reg of resultado) {
+            for (const linea of reg.lineas || []) {
+                if (linea.concepto && linea.concepto !== 'Sin descripción') {
+                    // Evitar duplicados por concepto+categoria
+                    const key = `${linea.concepto}|${linea.categoria}`;
+                    if (!expectedLines.some(e => `${e.concepto}|${e.categoria}` === key)) {
+                        expectedLines.push({
+                            concepto: linea.concepto,
+                            categoria: linea.categoria || 'DAÑO FISICO',
+                            importe_previo: linea.importe || 0,
+                            comunicado_origen: reg.header.comunicadoId
+                        });
+                    }
+                }
+            }
+        }
+
+        console.log(`${contexto} ✓ Retornando ${resultado.length} registros de contexto BD, ${expectedLines.length} líneas esperadas`);
+
+        // IMPORTANTE: Retornar objeto con ambas estructuras
+        // Los consumidores que esperaban array deben actualizarse
+        return {
+            registros: resultado,
+            expectedLines: expectedLines
+        };
 
     } catch (error) {
         console.error(`${contexto} Error:`, error);
-        return [];
+        return { registros: [], expectedLines: [] };
     }
 }
 
@@ -711,12 +752,13 @@ function _consultarContextoBD(refAjustador, comunicadoId, cache) {
  * Gemini 1.5/2.0 puede leer PDFs nativamente sin necesidad de OCR previo.
  * @param {string} base64Content - Contenido del PDF en Base64
  * @param {string} filename - Nombre del archivo
- * @param {string} errorFeedback - Mensaje de error previo para retry
  * @param {object} catalogs - Catálogos de entidades para matching
  * @param {Array} existingConcepts - Conceptos de ubicación existentes del batch/BD
  * @param {Array} relatedRecords - Registros relacionados para carry-forward
+ * @param {Array} expectedLines - Líneas esperadas para Schema Injection (extracción dirigida)
+ * @param {boolean} esOrigen - Si true, es documento ORIGEN (extracción total); si false, es ACTUALIZACIÓN (diferencial)
  */
-function _callGeminiWithPdf(base64Content, filename, errorFeedback = null, catalogs = null, existingConcepts = [], relatedRecords = []) {
+function _callGeminiWithPdf(base64Content, filename, errorFeedback = null, catalogs = null, existingConcepts = [], relatedRecords = [], expectedLines = [], esOrigen = true) {
     const apiKey = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY');
     if (!apiKey) throw new Error('GEMINI_API_KEY no configurada en Propiedades del Script.');
 
@@ -734,6 +776,40 @@ function _callGeminiWithPdf(base64Content, filename, errorFeedback = null, catal
     - **PDF**: Contenido completo del documento.
     - **CATÁLOGOS** (Opcional): Listas maestras para *entity resolution* (Ajustadores, Distritos, Fenómenos, Aseguradoras).
     - **REGISTRO_PREVIO** (Opcional): Objeto JSON del comunicado anterior (\`prev.header\`, \`prev.lineas\`).
+    `;
+
+    // =========================================================================
+    // FLUJO BIFURCADO: Inyectar instrucciones según MODO
+    // =========================================================================
+    if (esOrigen) {
+        // MODO ORIGEN: Extracción Total (Línea Base)
+        console.log('[_callGeminiWithPdf] MODO: ORIGEN - Extracción Total de Partidas');
+        promptSystem += `
+
+## 🟢 MODO ORIGEN (LÍNEA BASE - EXTRACCIÓN TOTAL)
+
+**CONTEXTO:** Este es el DOCUMENTO ORIGINAL. Debes extraer TODAS las partidas válidas del presupuesto.
+
+### INSTRUCCIONES DE EXTRACCIÓN TOTAL:
+1. **IDENTIFICA** la tabla principal de conceptos/presupuesto en el PDF
+2. **EXTRAE** CADA fila que contenga: Ubicación/Concepto y Monto
+3. **IGNORA** (no extraigas):
+   - Filas de subtotales, sumas acumuladas, "TOTAL", "IVA"
+   - Encabezados de página repetidos
+   - Tablas de "Resumen Financiero" (solo queremos el desglose detallado)
+4. **SEPARA** las columnas de "Daño Físico" y "Desazolves" en líneas independientes
+
+### REGLA IMPORTANTE PARA ORIGEN:
+- **EXTRAE TODO** lo que veas en la tabla de presupuesto
+- Si encuentras conceptos duplicados (mismo concepto en varios tramos), EXTRÁELOS TODOS como partidas individuales
+- NO omitas líneas aunque tengan importe $0.00 (son estructurales)
+`;
+    } else {
+        // MODO ACTUALIZACIÓN: Se inyectará Schema Injection más adelante
+        console.log('[_callGeminiWithPdf] MODO: ACTUALIZACIÓN - Extracción Diferencial');
+    }
+
+    promptSystem += `
 
     > **REGLA DE ORO:** Ejecuta secuencialmente los siguientes 8 PASOS. Cada paso consta de **exactamente 7 SUBPASOS** obligatorios. No omitas ninguno.
 
@@ -1107,6 +1183,46 @@ Si procesas "L50B" y el contexto tiene L50A con descripcion "GL098774-L50, L50A"
 
 Si procesas un concepto "Canal Lat. Coyuca" y en el contexto existe "Canal Lateral Coyuca":
 → Tu línea debe usar "Canal Lateral Coyuca" (el nombre normalizado)`;
+    }
+
+    // =========================================================================
+    // SCHEMA INJECTION: Extracción Dirigida de Importes (SOLO MODO ACTUALIZACIÓN)
+    // Solo se inyecta cuando NO es origen Y hay líneas esperadas
+    // =========================================================================
+    if (!esOrigen && expectedLines && expectedLines.length > 0) {
+        console.log(`[_callGeminiWithPdf] MODO ACTUALIZACIÓN: Inyectando ${expectedLines.length} líneas para Schema Injection`);
+        promptSystem += `
+
+## ⚡ EXTRACCIÓN DIRIGIDA (SCHEMA INJECTION - PRIORIDAD MÁXIMA)
+
+**CONTEXTO CRÍTICO:** Para esta referencia, YA EXISTEN los siguientes conceptos en la BD.
+Tu tarea es **BUSCAR EL IMPORTE ESPECÍFICO** de cada uno de estos conceptos en el PDF.
+
+### LISTA DE CONCEPTOS CONOCIDOS (BUSCAR EN PDF):
+${expectedLines.map((l, i) => `${i + 1}. "${l.concepto}" (${l.categoria}) [Importe previo: $${l.importe_previo?.toFixed(2) || '0.00'}]`).join('\n')}
+
+### INSTRUCCIONES DE EXTRACCIÓN DIRIGIDA:
+1. **ESCANEA** el PDF buscando EXACTAMENTE estos conceptos (o variaciones menores de nombre)
+2. Para cada concepto encontrado en el PDF, extrae el **IMPORTE TOTAL/FINAL** (NO el Precio Unitario)
+3. Si un concepto de la lista NO aparece en este PDF específico, **NO LO INCLUYAS** en el output
+   - ⚠️ NO inventes importes. Si no lo ves en el PDF, no lo reportes.
+4. Si encuentras un concepto NUEVO (no en la lista), agrégalo normalmente
+
+### COLUMNAS A EVITAR (NO SON EL IMPORTE FINAL):
+❌ "Precio Unitario", "P.U."
+❌ "Estimación Anterior", "Importe Anterior"
+❌ "Acumulado", "Previous Amount"
+❌ "Reclamado" (puede ser diferente al autorizado)
+
+### COLUMNAS CORRECTAS (BUSCAR):
+✅ "Importe", "Total", "Importe Revisado"
+✅ "Importe Daño Físico", "Importe Desazolves"
+✅ "Monto Autorizado", "Estimación CTA"
+
+### REGLA DE COINCIDENCIA:
+- Si el PDF dice "UR Aguas Blancas" y la lista tiene "Unidad de Riego Aguas Blancas", SON LO MISMO
+- Usa el nombre de la lista (el normalizado) en tu output, no el literal del PDF
+`;
     }
 
     if (errorFeedback) {
