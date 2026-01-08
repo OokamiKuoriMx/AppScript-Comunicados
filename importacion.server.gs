@@ -177,9 +177,22 @@ function _analizarDocumento(doc, cache, batchDocs = []) {
         statusAseguradora = { status: 'AMBIGUO', valor: h.valorOriginalAseguradora || h.aseguradoraNombre, advertencia: 'Ambigüedad detectada por IA' };
     }
 
+    // 1. Find Account ID (MOVED UP FOR CONTEXT)
+    const refClean = String(h.refCta || '').trim().toUpperCase();
+    let cta = cache.cuentas.find(c =>
+        String(c.referencia).toUpperCase().trim() === refClean ||
+        String(c.cuenta).toUpperCase().trim() === refClean
+    );
+
+
+    // Context-Aware Siniestro Check
+    const siniestrosContext = cta
+        ? cache.siniestros.filter(s => String(s.idReferencia) === String(cta.id))
+        : []; // Si no hay cuenta, no hay contexto válido, pero _checkStatus manejará lista vacía devolviendo NUEVO
+
     const analisis = {
         cuenta: _checkStatus(cache.cuentas, ['referencia', 'cuenta'], h.refCta),
-        siniestro: _checkStatus(cache.siniestros, 'siniestro', h.refSiniestro),
+        siniestro: _checkStatus(siniestrosContext, 'siniestro', h.refSiniestro),
         ajustador: statusAjustador,
         distrito: _checkStatusDistrito(cache.distritosRiego, h.distritoRiego, h.distritoRiegoAccion),
         aseguradora: statusAseguradora,
@@ -195,17 +208,36 @@ function _analizarDocumento(doc, cache, batchDocs = []) {
     let posibleDuplicadoId = null;  // Variable de scope para detección de duplicados
     let advertencia = null;
 
-    // 1. Find Account ID
-    const refClean = String(h.refCta || '').trim().toUpperCase();
-    const cta = cache.cuentas.find(c =>
-        String(c.referencia).toUpperCase().trim() === refClean ||
-        String(c.cuenta).toUpperCase().trim() === refClean
-    );
+    // 1. Account Discovery (Already Done Above)
+    // Logging only
+    console.log(`[Import] Buscando cuenta: refClean="${refClean}", encontrada=${!!cta}${cta ? ` (id=${cta.id})` : ''}`);
 
     console.log(`[Import] Buscando cuenta: refClean="${refClean}", encontrada=${!!cta}${cta ? ` (id=${cta.id})` : ''}`);
 
     if (!cta) {
-        console.log(`[Import] ADVERTENCIA: Cuenta "${refClean}" NO encontrada en cache. Cuentas disponibles: ${cache.cuentas.map(c => c.referencia).slice(0, 10).join(', ')}`);
+        // [FIX] Búsqueda en LOTE ACTUAL: Si es una cuenta nueva que está siendo creada en este mismo lote
+        if (batchDocs && batchDocs.length > 0) {
+            const ctaEnLote = batchDocs.find(d =>
+                String(d.header.refCta || '').toUpperCase().trim() === refClean
+            );
+
+            if (ctaEnLote) {
+                console.log(`[Import] Cuenta "${refClean}" encontrada en LOTE ACTUAL (Virtual).`);
+                // Crear objeto CTA virtual para permitir el procesamiento
+                // Nota: Usamos un ID temporal o marcador para indicar que es nueva
+                // El importador real deberá resolver esto insertando la cuenta primero
+                cta = {
+                    id: 'PENDIENTE_' + refClean,
+                    referencia: ctaEnLote.header.refCta,
+                    cuenta: ctaEnLote.header.refCta, // Fallback
+                    esVirtual: true
+                };
+            }
+        }
+
+        if (!cta) {
+            console.log(`[Import] ADVERTENCIA: Cuenta "${refClean}" NO encontrada en cache ni en lote. Cuentas disponibles: ${cache.cuentas.map(c => c.referencia).slice(0, 10).join(', ')}`);
+        }
     }
 
     if (cta) {
@@ -462,7 +494,7 @@ function _analizarDocumento(doc, cache, batchDocs = []) {
 
         // 3. NUEVO: Verificación de Contenido Duplicado (Líneas)
         // Si no es el mismo ID, pero tiene las mismas líneas/monto -> ALERTA DE DUPLICADO
-        let posibleDuplicadoId = null;
+        posibleDuplicadoId = null;
         if (!existingCom && statusCom !== 'ACTUALIZACION') {
             // Buscar en DB records con el Mismo Monto y Mismo Numero de Lineas (heurística rápida)
             const totalPayload = parseFloat(h.totalPdf || 0);
@@ -640,7 +672,7 @@ function _analizarDocumento(doc, cache, batchDocs = []) {
     return {
         ref: h.refCta,
         comunicado: h.comunicadoId,
-        tipo: h.tipoRegistro,
+        tipo: (String(h.tipoRegistro).toUpperCase() === 'ORIGEN') ? 'ORIGEN' : (h.comunicadoId || h.tipoRegistro),
         fecha: h.fechaDoc ? new Date(h.fechaDoc).toISOString().split('T')[0] : '',
         monto: h.totalPdf,
         sumaLineas: v.sumaLineas,
@@ -663,33 +695,29 @@ function _analizarDocumento(doc, cache, batchDocs = []) {
 function _parseVersion(comunicadoId) {
     if (!comunicadoId) return { base: '', sufijo: '', index: 0 };
 
-    // Limpieza previa: Si viene con guiones (GL070059-L30A), tomar la última parte.
-    let shortId = comunicadoId;
-    if (comunicadoId.includes('-')) {
-        const parts = comunicadoId.split('-');
-        shortId = parts[parts.length - 1]; // Tomar "L30A" de "GL...-L30A"
+    // Limpieza previa
+    let shortId = String(comunicadoId || '').trim().toUpperCase();
+    if (shortId.includes('-')) {
+        const parts = shortId.split('-');
+        shortId = parts[parts.length - 1].trim();
     }
-    shortId = shortId.trim();
 
-    // Regex: (Todo lo que no sea la ultima letra si es mayuscula) + (Letra opcional)
-    // Asumiendo formato estricto L(\d+)([A-Z]?)
-    const match = shortId.match(/^(L\d+)([A-Z])?$/);
+    // Regex Flexible: L + Digitos + (Opcional Letra)
+    // Soporta: L50, L 50, L50A, L50 A
+    const match = shortId.match(/^L\s*(\d+)\s*([A-Z])?$/);
 
     if (match) {
-        const base = match[1]; // L30
-        const sufijo = match[2] || ''; // A, B, o nada
+        const numero = match[1]; // 50
+        const base = `L${numero}`; // Normalizado a L50
+        const sufijo = match[2] || ''; // A
 
-        let index = 0;
-        if (sufijo) {
-            // A=1, B=2, C=3...
-            index = sufijo.charCodeAt(0) - 64;
-        }
+        // Calcular indice: Base=0, A=1, B=2
+        const index = sufijo ? (sufijo.charCodeAt(0) - 64) : 0;
 
-        return { base, sufijo, index };
+        return { base, sufijo, index, original: shortId };
     }
 
-    // Si no cumple patrón Lxx, retornar como base pura
-    return { base: shortId, sufijo: '', index: 0 };
+    return { base: shortId, sufijo: '', index: 0, original: shortId };
 }
 
 /**
@@ -740,12 +768,26 @@ function _construirHistorial(cache, cta, newComunicadoId) {
     if (!cta || !newComunicadoId) return null;
 
     const nueva = _parseVersion(newComunicadoId);
-    let historial = new Set();
 
-    // IMPORTANTE: Si es una actualización (tiene sufijo), siempre añadir la base primero
-    // Esto asegura que L30A siempre tenga L30 en historial incluso si L30 está en el mismo lote
-    if (nueva.sufijo) {
-        historial.add(nueva.base); // Añadir L30 si estamos procesando L30A
+    // Usar Map para deduplicar por versión normalizada (key=index, value=displayName)
+    // Esto evita duplicados como "L03A" vs "L03 A" vs "L03A " 
+    let historialMap = new Map();
+
+    // Helper para agregar versiones normalizadas
+    const addVersion = (versionStr) => {
+        if (!versionStr) return;
+        const parsed = _parseVersion(versionStr);
+        if (parsed.base === nueva.base) {
+            // Usar la forma normalizada como clave y valor
+            const normalized = parsed.sufijo ? `${parsed.base}${parsed.sufijo}` : parsed.base;
+            historialMap.set(parsed.index, normalized);
+        }
+    };
+
+    // REGLA DE ORO: Si es una versión extendida (A, B, C...), la BASE (L30) es obligatoria.
+    // L30A -> Requiere L30.
+    if (nueva.index > 0) {
+        addVersion(nueva.base);
     }
 
     // 1. Buscar en BD si ya existe algún hermano o el mismo registro (para sacar su historial previo)
@@ -759,44 +801,78 @@ function _construirHistorial(cache, cta, newComunicadoId) {
     // 2. Extraer historial de la descripción actual de esos hermanos
     // (Normalmente solo habrá 1 hermano si aplicamos la lógica de Unique Record)
     hermanos.forEach(h => {
-        // Añadir el nombre actual del registro (ej: L30A)
-        historial.add(h.comunicado);
+        // Añadir el nombre actual del registro (ej: L30A) - normalizado
+        addVersion(h.comunicado);
 
         // Buscar su DatosGenerales para leer la descripción histórica (ej: "Ref - L30, L30A")
         const dg = cache.datosGenerales.find(d => String(d.idComunicado) === String(h.id));
         if (dg && dg.descripcion) {
-            // Parsear descripción: "GL070059-L30, L30A" -> ["L30", "L30A"]
-            // Asumimos formato: TEXTO - v1, v2, v3
-            const partes = dg.descripcion.split('-');
-            if (partes.length > 1) {
-                const versionesStr = partes[1].trim(); // "L30, L30A"
+            // Parsear descripción: Manejar referencias con guiones "A-B-L50, L50A"
+            const refHeader = cta.referencia + '-';
+            let versionesStr = '';
+
+            if (dg.descripcion.startsWith(refHeader)) {
+                versionesStr = dg.descripcion.substring(refHeader.length).trim();
+            } else {
+                // Fallback: split (peligroso si ref tiene guiones)
+                const partes = dg.descripcion.split('-');
+                if (partes.length > 1) versionesStr = partes[1].trim();
+            }
+
+            if (versionesStr) {
                 const versiones = versionesStr.split(',').map(s => s.trim());
-                versiones.forEach(v => {
-                    // Solo añadir si parece una versión válida de la misma familia
-                    const vP = _parseVersion(v);
-                    if (vP.base === nueva.base) {
-                        historial.add(v);
-                    }
-                });
+                versiones.forEach(v => addVersion(v));
             }
         }
     });
 
-    // 3. Añadir el nuevo
-    historial.add(newComunicadoId);
+    // 3. Añadir el nuevo (normalizado)
+    addVersion(newComunicadoId);
 
-    // 4. Convertir a array y ordenar
-    const historialArr = Array.from(historial);
-    historialArr.sort((a, b) => {
-        const vA = _parseVersion(a);
-        const vB = _parseVersion(b);
-        return vA.index - vB.index;
-    });
+    // 4. Convertir a array ordenado por índice de versión
+    const historialArr = Array.from(historialMap.entries())
+        .sort((a, b) => a[0] - b[0])  // Ordenar por índice (key)
+        .map(entry => entry[1]);       // Extraer solo el valor (nombre normalizado)
 
     const historialStr = historialArr.join(', ');
     return `${cta.referencia}-${historialStr}`;
 }
 
+/**
+ * Verifica si una descripción ya contiene una versión específica.
+ * Usa normalización para evitar duplicados por diferencias de formato.
+ * Ej: "GL071709-L03, L03A" contiene "L03A", "L03 A", "L03A ", etc.
+ * 
+ * @param {string} descripcion - La descripción actual
+ * @param {string} versionActual - La versión a verificar (ej: "L03A")
+ * @returns {boolean} - true si la versión ya está contenida
+ */
+function _descripcionContieneVersion(descripcion, versionActual) {
+    if (!descripcion || !versionActual) return false;
+
+    // Parsear la versión buscada
+    const targetParsed = _parseVersion(versionActual);
+    if (!targetParsed.base) return false;
+
+    // Extraer versiones de la descripción
+    // Formato esperado: "REF-L03, L03A, L03B" o similar
+    const partes = String(descripcion).split('-');
+    if (partes.length < 2) return false;
+
+    const versionesStr = partes.slice(1).join('-'); // Reconstruir si la ref tiene guiones
+    const versiones = versionesStr.split(',').map(s => s.trim());
+
+    // Verificar si alguna versión parseada coincide con la buscada
+    for (const v of versiones) {
+        const parsed = _parseVersion(v);
+        // Mismo base y mismo índice = misma versión
+        if (parsed.base === targetParsed.base && parsed.index === targetParsed.index) {
+            return true;
+        }
+    }
+
+    return false;
+}
 
 
 /**
@@ -953,19 +1029,24 @@ function ejecutarImportacion(fileContent) {
             const refB = String(b.header.refCta || '').trim();
             if (refA !== refB) return refA.localeCompare(refB);
 
-            // 2. Por Familia (Base del Comunicado, ej: L30)
-            const vA = _parseVersion(a.header.comunicadoId);
-            const vB = _parseVersion(b.header.comunicadoId);
-            if (vA.base !== vB.base) return vA.base.localeCompare(vB.base);
+            // 2. ORIGEN Priority (CRÍTICO)
+            // Si uno es ORIGEN y el otro no, ORIGEN va primero.
+            const isOrigenA = String(a.header.tipoRegistro || '').toUpperCase() === 'ORIGEN';
+            const isOrigenB = String(b.header.tipoRegistro || '').toUpperCase() === 'ORIGEN';
+            if (isOrigenA && !isOrigenB) return -1;
+            if (!isOrigenA && isOrigenB) return 1;
 
-            // 3. Por Índice de Versión (Origen=0, A=1, B=2...)
-            if (vA.index !== vB.index) return vA.index - vB.index;
-
-            // 4. Por Fecha Documento (Desempate final)
-            // Priorizar más antiguos primero
+            // 3. Por Fecha Documento (Preferencia Usuario)
             const dateA = a.header.fechaDoc ? new Date(a.header.fechaDoc).getTime() : 0;
             const dateB = b.header.fechaDoc ? new Date(b.header.fechaDoc).getTime() : 0;
-            return dateA - dateB;
+            if (dateA !== dateB) return dateA - dateB;
+
+            // 4. Por Familia y Versión (Tiebreaker)
+            const vA = _parseVersion(a.header.comunicadoId);
+            const vB = _parseVersion(b.header.comunicadoId);
+
+            if (vA.base !== vB.base) return vA.base.localeCompare(vB.base);
+            return vA.index - vB.index;
         });
 
         console.log(`[${contexto}] Lote ordenado para consistencia: ${loteAgrupado.map(d => d.header.comunicadoId).join(' -> ')}`);
@@ -1372,7 +1453,7 @@ function _procesarBatchInterno(loteAgrupado, cache) {
                         const versionActual = doc.header.comunicadoId;
 
                         // Si la descripción actual ya NO contiene la versión actual, añadirla
-                        if (descripcionFinal && !descripcionFinal.includes(versionActual)) {
+                        if (descripcionFinal && !_descripcionContieneVersion(descripcionFinal, versionActual)) {
                             descripcionFinal = `${descripcionFinal}, ${versionActual}`;
                         } else if (!descripcionFinal) {
                             // Fallback: si no hay descripción existente, usar la de la IA
@@ -1426,7 +1507,7 @@ function _procesarBatchInterno(loteAgrupado, cache) {
                         let descripcionFinal = dgExistente.descripcion || '';
                         const versionActual = doc.header.comunicadoId;
 
-                        if (descripcionFinal && !descripcionFinal.includes(versionActual)) {
+                        if (descripcionFinal && !_descripcionContieneVersion(descripcionFinal, versionActual)) {
                             descripcionFinal = `${descripcionFinal}, ${versionActual}`;
                         } else if (!descripcionFinal) {
                             descripcionFinal = doc.header.descripcion || `${doc.header.refCta}-${versionActual}`;
@@ -1460,7 +1541,7 @@ function _procesarBatchInterno(loteAgrupado, cache) {
                         let descripcionFinal = dgEnBD.descripcion || '';
                         const versionActual = doc.header.comunicadoId;
 
-                        if (descripcionFinal && !descripcionFinal.includes(versionActual)) {
+                        if (descripcionFinal && !_descripcionContieneVersion(descripcionFinal, versionActual)) {
                             descripcionFinal = `${descripcionFinal}, ${versionActual}`;
                         } else if (!descripcionFinal) {
                             descripcionFinal = doc.header.descripcion || `${doc.header.refCta}-${versionActual}`;
@@ -1491,7 +1572,7 @@ function _procesarBatchInterno(loteAgrupado, cache) {
                     idComunicado: idComunicado,
                     consecutivo: consecutivo,
                     esOrigen: isOrigen && consecutivo === 1 ? 1 : 0,
-                    revision: isOrigen ? 'Origen' : doc.header.tipoRegistro,
+                    revision: isOrigen ? 'Origen' : (doc.header.comunicadoId || doc.header.tipoRegistro),
                     monto: doc.header.totalPdf,
                     montoCapturado: null,
                     montoSupervisión: (doc.header.totalPdf || 0) * 0.05,
@@ -1589,8 +1670,9 @@ function _procesarBatchInterno(loteAgrupado, cache) {
                     // RECALCULAR Historial en tiempo real usando el cache (que se irá actualizando en cada ciclo del loop)
                     const descCalculada = _construirHistorial(cache, ctaObj, doc.header.comunicadoId);
 
-                    // Prioridad: IA primero (si tiene descripción), si no, usar la calculada
-                    const descFinal = doc.header.descripcion || descCalculada || '';
+                    // Prioridad: Usar la calculada (sistema) para garantizar consistencia histórica
+                    // Solo usar AI si la calculada falló (null)
+                    const descFinal = descCalculada || doc.header.descripcion || '';
 
                     if (descFinal) {
                         const descNueva = String(descFinal).trim();
@@ -1658,7 +1740,9 @@ function _procesarBatchInterno(loteAgrupado, cache) {
                 const actsPrevias = cache.actualizaciones.filter(a => String(a.idComunicado) === String(idComunicado));
                 const actsEnBatch = batchActualizaciones.filter(a => String(a.idComunicado) === String(idComunicado));
 
-                const tipoRevision = doc.header.tipoRegistro || 'Actualización';
+                const tipoRevision = (doc.header.tipoRegistro === 'ORIGEN')
+                    ? 'Origen'
+                    : (doc.header.comunicadoId || doc.header.tipoRegistro || 'Actualización');
 
                 // Normalizar para comparar (ej: "ORIGEN" vs "Origen")
                 const yaExiste = [...actsPrevias, ...actsEnBatch].some(a =>
@@ -1738,7 +1822,7 @@ function _procesarBatchInterno(loteAgrupado, cache) {
                         let descripcionFinal = dg.descripcion || '';
                         const versionActual = ultimoDoc.header.comunicadoId;
 
-                        if (descripcionFinal && !descripcionFinal.includes(versionActual)) {
+                        if (descripcionFinal && !_descripcionContieneVersion(descripcionFinal, versionActual)) {
                             descripcionFinal = `${descripcionFinal}, ${versionActual}`;
                         } else if (!descripcionFinal) {
                             descripcionFinal = ultimoDoc.header.descripcion || `${ultimoDoc.header.refCta}-${versionActual}`;
@@ -1781,7 +1865,7 @@ function _procesarBatchInterno(loteAgrupado, cache) {
                         let descripcionFinal = dgInsertado.descripcion || '';
                         const versionActual = ultimoDoc.header.comunicadoId;
 
-                        if (descripcionFinal && !descripcionFinal.includes(versionActual)) {
+                        if (descripcionFinal && !_descripcionContieneVersion(descripcionFinal, versionActual)) {
                             descripcionFinal = `${descripcionFinal}, ${versionActual}`;
                         } else if (!descripcionFinal) {
                             descripcionFinal = ultimoDoc.header.descripcion || `${ultimoDoc.header.refCta}-${versionActual}`;
@@ -2012,83 +2096,97 @@ function _procesarBatchInterno(loteAgrupado, cache) {
                 lineasPorComunicado.get(String(idCom)).push({ linea, idx });
             });
 
-            // Para cada comunicado, buscar líneas existentes y hacer matching
-            const todasLineasBD = readAllRows('presupuestoLineas').data || [];
+            // [FIX] ESTRATEGIA DE DICCIONARIO POR CONTEXTO (CUENTA)
+            // Se busca coincidencia SOLO entre conceptos ya usados en la misma Cuenta.
+            // Esto evita 'contaminación' de conceptos entre proyectos distintos.
+
+            // 1. Pre-construir mapa de Uso por Cuenta: CuentaID -> Set(idLinea)
+            const mapUsoPorCuenta = new Map(); // idCuenta -> Set<idLinea>
+
+            // Para optimizar, iteramos presupuestoLineas y resolvemos su cuenta
+            if (cache.presupuestoLineas && cache.presupuestoLineas.length > 0) {
+                // Cache de Act->Cuenta para velocidad
+                const actToCuenta = new Map();
+                cache.actualizaciones.forEach(a => {
+                    const com = cache.comunicados.find(c => String(c.id) === String(a.idComunicado));
+                    if (com) actToCuenta.set(String(a.id), String(com.idReferencia));
+                });
+
+                cache.presupuestoLineas.forEach(pl => {
+                    const idCta = actToCuenta.get(String(pl.idActualizacion));
+                    if (idCta) {
+                        if (!mapUsoPorCuenta.has(idCta)) mapUsoPorCuenta.set(idCta, new Set());
+                        mapUsoPorCuenta.get(idCta).add(String(pl.idLinea));
+                    }
+                });
+            }
+
+            // 2. Indexar Descripciones globalmente para acceso rápido
+            const descripcionesMap = new Map(); // idLinea -> objeto descripcion
+            cache.descripcionLineas.forEach(d => descripcionesMap.set(String(d.id), d));
+
+            logBatch(`[${contexto}] Mapa de Uso por Cuenta construido. ${mapUsoPorCuenta.size} cuentas con historial.`);
 
             lineasPorComunicado.forEach((lineasDelCom, idComunicado) => {
-                logBatch(`[${contexto}] Procesando líneas para comunicado ${idComunicado}: ${lineasDelCom.length} líneas`);
+                // Determinar Cuenta del Comunicado Actual
+                const comObj = cache.comunicados.find(c => String(c.id) === String(idComunicado))
+                    || batchDocs.find(d => d.analisis && d.analisis.comunicado && String(d.analisis.comunicado.valor) === String(idComunicado));
 
-                // Obtener todos los idActualizacion de este comunicado (de BD + batch actual)
-                const actualizacionesDelCom = cache.actualizaciones
-                    .filter(a => String(a.idComunicado) === String(idComunicado))
-                    .map(a => String(a.id));
+                // Si es nuevo (batchDocs), necesitamos encontrar su cuenta via header refCta -> cache.cuentas
+                let idCuentaContexto = null;
+                if (comObj && comObj.idReferencia) {
+                    idCuentaContexto = String(comObj.idReferencia);
+                } else {
+                    // Fallback complejo si el comunicado es nuevo en este batch, buscar su refCta
+                    // Simplificación: iteramos loteAgrupado si es necesario, o asumimos que 'comObj' en cache tiene la info.
+                    // Si no está en cache, es nuevo. Buscamos en loteAgrupado.
+                    const docOrigen = loteAgrupado.find(d => String(d.header.comunicadoId) === String(idComunicado)); // ID vs Nombre? Cuidado.
+                    // idComunicado aqui es ID REAL (probablemente string si es nuevo? o ID numerico simulado?)
+                    // En batch, idComunicado puede ser el nombre "L30".
+                    // Pero lineasPorComunicado agrupa por ID asignado en Updates... 
 
-                // También agregar las actualizaciones del batch actual
-                batchActualizaciones.forEach((act, i) => {
-                    if (String(act.idComunicado) === String(idComunicado) && resActs.ids[i]) {
-                        if (!actualizacionesDelCom.includes(String(resActs.ids[i]))) {
-                            actualizacionesDelCom.push(String(resActs.ids[i]));
-                        }
-                    }
-                });
+                    // Ajuste: si estamos procesando updates, idComunicado DEBE existir en cache o ser un ID temporal correcto.
+                    // Asumimos que podemos resolver la cuenta.
+                    if (comObj) idCuentaContexto = String(comObj.idReferencia);
+                }
 
-                // Obtener todas las líneas de presupuesto de este comunicado (de la BD)
-                const lineasExistentes = todasLineasBD.filter(l =>
-                    actualizacionesDelCom.includes(String(l.idActualizacion))
-                );
+                // Construir Diccionario Local para esta Cuenta
+                const localDiccionario = new Map(); // Key: "DESC_NORM|CAT" -> {id, descripcion}
 
-                // Construir mapa de idLinea → descripción para este comunicado
-                const lineasUsadasEnCom = new Map(); // idLinea → info de descripción
-                lineasExistentes.forEach(l => {
-                    if (l.idLinea && !lineasUsadasEnCom.has(String(l.idLinea))) {
-                        const descInfo = cache.descripcionLineas.find(dl => String(dl.id) === String(l.idLinea));
-                        if (descInfo) {
-                            lineasUsadasEnCom.set(String(l.idLinea), {
-                                id: descInfo.id,
-                                descripcion: descInfo.descripcion,
-                                categoria: descInfo.categoria,
-                                descripcionNorm: _normalizarUbicacion(descInfo.descripcion)
-                            });
-                        }
-                    }
-                });
-
-                logBatch(`[${contexto}] Comunicado ${idComunicado}: ${lineasUsadasEnCom.size} líneas únicas existentes`);
-
-                // Para cada línea del PDF, buscar match por similitud en las líneas del comunicado
-                lineasDelCom.forEach(({ linea, idx }) => {
-                    const descripcionNorm = _normalizarUbicacion(linea._descripcionTemp);
-                    const catLinea = linea.categoria;
-                    let idLineaEncontrado = null;
-
-                    // Buscar match por similitud en las líneas existentes del comunicado
-                    lineasUsadasEnCom.forEach((info, idLinea) => {
-                        if (idLineaEncontrado) return; // Ya encontramos match
-
-                        // Comparar por categoría Y similitud de descripción
-                        // STRICT CHECK: Si las categorías son diferentes, NO ES LA MISMA LÍNEA.
-                        // Esto previene que una línea de "Desazolve" herede el historial de "Daño Físico"
-                        const catMatch = (info.categoria == catLinea) ||
-                            (_categoriaTxtANum(info.categoria) === catLinea);
-
-                        if (catMatch) {
-                            const descMatch = info.descripcionNorm === descripcionNorm ||
-                                _matchUbicaciones(info.descripcionNorm, descripcionNorm);
-
-                            if (descMatch) {
-                                idLineaEncontrado = parseInt(idLinea);
-                                logBatch(`[${contexto}] MATCH: "${linea._descripcionTemp}" ↔ "${info.descripcion}" (idLinea=${idLinea})`);
+                if (idCuentaContexto && mapUsoPorCuenta.has(idCuentaContexto)) {
+                    const usedIds = mapUsoPorCuenta.get(idCuentaContexto);
+                    usedIds.forEach(idLinea => {
+                        const desc = descripcionesMap.get(idLinea);
+                        if (desc) {
+                            const norm = _normalizarUbicacion(desc.descripcion);
+                            const catClean = String(desc.categoria).toUpperCase();
+                            const catKey = (catClean.includes('DESAZOLVE') || catClean === '2') ? '2' : '1';
+                            const key = `${norm}|${catKey}`;
+                            if (!localDiccionario.has(key)) {
+                                localDiccionario.set(key, desc);
                             }
                         }
                     });
+                }
 
-                    if (idLineaEncontrado) {
-                        // Usar el idLinea existente
-                        batchPresupuestos[idx].idLinea = idLineaEncontrado;
+                logBatch(`[${contexto}] Procesando ${lineasDelCom.length} líneas para Com ${idComunicado} (Cta: ${idCuentaContexto || '?'}). Diccionario Local: ${localDiccionario.size} conceptos.`);
+
+                lineasDelCom.forEach(({ linea, idx }) => {
+                    const descripcionNorm = _normalizarUbicacion(linea._descripcionTemp);
+                    const catLineaRaw = String(linea.categoria).toUpperCase();
+                    const catLinea = (catLineaRaw.includes('DESAZOLVE') || catLineaRaw === '2') ? '2' : '1';
+                    const key = `${descripcionNorm}|${catLinea}`;
+
+                    // 1. Buscar correspondencia EXACTA en el diccionario LOCAL (Scoped)
+                    let match = localDiccionario.get(key);
+
+                    if (match) {
+                        // REUSAR ID EXISTENTE (del mismo proyecto)
+                        batchPresupuestos[idx].idLinea = match.id;
                     } else {
-                        // Crear nueva descripción - marcar para creación
+                        // CREAR NUEVO (Incluso si existe en otra cuenta)
+                        // Así garantizamos aislamiento de contexto.
                         batchPresupuestos[idx]._needsNewDescripcion = true;
-                        logBatch(`[${contexto}] NUEVA DESCRIPCIÓN: "${linea._descripcionTemp}" [cat=${catLinea}]`);
                     }
                 });
             });
@@ -2112,7 +2210,7 @@ function _procesarBatchInterno(loteAgrupado, cache) {
 
             if (descripcionesNuevas.size > 0) {
                 const batchDescripciones = Array.from(descripcionesNuevas.values())
-                    .map(d => ({ descripcion: d.descripcion, categoria: d.categoria }));
+                    .map(d => ({ descripcion: String(d.descripcion).toUpperCase().trim(), categoria: d.categoria }));
 
                 logBatch(`[${contexto}] Creando ${batchDescripciones.length} nuevas entradas en DescripcionLineas...`);
 
@@ -2169,8 +2267,9 @@ function _procesarBatchInterno(loteAgrupado, cache) {
             // Asumimos que batchActualizaciones ya viene con 'consecutivo' y 'descripcion'
             // Necesitamos procesar por COMUNICADO y luego por SECUENCIA
 
-            // Mapa de estados virtuales: idComunicado -> Map<idLinea, {importe, categoria}>
+            // Mapa de estados virtuales: idComunicado -> Map<idLinea, {importe, idRow, source, refLine}>
             const virtualState = new Map();
+            const dbIdsToExpire = []; // IDs de BD que deben pasar a esVigente=false
 
             // Ordenar batchActualizaciones globalmente por comunicado y consecutivo
             const sortedActs = [...batchActualizaciones].sort((a, b) => {
@@ -2194,23 +2293,20 @@ function _procesarBatchInterno(loteAgrupado, cache) {
                 let stateMap = virtualState.get(comId);
 
                 if (!stateMap) {
-                    // Si es la primera vez que tocamos este comunicado en el batch,
-                    // intentamos cargar su estado "BASE" desde la DB (la última versión COMMITTEADA).
-                    // Si act.consecutivo == 1 (Origen), la base es vacía.
-                    stateMap = new Map(); // idLinea -> Float
+                    // Carga inicial del estado BASE desde la DB (Si no es Origen)
+                    stateMap = new Map(); // idLinea -> {importe, idRow, source}
 
                     if (Number(act.consecutivo) > 1) {
-                        // Cargar estado de la DB (versión anterior inmediata real)
-                        // Nota: calcularEstadoVersion devuelve el estado acumulado.
-                        // Debemos pedir estado hasta update anterior.
-                        // Complicación: No tenemos el ID del update anterior fácilmente aqui si no está en batch.
-                        // Aproximación: Usar calcularEstadoVersion(comId) que trae "hasta lo último de DB".
-                        // Esto asume que lo del batch sigue a lo de la DB.
                         try {
+                            // Usamos calcularEstadoVersion para obtener el snapshot previo
                             const dbState = calcularEstadoVersion(comId);
                             if (dbState && dbState.lineas) {
                                 dbState.lineas.forEach(l => {
-                                    stateMap.set(String(l.idLinea), parseFloat(l.importe));
+                                    stateMap.set(String(l.idLinea), {
+                                        importe: parseFloat(l.importe),
+                                        idRow: l.id,
+                                        source: 'DB'
+                                    });
                                 });
                             }
                         } catch (e) { console.warn("Error cargando estado base DB", e); }
@@ -2222,25 +2318,57 @@ function _procesarBatchInterno(loteAgrupado, cache) {
                 comLines.forEach(linea => {
                     const lid = String(linea.idLinea);
                     const importeNuevo = parseFloat(linea.importe) || 0;
-                    const importePrevio = stateMap.get(lid);
+                    const prevData = stateMap.get(lid);
 
                     let esCambio = false;
 
-                    if (importePrevio === undefined) {
-                        // Nueva línea
+                    // Lógica de Cambio: Si no existe o si el monto varía
+                    if (!prevData) {
                         esCambio = true;
                     } else {
-                        // Línea existente, verificar si cambió importe (tolerancia)
-                        if (Math.abs(importeNuevo - importePrevio) > 0.01) {
+                        if (Math.abs(importeNuevo - prevData.importe) > 0.01) {
                             esCambio = true;
                         }
                     }
 
                     if (esCambio) {
+                        // EXPIRE LOGIC: Marcar registro anterior como NO VIGENTE
+                        if (prevData) {
+                            if (prevData.source === 'BATCH') {
+                                // Es una línea de este mismo batch (ej. L50 vs L50A)
+                                // Actualizamos el objeto en memoria antes de insertarlo
+                                if (prevData.refLine) prevData.refLine.esVigente = false;
+                            } else if (prevData.source === 'DB') {
+                                // Es una línea ya persistida en BD
+                                if (prevData.idRow) dbIdsToExpire.push(prevData.idRow);
+                            }
+                        }
+
+                        // Configurar nueva línea
+                        linea.esVigente = true; // Por defecto es verdadera
                         filteredLines.push(linea);
+
                         // Actualizar estado virtual
-                        stateMap.set(lid, importeNuevo);
+                        stateMap.set(lid, {
+                            importe: importeNuevo,
+                            idRow: null, // Aún no tiene ID
+                            source: 'BATCH',
+                            refLine: linea
+                        });
                     }
+                });
+            }
+
+            // Ejecutar expiración en BD si es necesario
+            if (dbIdsToExpire.length > 0) {
+                logBatch(`[${contexto}] Expirando ${dbIdsToExpire.length} líneas antiguas en BD (esVigente=false)...`);
+                // updateBatch es hipotético, si no existe, usar loop o createBatch(overwrite) si soportado.
+                // Asumimos updateRow en loop por ahora o batchUpdate si existe
+                // VERIFICAR: updateRow existe. 
+                dbIdsToExpire.forEach(id => {
+                    try {
+                        updateRow('presupuestoLineas', id, { esVigente: false });
+                    } catch (e) { console.error(`Error expirando linea ${id}`, e); }
                 });
             }
 

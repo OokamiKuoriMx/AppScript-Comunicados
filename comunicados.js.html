@@ -9,8 +9,6 @@
         const dom = {
             dropZone: document.getElementById('drop-zone'),
             fileInput: document.getElementById('file-input'),
-            fileInfo: document.getElementById('file-info'),
-            filenameDisplay: document.getElementById('filename-display'),
             btnAnalizar: document.getElementById('btn-analizar'),
             btnAnalizarPdf: document.getElementById('btn-analizar-pdf'), // NEW Button
             loader: document.getElementById('import-loader'),
@@ -33,6 +31,8 @@
 
         let currentFile = null;
         let currentCsvContent = null; // Store for confirmation step
+        let fileQueue = []; // NUEVO: Cola de archivos
+        let dragSrcEl = null; // Para Drag & Drop
 
         const init = () => {
             _cacheDom();
@@ -81,26 +81,166 @@
 
         const _handleFiles = (files) => {
             if (files.length > 0) {
-                // Validación Simple de Tipo
-                const isPdf = files[0].name.toLowerCase().endsWith('.pdf');
+                // Agregar a la cola en lugar de procesar directo
+                const newFiles = Array.from(files).map(f => ({
+                    id: Date.now() + Math.random().toString(36).substr(2, 9),
+                    file: f,
+                    name: f.name,
+                    size: (f.size / 1024).toFixed(1) + ' KB',
+                    type: f.name.toLowerCase().endsWith('.pdf') ? 'PDF' : 'CSV/EXCEL'
+                }));
 
-                if (isPdf) {
-                    // Modo PDF Batch
-                    dom.filenameDisplay.innerHTML = `<span class="badge bg-danger me-2">PDF</span> ${files.length} archivo(s) seleccionado(s)`;
-                    dom.btnAnalizar.classList.add('d-none'); // Hide CSV button
-                    if (dom.btnAnalizarPdf) dom.btnAnalizarPdf.classList.remove('d-none');
-                    dom.btnAnalizarPdf.disabled = false;
-                    dom.btnAnalizarPdf.onclick = () => _iniciarCargaIA(files);
-                } else {
-                    // Modo Legacy (CSV/Excel)
-                    currentFile = files[0];
-                    dom.filenameDisplay.textContent = currentFile.name;
-                    dom.btnAnalizar.classList.remove('d-none');
-                    if (dom.btnAnalizarPdf) dom.btnAnalizarPdf.classList.add('d-none');
-                    dom.btnAnalizar.disabled = false;
-                }
-                dom.fileInfo.classList.remove('d-none');
+                fileQueue = [...fileQueue, ...newFiles];
+                _renderQueue();
             }
+        };
+
+        // ===============================================
+        //  GESTOR VISUAL DE COLA
+        // ===============================================
+        const _renderQueue = () => {
+            const container = document.getElementById('file-queue-container');
+            const emptyState = document.getElementById('dropzone-empty-state');
+            const queueState = document.getElementById('dropzone-queue-state');
+            const actionBar = document.getElementById('import-action-bar');
+            const countSpan = document.getElementById('queue-count');
+            const btnPdfText = document.getElementById('btn-pdf-text');
+
+            countSpan.innerText = fileQueue.length;
+
+            if (fileQueue.length === 0) {
+                // Show empty state, hide queue
+                emptyState.classList.remove('d-none');
+                queueState.classList.add('d-none');
+                if (actionBar) actionBar.classList.add('d-none');
+                dom.btnAnalizar.classList.add('d-none');
+                dom.btnAnalizarPdf.classList.add('d-none');
+                return;
+            }
+
+            // Has files - show queue state
+            emptyState.classList.add('d-none');
+            queueState.classList.remove('d-none');
+            if (actionBar) actionBar.classList.remove('d-none');
+
+            container.innerHTML = '';
+
+            // Verificar tipos para mostrar botones adecuados
+            const pdfCount = fileQueue.filter(f => f.type === 'PDF').length;
+            const hasCsv = fileQueue.some(f => f.type === 'CSV/EXCEL');
+
+            if (pdfCount > 0) {
+                dom.btnAnalizarPdf.classList.remove('d-none');
+                if (btnPdfText) btnPdfText.textContent = `Procesar ${pdfCount} PDF${pdfCount > 1 ? 's' : ''} con IA`;
+                dom.btnAnalizarPdf.disabled = false;
+            } else {
+                dom.btnAnalizarPdf.classList.add('d-none');
+            }
+
+            if (hasCsv && pdfCount === 0) { // Solo CSV individual por ahora en logica legacy
+                dom.btnAnalizar.classList.remove('d-none');
+                dom.btnAnalizar.disabled = false;
+                // Legacy: set currentFile to first one
+                currentFile = fileQueue[0].file;
+            } else {
+                dom.btnAnalizar.classList.add('d-none');
+            }
+
+            // Render Items con nuevo diseño
+            fileQueue.forEach((item, index) => {
+                const div = document.createElement('div');
+                div.className = 'queue-item';
+                div.draggable = true;
+                div.dataset.index = index;
+
+                const iconClass = item.type === 'PDF' ? 'pdf' : 'excel';
+                const iconBi = item.type === 'PDF' ? 'bi-file-pdf-fill' : 'bi-file-earmark-spreadsheet-fill';
+
+                div.innerHTML = `
+                    <div class="queue-item-icon ${iconClass}">
+                        <i class="bi ${iconBi}"></i>
+                    </div>
+                    <div class="queue-item-info">
+                        <div class="queue-item-name" title="${item.name}">${item.name}</div>
+                        <div class="queue-item-size">${item.size}</div>
+                    </div>
+                    <button class="queue-item-remove" onclick="event.stopPropagation(); Importacion.removeFromQueue(${index})" title="Eliminar">
+                        <i class="bi bi-x-lg"></i>
+                    </button>
+                `;
+
+                _addDragEvents(div);
+                container.appendChild(div);
+            });
+        };
+
+        const _addDragEvents = (el) => {
+            el.addEventListener('dragstart', _handleDragStart, false);
+            el.addEventListener('dragenter', _handleDragEnter, false);
+            el.addEventListener('dragover', _handleDragOver, false);
+            el.addEventListener('dragleave', _handleDragLeave, false);
+            el.addEventListener('drop', _handleDropQueue, false);
+            el.addEventListener('dragend', _handleDragEnd, false);
+        };
+
+        const _handleDragStart = (e) => {
+            dragSrcEl = e.target;
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/html', e.target.outerHTML);
+            e.target.classList.add('opacity-50');
+        };
+
+        const _handleDragOver = (e) => {
+            if (e.preventDefault) e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            return false;
+        };
+
+        const _handleDragEnter = (e) => {
+            e.target.closest('.queue-item').classList.add('border-primary');
+        };
+
+        const _handleDragLeave = (e) => {
+            e.target.closest('.queue-item').classList.remove('border-primary');
+        };
+
+        const _handleDropQueue = (e) => {
+            if (e.stopPropagation) e.stopPropagation();
+            const targetEl = e.target.closest('.queue-item');
+
+            if (dragSrcEl !== targetEl) {
+                const fromIndex = parseInt(dragSrcEl.dataset.index);
+                const toIndex = parseInt(targetEl.dataset.index);
+
+                // Mover en Array
+                const item = fileQueue.splice(fromIndex, 1)[0];
+                fileQueue.splice(toIndex, 0, item);
+
+                _renderQueue(); // Re-render
+            }
+            return false;
+        };
+
+        const _handleDragEnd = (e) => {
+            e.target.classList.remove('opacity-50');
+            document.querySelectorAll('.queue-item').forEach(col => {
+                col.classList.remove('border-primary');
+            });
+        };
+
+        const removeFromQueue = (index) => {
+            fileQueue.splice(index, 1);
+            _renderQueue();
+        };
+
+        const clearQueue = () => {
+            fileQueue = [];
+            _renderQueue();
+        };
+
+        const procesarColaIA = () => {
+            const files = fileQueue.map(item => item.file);
+            _iniciarCargaIA(files);
         };
 
         // ===============================================
@@ -244,29 +384,49 @@
 
             // Ordenar resultados por refCta, fecha del documento, y secuencia de comunicado
             RESULTADOS_BATCH.sort((a, b) => {
-                // Primero por refCta
+                // 1. RefCta
                 const refA = (a.ref || '').toUpperCase();
                 const refB = (b.ref || '').toUpperCase();
                 if (refA !== refB) return refA.localeCompare(refB);
 
-                // Luego por fecha del documento
-                const fechaA = a.fecha ? new Date(a.fecha) : new Date(0);
-                const fechaB = b.fecha ? new Date(b.fecha) : new Date(0);
-                if (fechaA.getTime() !== fechaB.getTime()) return fechaA - fechaB;
+                // 2. ORIGEN Priority (Must be first)
+                const isOrigenA = String(a.tipo || '').toUpperCase() === 'ORIGEN';
+                const isOrigenB = String(b.tipo || '').toUpperCase() === 'ORIGEN';
+                if (isOrigenA && !isOrigenB) return -1;
+                if (!isOrigenA && isOrigenB) return 1;
 
-                // Finalmente por secuencia de comunicado (tiebreaker para misma fecha)
-                const parseVersion = (id) => {
-                    if (!id) return { base: '', index: 0 };
-                    const match = String(id).toUpperCase().match(/^(L\d+)([A-Z])?$/);
+                // 3. Date (Secondary)
+                const getTs = (d) => {
+                    if (!d) return 0;
+                    const t = new Date(d).getTime();
+                    return isNaN(t) ? 0 : t;
+                };
+                const dateA = getTs(a.fecha);
+                const dateB = getTs(b.fecha);
+                if (dateA !== dateB) return dateA - dateB;
+
+                // 3. Fallback: Base Number (L3 < L30)
+                const parseId = (id) => {
+                    const match = String(id || '').toUpperCase().match(/^L(\d+)([A-Z])?$/);
                     if (match) {
-                        const sufijo = match[2] || '';
-                        return { base: match[1], index: sufijo ? sufijo.charCodeAt(0) - 64 : 0 };
+                        return {
+                            num: parseInt(match[1], 10),
+                            index: match[2] ? match[2].charCodeAt(0) - 64 : 0
+                        };
                     }
-                    return { base: id, index: 0 };
+                    return { num: -1, index: 0 }; // Non-standard IDs (e.g. Unknown)
                 };
 
-                const vA = parseVersion(a.comunicado);
-                const vB = parseVersion(b.comunicado);
+                const vA = parseId(a.comunicado);
+                const vB = parseId(b.comunicado);
+
+                if (vA.num !== vB.num) {
+                    if (vA.num === -1) return 1; // Put unknowns last
+                    if (vB.num === -1) return -1;
+                    return vA.num - vB.num;
+                }
+
+                // 4. Fallback: Suffix Index (L03 < L03A)
                 return vA.index - vB.index;
             });
 
@@ -314,9 +474,15 @@
 
         const reset = () => {
             currentFile = null;
-            dom.fileInput.value = '';
-            dom.fileInfo.classList.add('d-none');
-            dom.btnAnalizar.disabled = true;
+            // dom.fileInput.value = ''; // Keep if input exists
+            if (dom.fileInput) dom.fileInput.value = '';
+
+            if (dom.btnAnalizar) dom.btnAnalizar.disabled = true;
+            if (dom.btnAnalizarPdf) dom.btnAnalizarPdf.disabled = true;
+
+            // Clear Queue
+            fileQueue = [];
+            _renderQueue();
 
             // Reset Wizard
             currentPreviewData = [];
@@ -794,8 +960,9 @@
         const _cacheDom = () => {
             dom.dropZone = document.getElementById('drop-zone');
             dom.fileInput = document.getElementById('file-input');
-            dom.fileInfo = document.getElementById('file-info');
-            dom.filenameDisplay = document.getElementById('filename-display');
+            dom.fileInput = document.getElementById('file-input');
+            // dom.fileInfo removed
+            // dom.filenameDisplay removed
             dom.btnAnalizar = document.getElementById('btn-analizar');
             dom.btnAnalizarPdf = document.getElementById('btn-analizar-pdf'); // Fix: Cache new button
             dom.loader = document.getElementById('import-loader');
@@ -872,10 +1039,13 @@
             render,
             mount,
             init,
-            setStage, // Expose for Back buttons
+            setStage,
             reset,
             analizar,
-            openModal
+            openModal,
+            removeFromQueue,
+            clearQueue,
+            procesarColaIA
         };
     })();
 
@@ -973,6 +1143,7 @@
                 dom.emptyState = document.getElementById('comunicados-empty');
                 dom.totalBadge = document.getElementById('total-comunicados-badge');
                 dom.btnRecargar = document.getElementById('btnRecargarComunicados');
+                dom.btnRecalcular = document.getElementById('btnRecalcularImportes');
 
                 // Elementos del modal
                 dom.modal = document.getElementById('modalDetalleComunicado');
@@ -981,6 +1152,7 @@
                 dom.modalError = document.getElementById('modal-comunicado-error');
                 dom.btnGuardar = document.getElementById('btnGuardarComunicado');
                 dom.btnEditar = document.getElementById('btnEditarComunicado');
+                dom.btnRecalcularUnico = document.getElementById('btnRecalcularUnico');
 
                 // Inputs del modal
                 dom.inputDistrito = document.getElementById('detalle-distrito');
@@ -999,6 +1171,12 @@
                     });
                 }
 
+                if (dom.btnRecalcular) {
+                    dom.btnRecalcular.addEventListener('click', () => {
+                        _handleRecalcularImportes();
+                    });
+                }
+
                 if (dom.btnGuardar) {
                     dom.btnGuardar.addEventListener('click', () => {
                         _guardarCambios();
@@ -1008,6 +1186,17 @@
                 if (dom.btnEditar) {
                     dom.btnEditar.addEventListener('click', () => {
                         _toggleEdicion(true);
+                    });
+                }
+
+                if (dom.btnRecalcularUnico) {
+                    dom.btnRecalcularUnico.addEventListener('click', () => {
+                        // Usar comunicadoActual.id si existe
+                        if (comunicadoActual && comunicadoActual.id) {
+                            _handleRecalcularIndividual(comunicadoActual.id);
+                        } else {
+                            console.warn('No hay comunicado actual para recalcular');
+                        }
                     });
                 }
 
@@ -1657,6 +1846,115 @@
                 // Mostrar el dashboard si hay datos
                 if (total > 0) {
                     dom.dashboard.classList.remove('d-none');
+                }
+            }
+
+            /**
+             * Maneja el recálculo masivo de importes
+             */
+            async function _handleRecalcularImportes() {
+                if (!confirm('¿Desea recalcular los importes vigentes de todos los comunicados?\nEsto sumará las partidas de presupuesto y actualizará el monto total de cada actualización si hay discrepancias.')) {
+                    return;
+                }
+
+                const btn = dom.btnRecalcular;
+                const originalHtml = btn ? btn.innerHTML : '';
+
+                if (btn) {
+                    btn.disabled = true;
+                    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+                }
+
+                try {
+                    console.log('Solicitando recálculo masivo...');
+                    // serverCall returns response.data directly on success, throws on failure
+                    const res = await serverCall('recalcularImportesVigentes');
+                    console.log('Resultado recálculo:', res);
+
+                    // serverCall resolves with the 'data' object: { message, logs }
+                    // If we get here, the call was successful
+                    const logsHtml = (res && res.logs && res.logs.length > 0)
+                        ? `<br><div class="text-start small mt-2" style="max-height: 200px; overflow-y: auto;">
+                            <strong>Cambios realizados:</strong><ul class="mb-0 ps-3">${res.logs.map(l => `<li>${l}</li>`).join('')}</ul>
+                           </div>`
+                        : '<br>No se encontraron discrepancias.';
+
+                    const swal = globalThis.Swal;
+                    if (swal) {
+                        swal.fire({
+                            icon: 'success',
+                            title: 'Recálculo Completado',
+                            html: `${res?.message || 'Proceso completado'}${logsHtml}`,
+                            width: '600px'
+                        });
+                    } else {
+                        alert(res?.message || 'Proceso completado');
+                    }
+
+                    // Recargar tabla para reflejar cambios
+                    _loadComunicados();
+
+                } catch (error) {
+                    console.error('Error en recálculo:', error);
+                    const swal = globalThis.Swal;
+                    if (swal) {
+                        swal.fire({
+                            icon: 'error',
+                            title: 'Error',
+                            text: error.message
+                        });
+                    } else {
+                        alert('Error: ' + error.message);
+                    }
+                } finally {
+                    if (btn) {
+                        btn.disabled = false;
+                        btn.innerHTML = originalHtml;
+                    }
+                }
+            }
+
+            /**
+             * Maneja el recálculo de importes para un comunicado individual
+             */
+            async function _handleRecalcularIndividual(id) {
+                if (!confirm('¿Recalcular importes de este comunicado?\nSe verificará la suma de sus partidas.')) return;
+
+                const btn = dom.btnRecalcularUnico;
+                const originalHtml = btn ? btn.innerHTML : '';
+                if (btn) {
+                    btn.disabled = true;
+                    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+                }
+
+                try {
+                    // serverCall returns response.data directly on success
+                    const res = await serverCall('recalcularImportesVigentes', id);
+                    console.log('Resultado recálculo individual:', res);
+
+                    // If we get here, call was successful (serverCall throws on error)
+                    const msg = (res && res.logs && res.logs.length > 0) ?
+                        'Se corrigieron discrepancias:\n' + res.logs.join('\n') :
+                        'Los importes son correctos. No se requirieron cambios.';
+                    alert(msg);
+
+                    // Recargar lista global
+                    await _loadComunicados();
+
+                    // Actualizar el "comunicadoActual" con los nuevos datos del state
+                    const refreshed = state.comunicados.find(c => String(c.id) === String(id));
+                    if (refreshed) {
+                        comunicadoActual = refreshed;
+                        _poblarFormulario(refreshed);
+                    }
+                } catch (e) {
+                    console.error(e);
+                    alert('Error inesperado al recalcular: ' + e.message);
+                } finally {
+                    if (btn) {
+                        btn.disabled = false;
+                        btn.innerHTML = originalHtml;
+                    }
                 }
             }
 

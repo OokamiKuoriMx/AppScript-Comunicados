@@ -1474,3 +1474,111 @@ function deleteComunicado(id) {
         return crearRespuestaError(`Error al eliminar comunicado: ${error.message}`, { source: contexto, error, details: { id } });
     }
 }
+
+
+/**
+ * === RECALCULAR IMPORTES VIGENTES ===
+ * Recorre todas las actualizaciones de presupuesto (o de un comunicado específico)
+ * y recalcula su 'monto' sumando las líneas individuales asociadas.
+ * Corrige discrepancias entre el encabezado de presupuesto y el detalle.
+ * 
+ * @param {string|number} [idComunicado=null] - ID opcional para restringir el recálculo a un solo comunicado
+ */
+/**
+ * === RECALCULAR IMPORTES VIGENTES ===
+ * Recorre todas las actualizaciones de presupuesto (o de un comunicado específico)
+ * y recalcula su 'monto' sumando las líneas individuales asociadas.
+ * Corrige discrepancias entre el encabezado de presupuesto y el detalle.
+ * 
+ * @param {string|number} idComunicado - ID opcional para restringir el recálculo (puede ser null)
+ */
+function recalcularImportesVigentes(idComunicado) {
+    // Manejo manual de parámetro opcional para máxima compatibilidad
+    var targetId = (idComunicado === undefined) ? null : idComunicado;
+
+    const contexto = 'recalcularImportesVigentes';
+    console.log(`[${contexto}] Iniciando recálculo... Target: ${targetId ? 'Comunicado ' + targetId : 'GLOBAL'}`);
+    const logs = [];
+
+    try {
+        // 1. Leer todas las actualizaciones
+        const actResp = readAllRows('actualizaciones');
+
+        // Verificación defensiva de respuesta
+        if (!actResp || !actResp.success) {
+            throw new Error('Falló lectura de actualizaciones: ' + (actResp ? actResp.message : 'Respuesta nula'));
+        }
+
+        // Verificación defensiva de datos
+        let actualizaciones = (actResp.data && Array.isArray(actResp.data)) ? actResp.data : [];
+
+        // Filtrar si es para un comunicado específico
+        if (targetId) {
+            actualizaciones = actualizaciones.filter(a => String(a.idComunicado) === String(targetId));
+        }
+
+        if (actualizaciones.length === 0) {
+            return { success: true, data: { message: 'No hay actualizaciones para procesar.', logs: [] } };
+        }
+
+        // 2. Leer todas las líneas
+        const lineasResp = readAllRows('presupuestoLineas');
+        if (!lineasResp || !lineasResp.success) {
+            throw new Error('Falló lectura de líneas: ' + (lineasResp ? lineasResp.message : 'Respuesta nula'));
+        }
+        const lineas = (lineasResp.data && Array.isArray(lineasResp.data)) ? lineasResp.data : [];
+
+        let corregidos = 0;
+        let totalProcesados = 0;
+
+        // 3. Procesar cada actualización
+        for (const act of actualizaciones) {
+            totalProcesados++;
+
+            // Validar ID
+            if (!act.id) continue;
+
+            // Filtrar líneas de esta actualización
+            const susLineas = lineas.filter(l => String(l.idActualizacion) === String(act.id));
+
+            // Sumar importes
+            const sumaReal = susLineas.reduce((acc, l) => acc + (parseFloat(l.importe) || 0), 0);
+
+            // Comparar con monto registrado (tolerancia 0.1)
+            const montoActual = parseFloat(act.monto) || 0;
+            const diff = Math.abs(montoActual - sumaReal);
+
+            if (diff > 0.1) {
+                console.log(`[${contexto}] Corrección ID ${act.id}: ${montoActual} -> ${sumaReal}`);
+
+                // Actualizar registro
+                const updateRes = actualizarRegistro('actualizaciones', act.id, {
+                    monto: sumaReal
+                });
+
+                if (updateRes && updateRes.success) {
+                    corregidos++;
+                    logs.push(`ID ${act.id}: ${montoActual.toFixed(2)} -> ${sumaReal.toFixed(2)}`);
+                } else {
+                    logs.push(`Error ID ${act.id}: ${updateRes ? updateRes.message : 'Fallo update'}`);
+                }
+            }
+        }
+
+        return {
+            success: true,
+            data: {
+                message: `Proceso completado. ${corregidos} actualizaciones corregidas de ${totalProcesados}.`,
+                logs: logs
+            }
+        };
+
+    } catch (error) {
+        console.error(`Error en ${contexto}:`, error);
+        // Note: On error, serverCall will reject. We can still return a structured error if needed.
+        return { success: false, message: error.message || 'Error desconocido', data: null };
+    }
+}
+
+
+
