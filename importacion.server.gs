@@ -3287,17 +3287,59 @@ function _syncLineasPresupuesto(idActualizacion, lineasNuevas, logFn) {
             mapExistentes.delete(key);
         } else {
             // No existe - INSERTAR
+            // PRIMERO: Buscar o crear en descripcionLineas para obtener idLinea
             logFn(`[${contexto}]INSERTAR: "${lineaNueva.concepto}"[${lineaNueva.categoria}]$${lineaNueva.importe}`);
             try {
                 const catFinal = String(lineaNueva.categoria || 'DAÑO FISICO').toUpperCase();
+                const descripcionNorm = String(lineaNueva.concepto || 'Sin concepto').toUpperCase().trim();
+
+                // 1. Buscar si ya existe en descripcionLineas
+                const descResponse = readAllRows('descripcionLineas');
+                let idLinea = null;
+
+                if (descResponse.success && descResponse.data) {
+                    const existing = descResponse.data.find(d =>
+                        _normalizarUbicacion(d.descripcion) === _normalizarUbicacion(descripcionNorm) &&
+                        String(d.categoria || '').toUpperCase().includes(catFinal.includes('DESAZOLVE') ? 'DESAZOLVE' : 'FISICO')
+                    );
+                    if (existing) {
+                        idLinea = existing.id;
+                        logFn(`[${contexto}]  -> Reutilizando idLinea existente: ${idLinea}`);
+                    }
+                }
+
+                // 2. Si no existe, crear nueva entrada en descripcionLineas
+                if (!idLinea) {
+                    const newDescResult = createRow('descripcionLineas', {
+                        descripcion: descripcionNorm,
+                        categoria: catFinal
+                    });
+
+                    if (newDescResult.success && newDescResult.data && newDescResult.data.id) {
+                        idLinea = newDescResult.data.id;
+                        logFn(`[${contexto}]  -> Creado nuevo idLinea: ${idLinea}`);
+                    } else {
+                        logFn(`[${contexto}]ERROR: No se pudo crear descripcionLineas: ${JSON.stringify(newDescResult)}`);
+                        return; // No podemos continuar sin idLinea
+                    }
+                }
+
+                // 3. Ahora insertar en presupuestoLineas con el idLinea correcto
                 const resIns = createRow('presupuestoLineas', {
                     idActualizacion: idActualizacion,
-                    descripcion: String(lineaNueva.concepto || 'Sin concepto').toUpperCase().trim(),
+                    idLinea: idLinea,
                     categoria: catFinal,
                     importe: parseFloat(lineaNueva.importe) || 0,
+                    esVigente: true,
                     fechaCreacion: new Date()
                 });
-                if (resIns.success) result.inserted++;
+
+                if (resIns.success) {
+                    result.inserted++;
+                    logFn(`[${contexto}]  -> ✓ Inserción exitosa en presupuestoLineas`);
+                } else {
+                    logFn(`[${contexto}]ERROR insertando presupuestoLineas: ${resIns.message || JSON.stringify(resIns)}`);
+                }
             } catch (e) {
                 logFn(`[${contexto}]ERROR insertando: ${e.message}`);
             }
