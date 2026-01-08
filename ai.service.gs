@@ -12,6 +12,98 @@ const MAX_RATE_LIMIT_RETRIES = 3;          // Reintentos para Rate Limit (menos 
 const BASE_COOLDOWN_MS = 1000;             // 1 segundo entre archivos (tier de pago tiene límites altos)
 const BASE_429_WAIT_MS = 5000;             // 5 segundos base si hay 429 (raro con pago)
 
+// =============================================================================
+// FRAGMENTOS DEL PROMPT MODULAR (v7.0)
+// =============================================================================
+
+/**
+ * PASOS DE EXTRACCIÓN FINANCIERA (Comunes para Origen y Actualización)
+ * Corresponde a los pasos de sabueso geográfico, consolidación y output
+ */
+const PROMPT_CORE_EXTRACTION = `
+### PASO 5: Análisis de Presupuestos (Sabueso Geográfico)
+*Objetivo: Extraer montos y asignarles su identidad geográfica correcta.*
+
+* **5.1 Jerarquía de Fuente:**
+    - Prioridad A: Busca declaraciones explícitas en el cuerpo del texto como "estimar un monto preliminar de...".    
+    - Prioridad B: Busca tabla "RESUMEN GENERAL" o "PRESUPUESTO". 
+    - Prioridad C: Si no hay A, busca "HOJA GENERADORA" o "CÉDULA DE CUANTIFICACIÓN".
+    - Prioridad D: Si alguna de las columnas contiene "CONCEPTO" O "UBICACION".
+
+* **5.2 Mapeo de Columnas:**
+    - Identifica columna Infraestructura ("Importe", "Daño Físico", "Total") e identifica columna Desazolve ("Limpieza", "Desazolve").
+
+* **5.3 Identidad Geográfica (CRÍTICO):**
+    - Antes de extraer, define el SITIO. 
+    - Si es Hoja Generadora y la fila dice "Cemento", **MIRA ARRIBA** (encabezado \`UBICACIÓN:\`).
+    - Usa el sitio, no el material.
+
+* **5.4 Extracción de DAÑO FÍSICO:**
+    - Extrae SIEMPRE el valor de la columna "Importe daño físico", INCLUSO si es $0.00.
+    - Crea registro "DAÑO FISICO" con la Identidad Geográfica (Paso 5.3) y este importe.
+
+* **5.5 Extracción de DESAZOLVES:**
+    - Extrae SIEMPRE el valor de la columna "Importe Remoción/Desazolves", INCLUSO si es $0.00.
+    - Crea registro "DESAZOLVES" con la Identidad Geográfica (Paso 5.3) y este importe.
+
+* **5.6 Separación de Líneas (Split Multiplicativo):**
+    - Si una fila tiene columnas para Daño Físico y Desazolves, **DEBES DUPLICAR** la extracción.
+    - **MANDATO MATEMÁTICO**: Si hay 10 ubicaciones en la tabla y ambas columnas existen, tu output debe tener **20 líneas** (10 de daño + 10 de desazolve).
+    - Nunca sumes los importes. Genera dos objetos independientes con la misma ubicación.
+
+* **5.7 Extracción Narrativa (PRIORIDAD D - Modo Rescate):**
+    - Si no hay tablas claras, busca montos en el texto: "asciende a MX$[Monto]".
+    - ASÍGNALO SIEMPRE A **"DAÑO FISICO"** salvo que diga explícitamente "limpieza".
+
+### PASO 6: Consolidación y Limpieza
+*Objetivo: Refinar los datos crudos extraídos.*
+
+* **6.1 Agregación de Generadoras:**
+    - Si extrajiste datos de "Hojas Generadoras" (10 filas de materiales para 1 ubicación), **AGRUPA Y SUMA**.
+    - El output debe tener una sola línea por \`Concepto\` con la suma total.
+
+* **6.2 Discriminación de Columnas:**
+    - Descarta valores de "Anterior" y conserva solo "Actual/Revisado".
+
+* **6.3 Normalización Numérica:**
+    - Elimina \`$\`, comas \`,\`. Convierte a Float.
+
+* **6.4 Entity Resolution de Conceptos:**
+    - Si el concepto se parece a uno de la lista de "CONCEPTOS EXISTENTES" (Contexto), USA EL NOMBRE DE LA LISTA.
+    - Normaliza: "UR" → "Unidad de Riego", "DR" → "Distrito de Riego".
+
+### PASO 7: Integración Final y Auditoría
+* **7.1 Ensamble del Header:** Compila \`refAjustador\`, \`comunicadoId\`, \`fechaDoc\`.
+* **7.2 Cálculo Matemático:** Verifica que la suma de líneas coincida (con tolerancia de $1) con el total del documento.
+* **7.3 Validación Estructural:** Asegura que no falten llaves obligatorias.
+
+### PASO 8: Output (JSON Estricto)
+*Objetivo: Generar el entregable final.*
+
+\`\`\`json
+{
+  "header": {
+    "refCta": "string",
+    "comunicadoId": "string",
+    "tipoRegistro": "ORIGEN|Actualización",
+    "descripcion": "string",
+    "fechaDoc": "YYYY-MM-DD",
+    "totalPdf": 0.00,
+    "advertencias": ["string"]
+  },
+  "lineas": [
+    {
+      "id_bd": null,
+      "concepto": "string",
+      "categoria": "DAÑO FISICO|DESAZOLVES",
+      "accion": "ACTUALIZAR|MANTENER|CANCELAR|CREAR", 
+      "importe": 0.00
+    }
+  ]
+}
+\`\`\`
+`;
+
 /**
  * Procesa un PDF en Base64 y devuelve los datos estructurados.
  * NUEVO: Usa Gemini multimodal directamente (sin Drive OCR).
@@ -508,45 +600,96 @@ function _validarLogicaNegocio(json) {
 }
 
 /**
- * PASADA 1: Extracción rápida de identificadores del PDF.
- * Prompt mínimo para obtener solo refAjustador y comunicadoId.
+ * ==========================================================================
+ * FASE 1: "EL CLASIFICADOR" - Extracción de Metadatos y Determinación de Estrategia
+ * ==========================================================================
+ * Prompt de clasificación documental que escanea SOLO el encabezado del PDF
+ * para extraer las "huellas digitales" del documento y decidir la estrategia.
+ * 
+ * NO extrae tablas ni importes monetarios.
+ * 
  * @param {string} base64Content - Contenido del PDF en Base64
  * @param {string} filename - Nombre del archivo
- * @returns {object} { refAjustador, comunicadoId } o null si falla
+ * @returns {object} { header: {...}, tipoEstrategia } o null si falla
  */
 function _extraerIdentificadoresRapido(base64Content, filename) {
     const apiKey = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY');
     if (!apiKey) {
-        console.error('[Quick Extract] GEMINI_API_KEY no configurada.');
+        console.error('[Fase 1 Clasificador] GEMINI_API_KEY no configurada.');
         return null;
     }
 
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
 
-    const promptQuick = `
-Analiza este documento PDF y extrae SOLO los siguientes dos campos:
+    // =========================================================================
+    // PROMPT FASE 1: EL CLASIFICADOR
+    // =========================================================================
+    const promptClasificador = `
+**ROL:** Eres un Clasificador Documental Experto en Siniestros de Infraestructura (Conagua/Agroasemex).
 
-1. **refAjustador**: El código de referencia del ajustador (ej: GL098774, AM012345, SR-0226/2022).
-   - Busca cerca de "Ref. CTA:", "Referencia:", "Ref. Miller:".
-   - Extrae SOLO el código alfanumérico, NO incluyas "CTA" ni "Ref.".
-   - Ejemplo: Si dice "Ref. CTA: GL098774-L50", extrae "GL098774".
+**TAREA:** Escanea el ENCABEZADO del documento para extraer sus huellas digitales. NO extraigas tablas ni importes monetarios.
 
-2. **comunicadoId**: El identificador del comunicado (ej: L50, L50A, 847).
-   - Busca cerca de "Comunicado:", o es el sufijo después del guión en la referencia.
-   - Si el PDF dice "GL098774-L50A", el comunicadoId es "L50A".
-   - MANTÉN las letras sufijo (A, B, C...).
+**REGLA DE ORO:** Ejecuta secuencialmente los siguientes 4 PASOS.
 
-Responde SOLO con JSON válido, sin explicaciones:
+---
+
+## SECUENCIA DE EJECUCIÓN FASE 1 (METADATOS)
+
+### PASO 1: Identificación de Actores y Siniestro
+*Objetivo: Saber quién, cuándo y por qué.*
+* **1.1 Ajustador:** Busca logos o textos ("Charles Taylor", "Miller"). Normaliza el nombre.
+* **1.2 Aseguradora:** Busca "AGROASEMEX" o el número de póliza.
+* **1.3 Fecha del Documento:** Extrae la fecha de emisión del oficio (generalmente esquina superior derecha). Formato YYYY-MM-DD.
+* **1.4 Fenómeno:** Busca la frase "Daños a... por el paso del [FENÓMENO]". Extrae la frase completa.
+* **1.5 Fecha de Incidencia (FI):** Busca "F.I.", "Ocurrencia" o "Del... al...". Extrae el texto literal.
+* **1.6 Distrito/Zona:** Busca "Distrito de Riego", "Dirección Local" o "Unidad". Normaliza.
+* **1.7 Referencia Siniestro:** Busca códigos tipo "SCNA-XXXX/YYYY".
+
+### PASO 2: Extracción de IDs Críticos (La Llave Maestra)
+*Objetivo: Obtener las claves únicas para la base de datos.*
+* **2.1 Referencia Ajustador:** Busca "Ref. CTA:", "Referencia:", "Ref. Miller".
+* **2.2 Limpieza de Referencia:** Extrae SOLO la parte alfanumérica base (ej. **GL098774**). Si ves "GL098774-L50", córtalo y quédate con la base.
+* **2.3 ID de Comunicado:** Busca la línea "Comunicado:" o el sufijo de la referencia.
+* **2.4 Extracción ID:** Extrae el código corto (ej. **L50**, **L50A**, **L13B**). Mantén las letras sufijo, son vitales.
+* **2.5 Validación:** Si Reference o Comunicado son nulos, devuelve \`"error": "ERROR DE LECTURA"\`.
+* **2.6 Verificación Cruzada:** Asegúrate que el ID del comunicado no contradiga la referencia base.
+* **2.7 Formato:** Devuelve strings limpios sin espacios extra.
+
+### PASO 3: Determinación de Estrategia (Origen vs Actualización)
+*Objetivo: Decidir si estamos creando o modificando datos.*
+* **3.1 Análisis de Sufijo:** ¿El ID del comunicado termina en letra (A, B, C)? -> Señal de ACTUALIZACIÓN.
+* **3.2 Análisis de Título:** Busca palabras: "(Actualización)", "(Adicional)", "(Alcance)", "(Complemento)".
+* **3.3 Análisis Narrativo:** Lee el primer párrafo. Busca: "hacemos referencia a...", "sustituye", "modifica".
+* **3.4 Veredicto:** SI (Sufijo Letra OR Palabras Clave) -> \`tipoEstrategia\` = "ACTUALIZACION". SI NO -> \`tipoEstrategia\` = "ORIGEN".
+* **3.5 Sub-Clasificación:** Si es Actualización, identifica si es "Adicional" (suma) o "Modificatorio" (cambia).
+* **3.6 Validación de Lógica:** Un documento "L50" nunca debe ser Actualización. Un "L50B" nunca debe ser Origen.
+
+### PASO 4: Output JSON (Metadatos)
+Genera un JSON estricto con la llave raíz \`"header"\`.
+
+\`\`\`json
 {
-  "refAjustador": "string",
-  "comunicadoId": "string"
+  "header": {
+    "referenciaBase": "GL098774",
+    "comunicadoId": "L50A",
+    "tipoEstrategia": "ACTUALIZACION",
+    "fechaDoc": "2025-06-10",
+    "distritoRiego": "DIRECCIÓN LOCAL GUERRERO",
+    "ajustador": "CHARLES TAYLOR ADJUSTING",
+    "aseguradora": "AGROASEMEX",
+    "fenomeno": "Huracán Otis",
+    "siniestro": "SCNA-0226/2022"
+  }
 }
+\`\`\`
+
+**IMPORTANTE:** Responde SOLO con JSON válido, sin texto adicional.
 `;
 
     const payload = {
         contents: [{
             parts: [
-                { text: promptQuick },
+                { text: promptClasificador },
                 { inline_data: { mime_type: "application/pdf", data: base64Content } }
             ]
         }],
@@ -554,7 +697,7 @@ Responde SOLO con JSON válido, sin explicaciones:
     };
 
     try {
-        console.log(`[Quick Extract] Ejecutando Pasada 1 para ${filename}...`);
+        console.log(`[Fase 1 Clasificador] Ejecutando clasificación para ${filename}...`);
         const response = UrlFetchApp.fetch(url, {
             method: 'post',
             contentType: 'application/json',
@@ -564,14 +707,14 @@ Responde SOLO con JSON válido, sin explicaciones:
 
         const code = response.getResponseCode();
         if (code !== 200) {
-            console.error(`[Quick Extract] Error HTTP ${code}:`, response.getContentText().substring(0, 300));
+            console.error(`[Fase 1 Clasificador] Error HTTP ${code}:`, response.getContentText().substring(0, 300));
             return null;
         }
 
         const respJson = JSON.parse(response.getContentText());
 
         if (!respJson.candidates || respJson.candidates.length === 0) {
-            console.error('[Quick Extract] No hay candidatos en la respuesta');
+            console.error('[Fase 1 Clasificador] No hay candidatos en la respuesta');
             return null;
         }
 
@@ -579,11 +722,24 @@ Responde SOLO con JSON válido, sin explicaciones:
         const cleanJson = rawContent.replace(/```json/g, '').replace(/```/g, '').trim();
         const result = JSON.parse(cleanJson);
 
-        console.log(`[Quick Extract] ✓ refAjustador="${result.refAjustador}", comunicadoId="${result.comunicadoId}"`);
-        return result;
+        // Extraer campos para compatibilidad con el flujo existente
+        const header = result.header || result;
+        const refAjustador = header.referenciaBase || header.refAjustador;
+        const comunicadoId = header.comunicadoId;
+        const tipoEstrategia = header.tipoEstrategia || 'ORIGEN';
+
+        console.log(`[Fase 1 Clasificador] ✓ Ref="${refAjustador}", Com="${comunicadoId}", Estrategia="${tipoEstrategia}"`);
+
+        // Retornar en formato unificado
+        return {
+            refAjustador: refAjustador,
+            comunicadoId: comunicadoId,
+            tipoEstrategia: tipoEstrategia,
+            header: header // Objeto completo con todos los metadatos
+        };
 
     } catch (error) {
-        console.error('[Quick Extract] Error:', error.message);
+        console.error('[Fase 1 Clasificador] Error:', error.message);
         return null;
     }
 }
@@ -782,31 +938,82 @@ function _callGeminiWithPdf(base64Content, filename, errorFeedback = null, catal
     // FLUJO BIFURCADO: Inyectar instrucciones según MODO
     // =========================================================================
     if (esOrigen) {
-        // MODO ORIGEN: Extracción Total (Línea Base)
-        console.log('[_callGeminiWithPdf] MODO: ORIGEN - Extracción Total de Partidas');
+        // =====================================================================
+        // FASE 2A: "EL CONSTRUCTOR" - MODO ORIGEN (Extracción Total)
+        // =====================================================================
+        console.log('[_callGeminiWithPdf] MODO: ORIGEN - Fase 2A El Constructor');
         promptSystem += `
 
-## 🟢 MODO ORIGEN (LÍNEA BASE - EXTRACCIÓN TOTAL)
+## 🟢 FASE 2A: MODO ORIGEN (El Constructor)
 
-**CONTEXTO:** Este es el DOCUMENTO ORIGINAL. Debes extraer TODAS las partidas válidas del presupuesto.
+**ROL:** Auditor de Presupuestos de Obra (Modo Creación).
+**CONTEXTO:** Este es el documento MAESTRO (Origen). Debes extraer el 100% de las partidas. La base de datos está VACÍA para esta referencia.
 
-### INSTRUCCIONES DE EXTRACCIÓN TOTAL:
-1. **IDENTIFICA** la tabla principal de conceptos/presupuesto en el PDF
-2. **EXTRAE** CADA fila que contenga: Ubicación/Concepto y Monto
-3. **IGNORA** (no extraigas):
-   - Filas de subtotales, sumas acumuladas, "TOTAL", "IVA"
-   - Encabezados de página repetidos
-   - Tablas de "Resumen Financiero" (solo queremos el desglose detallado)
-4. **SEPARA** las columnas de "Daño Físico" y "Desazolves" en líneas independientes
+---
 
-### REGLA IMPORTANTE PARA ORIGEN:
-- **EXTRAE TODO** lo que veas en la tabla de presupuesto
-- Si encuentras conceptos duplicados (mismo concepto en varios tramos), EXTRÁELOS TODOS como partidas individuales
-- NO omitas líneas aunque tengan importe $0.00 (son estructurales)
+### PASO 1: Escaneo de Tablas Financieras
+*Objetivo: Identificar y procesar todas las tablas de presupuesto.*
+
+* **1.1 Jerarquía de Tablas:** Prioridad: "Hoja Generadora" > "Presupuesto" > "Estimación".
+* **1.2 Filas Válidas:** Extrae toda fila que tenga: Clave/Código, Descripción y Monto.
+* **1.3 Columnas Fantasma:** Si hay columna "Anterior" y "Actual", toma SIEMPRE la "Actual" o "Total".
+* **1.4 Identidad Geográfica:** Si la fila es un material ("Cemento"), busca el encabezado superior "UBICACIÓN:" y úsalo como concepto principal.
+* **1.5 Desglose Individual:** Si un concepto se repite en varios tramos, extráelos por separado. **NO LOS SUMES**.
+* **1.6 Limpieza Automática:** Ignora filas con: "Subtotal", "IVA", "Gran Total", "Suma".
+* **1.7 Montos Cero:** Si una partida aparece con $0.00 en el presupuesto original, **ignórala** (probablemente formato vacío).
+
+### PASO 2: Categorización de Líneas
+*Objetivo: Clasificar cada concepto correctamente.*
+
+* **2.1 DAÑO FISICO:** Reparaciones, reconstrucción, suministros de materiales, mano de obra.
+* **2.2 DESAZOLVES:** Limpieza de canales, remoción de sedimentos, azolve.
+* **2.3 Columnas Separadas:** Si el PDF tiene columnas "Daño Físico" y "Desazolves" separadas, genera UNA línea por cada columna con valor > 0.
+* **2.4 Prioridad de Columnas:** Buscar "Importe Total", "Monto Autorizado", "Estimación CTA".
+* **2.5 Evitar Columnas:** NO uses "Precio Unitario", "P.U.", "Reclamado", "Anterior".
+
+### PASO 3: Normalización y Limpieza
+*Objetivo: Preparar datos limpios.*
+
+* **3.1 Montos:** Quita signos de pesos ($), comas. Usa formato numérico (e.g., 45000.50).
+* **3.2 Descripciones:** Normaliza ubicaciones: "UR" → "Unidad de Riego", "DR" → "Distrito de Riego".
+* **3.3 Validación:** Verifica que la suma de líneas ≈ total del documento.
+
+### PASO 4: Output JSON
+Genera el JSON con estructura \`{header, lineas}\`.
+
+**Formato Esperado:**
+\`\`\`json
+{
+  "header": {
+    "refCta": "GL098774",
+    "comunicadoId": "L50",
+    "tipoRegistro": "ORIGEN",
+    "fechaDoc": "2025-06-10",
+    "totalPdf": 500000.00,
+    "descripcion": "GL098774-L50"
+  },
+  "lineas": [
+    {
+      "concepto": "Unidad de Riego Aguas Blancas",
+      "categoria": "DAÑO FISICO",
+      "importe": 45000.50
+    },
+    {
+      "concepto": "Unidad de Riego Coyuca",
+      "categoria": "DESAZOLVES",
+      "importe": 12000.00
+    }
+  ]
+}
+\`\`\`
+
+**IMPORTANTE:** Extrae TODAS las partidas válidas. No omitas ninguna.
 `;
     } else {
-        // MODO ACTUALIZACIÓN: Se inyectará Schema Injection más adelante
-        console.log('[_callGeminiWithPdf] MODO: ACTUALIZACIÓN - Extracción Diferencial');
+        // =====================================================================
+        // FASE 2B: "EL CIRUJANO" - MODO ACTUALIZACIÓN (Extracción Diferencial)
+        // =====================================================================
+        console.log('[_callGeminiWithPdf] MODO: ACTUALIZACIÓN - Fase 2B El Cirujano');
     }
 
     promptSystem += `
@@ -1186,44 +1393,130 @@ Si procesas un concepto "Canal Lat. Coyuca" y en el contexto existe "Canal Later
     }
 
     // =========================================================================
-    // SCHEMA INJECTION: Extracción Dirigida de Importes (SOLO MODO ACTUALIZACIÓN)
+    // FASE 2B: "EL CIRUJANO" - Prompt Completo para Modo Actualización
     // Solo se inyecta cuando NO es origen Y hay líneas esperadas
     // =========================================================================
     if (!esOrigen && expectedLines && expectedLines.length > 0) {
-        console.log(`[_callGeminiWithPdf] MODO ACTUALIZACIÓN: Inyectando ${expectedLines.length} líneas para Schema Injection`);
+        console.log(`[_callGeminiWithPdf] FASE 2B: Inyectando ${expectedLines.length} partidas vigentes para análisis diferencial`);
         promptSystem += `
 
-## ⚡ EXTRACCIÓN DIRIGIDA (SCHEMA INJECTION - PRIORIDAD MÁXIMA)
+## ⚡ FASE 2B: MODO ACTUALIZACIÓN (El Cirujano)
 
-**CONTEXTO CRÍTICO:** Para esta referencia, YA EXISTEN los siguientes conceptos en la BD.
-Tu tarea es **BUSCAR EL IMPORTE ESPECÍFICO** de cada uno de estos conceptos en el PDF.
+**ROL:** Auditor de Ajustes Financieros (Modo Diferencial).
+**CONTEXTO:** Estamos actualizando el presupuesto. Ya existen partidas en la base de datos.
+**MISIÓN:** Detectar SOLO los CAMBIOS entre el PDF y las partidas existentes.
 
-### LISTA DE CONCEPTOS CONOCIDOS (BUSCAR EN PDF):
-${expectedLines.map((l, i) => `${i + 1}. "${l.concepto}" (${l.categoria}) [Importe previo: $${l.importe_previo?.toFixed(2) || '0.00'}]`).join('\n')}
+---
 
-### INSTRUCCIONES DE EXTRACCIÓN DIRIGIDA:
-1. **ESCANEA** el PDF buscando EXACTAMENTE estos conceptos (o variaciones menores de nombre)
-2. Para cada concepto encontrado en el PDF, extrae el **IMPORTE TOTAL/FINAL** (NO el Precio Unitario)
-3. Si un concepto de la lista NO aparece en este PDF específico, **NO LO INCLUYAS** en el output
-   - ⚠️ NO inventes importes. Si no lo ves en el PDF, no lo reportes.
-4. Si encuentras un concepto NUEVO (no en la lista), agrégalo normalmente
+### PARTIDAS VIGENTES EN BASE DE DATOS:
+\`\`\`json
+${JSON.stringify(expectedLines.map((l, i) => ({
+            id_bd: l.id_bd || (i + 100),
+            concepto: l.concepto,
+            categoria: l.categoria,
+            importe_actual: l.importe_previo || 0
+        })), null, 2)}
+\`\`\`
 
-### COLUMNAS A EVITAR (NO SON EL IMPORTE FINAL):
-❌ "Precio Unitario", "P.U."
-❌ "Estimación Anterior", "Importe Anterior"
-❌ "Acumulado", "Previous Amount"
-❌ "Reclamado" (puede ser diferente al autorizado)
+---
 
-### COLUMNAS CORRECTAS (BUSCAR):
-✅ "Importe", "Total", "Importe Revisado"
-✅ "Importe Daño Físico", "Importe Desazolves"
-✅ "Monto Autorizado", "Estimación CTA"
+### PASO 5: Mapeo y Detección (El Radar)
+*Objetivo: Cruzar el PDF contra las Partidas Vigentes.*
 
-### REGLA DE COINCIDENCIA:
-- Si el PDF dice "UR Aguas Blancas" y la lista tiene "Unidad de Riego Aguas Blancas", SON LO MISMO
-- Usa el nombre de la lista (el normalizado) en tu output, no el literal del PDF
+* **5.1 Lectura de Contexto:** Tienes arriba las "PARTIDAS VIGENTES" (id_bd, concepto, importe_actual).
+* **5.2 Búsqueda de Coincidencias:** Busca cada concepto del contexto dentro del PDF.
+* **5.3 Manejo de "No Encontrado":** Si una partida del contexto NO aparece en el PDF → acción **"MANTENER"** con \`importe: null\`. (NO es cero, es null = sin cambios).
+* **5.4 Detección de Nuevos:** Si encuentras una partida en el PDF que NO está en el contexto → acción **"CREAR"**.
+* **5.5 Prioridad de Columnas:** Ignora "Importe Anterior" o "Reclamado". Busca "Importe Revisado", "Autorizado", "CTA".
+* **5.6 Validación de Moneda:** NO extraigas "Precios Unitarios" como importes. Verifica la columna.
+* **5.7 Agrupación de Generadoras:** Si el PDF desglosa materiales para una partida existente, suma los materiales y presenta el TOTAL.
+
+### PASO 6: Lógica de Estado (El Juez)
+*Objetivo: Determinar la acción para cada línea.*
+
+| Situación | Acción | importe |
+|-----------|--------|---------|
+| ID existe Y monto cambió | **ACTUALIZAR** | nuevo monto |
+| ID existe Y NO aparece en PDF | **MANTENER** | \`null\` |
+| ID existe Y PDF dice "Cancelado" o $0 | **CANCELAR** | \`0\` |
+| Concepto NUEVO (no en contexto) | **CREAR** | monto del PDF |
+
+* **6.5 Resolución de Conflictos:** Si hay dos montos (resumen vs detalle), el Detalle manda.
+* **6.6 No Inventar:** Si no estás seguro de un concepto, NO lo incluyas.
+* **6.7 Verificar IDs:** Devuelve el \`id_bd\` correcto del JSON de entrada.
+
+### PASO 7: Normalización
+* **7.1 Montos:** Sin signos de peso, sin comas. Formato numérico.
+* **7.2 Categorías:** "DAÑO FISICO" o "DESAZOLVES".
+* **7.3 Validación:** \`null\` = No tocar. \`0\` = Cancelar/Cero.
+
+### PASO 8: Output JSON (Deltas)
+Genera el JSON con estructura \`{header, lineas}\`. Cada línea debe tener \`accion\`.
+
+**Formato Esperado:**
+\`\`\`json
+{
+  "header": {
+    "refCta": "GL098774",
+    "comunicadoId": "L50B",
+    "tipoRegistro": "Actualización",
+    "totalPdf": 150000.00,
+    "descripcion": "GL098774-L50, L50A, L50B"
+  },
+  "lineas": [
+    {
+      "id_bd": 105,
+      "concepto": "Unidad de Riego Aguas Blancas",
+      "categoria": "DAÑO FISICO",
+      "accion": "ACTUALIZAR",
+      "importe": 55000.50,
+      "razon": "Ajuste en generadora pág 4"
+    },
+    {
+      "id_bd": 106,
+      "concepto": "Unidad de Riego Coyuca",
+      "categoria": "DESAZOLVES",
+      "accion": "MANTENER",
+      "importe": null,
+      "razon": "No mencionado en este comunicado"
+    },
+    {
+      "id_bd": 107,
+      "concepto": "Canal Principal",
+      "categoria": "DAÑO FISICO",
+      "accion": "CANCELAR",
+      "importe": 0,
+      "razon": "Marcado como cancelado en PDF"
+    },
+    {
+      "id_bd": null,
+      "concepto": "Nueva Ubicación Adicional",
+      "categoria": "DAÑO FISICO",
+      "accion": "CREAR",
+      "importe": 8500.00,
+      "razon": "Concepto nuevo en este comunicado"
+    }
+  ]
+}
+\`\`\`
+
+**REGLAS CRÍTICAS:**
+- Si el concepto NO aparece en el PDF → \`"accion": "MANTENER"\` + \`"importe": null\`
+- Si el concepto tiene $0.00 explícito o dice "Cancelado" → \`"accion": "CANCELAR"\` + \`"importe": 0\`
+- NUNCA inventes importes. Si no lo ves, no lo reportes.
 `;
     }
+
+    // =========================================================================
+    // INYECCIÓN DE REGLAS COMUNES (Pasos 5, 6, 7, 8)
+    // Se aplican tanto a ORIGEN como a ACTUALIZACIÓN
+    // =========================================================================
+    promptSystem += `
+
+---
+## REGLAS DE EXTRACCIÓN Y FORMATO (OBLIGATORIAS)
+${PROMPT_CORE_EXTRACTION}
+`;
 
     if (errorFeedback) {
         promptSystem += `
