@@ -1952,6 +1952,34 @@ function _procesarBatchInterno(loteAgrupado, cache) {
                     }
                 }
 
+                // 2.5 CASO INFORMATIVO: Copiar líneas del predecesor como propias
+                // El comunicado no tiene cambios de presupuesto, solo es una notificación
+                const esInformativo = updateObj._tipoAccion === 'INFORMATIVO';
+
+                if (esInformativo && !esOrigen) {
+                    logBatch(`[INFORMATIVO] ActID ${idActReal}: Copiando ${lineasPredecesor.length} líneas del predecesor`);
+
+                    // Insertar las líneas del predecesor como propias de esta actualización
+                    lineasPredecesor.forEach(l => {
+                        const catNum = l.categoria == 2 || String(l.categoria).toUpperCase().includes('DESAZOLVE') ? 2 : 1;
+                        batchPresupuestos.push({
+                            idActualizacion: idActReal,
+                            idLinea: l.idLinea,
+                            _descripcionTemp: String(l.concepto || 'S/D').toUpperCase().trim(),
+                            categoria: catNum,
+                            importe: l.importe, // Mismo importe del predecesor
+                            esVigente: true,
+                            fechaCreacion: new Date()
+                        });
+                    });
+
+                    // Guardar en memoria para que el siguiente (ej: L03B) pueda leer estas líneas
+                    memoriaLineasBatch.set(`${idComunicado}_${consecutivoLocal}`, lineasPredecesor);
+
+                    // Saltar fusión/deltas - ya copiamos todo
+                    return;
+                }
+
                 // 3. FUSIÓN Y NORMALIZACIÓN
                 // Clave estricta para comparar (elimina UR, DR, acentos, espacios)
                 const _key = (c, cat) => {

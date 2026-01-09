@@ -1129,7 +1129,14 @@ Genera el JSON con estructura \`{header, lineas}\`.
         - Si dice "Sustituye todo" → "REEMPLAZO_TOTAL". 
         - Si dice "Se agregan" → "SUSTITUCION_PARCIAL". 
         - Si no hay tablas Y NO hay montos narrativos claros → "INFORMATIVO".
-        - Si hay montos (tabla o narrativo) → "SUSTITUCION_PARCIAL" (Default seguro).
+        - Si el documento menciona "condicionado a", "pendiente de", "en espera de documentación", "sujeto a entrega" → "INFORMATIVO".
+        - Si el monto mencionado es IDÉNTICO al del comunicado anterior (sin cambios) → "INFORMATIVO".
+        - Si hay montos (tabla o narrativo) con valores DIFERENTES al anterior → "SUSTITUCION_PARCIAL" (Default seguro).
+        
+    * **3.6 Regla Especial para INFORMATIVO:
+        - Cuando tipoAccion = "INFORMATIVO", el array \`lineas\` DEBE estar vacío [].
+        - NO extraigas líneas con $0.00, eso indica que no hay cambios.
+        - El sistema heredará automáticamente las líneas del comunicado anterior.
 
     ### PASO 4: Lógica Carry-Forward (Gestión Histórica)
     *Objetivo: Gestionar la historia con el registro previo si aplica.*
