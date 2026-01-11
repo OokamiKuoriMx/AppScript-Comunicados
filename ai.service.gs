@@ -1100,6 +1100,56 @@ Genera el JSON con estructura \`{header, lineas}\`.
 
     ---
 
+    ## REGLAS FUNDAMENTALES DE PROCESAMIENTO (Leer Antes de Ejecutar)
+
+    ### RF1: Control de Versiones de Documentos (Priorización y Orden de Lectura)
+    - Si recibes múltiples documentos con el mismo número de referencia base (ej. GL098774-L22 y GL098774-L22A), el documento que contenga una **letra al final del código** o la palabra **(Actualización)** tiene **prioridad absoluta** sobre el original.
+    - En caso de contradicción en nombres de unidades, responsables o instrucciones técnicas, **descarta la información del documento antiguo** y utiliza exclusivamente la del más reciente.
+    - El documento base (sin letra) establece la línea base; las actualizaciones (con letra A, B, C...) la reemplazan.
+    - **ORDEN DE LECTURA OBLIGATORIO para ACTUALIZACIONES:**
+        1. PRIMERO: Lee los anexos y correos electrónicos (páginas finales del PDF).
+        2. SEGUNDO: Lee el cuerpo principal del oficio.
+        3. Si los anexos contienen instrucciones que contradicen el cuerpo, **los anexos prevalecen**.
+
+    ### RF2: Búsqueda de Conflictos y Alertas Críticas (No Alucinaciones)
+    - **No te limites a extraer datos numéricos**. Busca activamente en el cuerpo del texto y en los anexos (especialmente si hay correos electrónicos) palabras clave como:
+        - "trazo diferente", "riesgo de falla", "detener trabajos", "corrección", "inadmisible", "no autorizado", "inconformidad", "modificar", "cambiar ruta".
+    - Si el área técnica de la dependencia manifiesta una inconformidad con la **ejecución física de la obra** (trazo, ruta, método constructivo), **agrega una advertencia** al array \`header.advertencias\` con prefijo "ALERTA CRÍTICA:" describiendo el problema LOGÍSTICO.
+    - **PROHIBIDO GENERAR ADVERTENCIAS FALSAS**: 
+        - NO reportes "Total corregido" si el monto NO cambió.
+        - Si detectas una corrección de TRAZO pero el MONTO es idéntico, la advertencia debe decir: "ALERTA CRÍTICA: Corrección de trazo requerida (sin cambio de monto)".
+        - Nunca confundas una corrección logística con una corrección económica.
+
+    ### RF3: Validación de Identidad de Infraestructura (Por Firmante, NO por Contexto)
+    - **REGLA ANTI-CONFUSIÓN GEOGRÁFICA**: El nombre del estado o Dirección Local se extrae de:
+        1. El **membrete oficial** o encabezado del documento.
+        2. El **firmante** del oficio (ej. "Director Local de Michoacán").
+        3. La **dirección postal** de envío.
+    - **PROHIBIDO** inferir la ubicación del contexto del fenómeno natural (ej. si el huracán afectó Guerrero, eso NO significa que el comunicado sea de Guerrero).
+    - Si el documento dice "Huracán John por Guerrero" pero está firmado por "Dirección Local Michoacán", el estado es **MICHOACÁN**.
+    - Si detectas un cambio de ubicación entre versiones, reporta: "Rectificación de Ubicación: [anterior] → [nuevo]".
+
+    ### RF4: Análisis Multifuente Interno (Procesamiento de Anexos OBLIGATORIO)
+    - **ANTES de generar cualquier línea de presupuesto**, debes leer TODAS las páginas del PDF, especialmente:
+        - Páginas 5-10 que suelen contener correos electrónicos de la dependencia.
+        - Anexos marcados como "Anexo I", "Anexo Técnico", etc.
+    - Los comentarios técnicos enviados por personal de la Dirección Local (ej. Subdirectores Técnicos o de Enlace) **invalidan las apreciaciones preliminares del ajustador** si estas últimas no han sido corregidas en el texto principal.
+    - **Prioridad de fuente**: Oficio Oficial > Correo de Dependencia > Reporte del Ajustador.
+    - Si un anexo indica "trazo diferente al autorizado", esto debe reflejarse en \`advertencias\` como alerta crítica.
+
+    ### RF5: Separación de Datos Económicos vs. Logísticos (Anti-Mezcla de Unidades)
+    - **VALIDACIÓN MONETARIA OBLIGATORIA**:
+        - El campo \`totalPdf\` y \`importe\` de las líneas SOLO pueden contener valores que provengan de columnas etiquetadas como: "Importe", "Total MXN", "Monto", "Costo", "Presupuesto", "$".
+        - **PROHIBIDO** tomar valores de columnas como: "Largo", "Ancho", "Cantidad", "Metros", "M²", "Piezas", "Unidades".
+        - Si ves un número como "90.00" junto a una unidad de medida (m, m², pzas), eso es una CANTIDAD, no un importe.
+        - Los importes típicos de infraestructura están en el rango de $10,000 a $100,000,000. Si extraes un "total" de $90.00 o $150.00, **revisa si es un error**.
+    - **Separación clara**:
+        - **Datos Económicos**: Montos en pesos (MXN), importes, totales de presupuesto.
+        - **Datos Logísticos**: Longitudes (m, km), áreas (m²), cantidades, trazos.
+    - **Aunque el presupuesto no cambie entre versiones**, reporta cualquier cambio en la logística como: "Cambio logístico sin impacto económico: [descripción]".
+
+    ---
+
     ## SECUENCIA DE EJECUCIÓN OBLIGATORIA (8 PASOS x 7 SUBPASOS)
 
     ### PASO 1: Identificación de Datos Generales y Entidades Base
