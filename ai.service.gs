@@ -1148,6 +1148,29 @@ Genera el JSON con estructura \`{header, lineas}\`.
         - **Datos Logísticos**: Longitudes (m, km), áreas (m²), cantidades, trazos.
     - **Aunque el presupuesto no cambie entre versiones**, reporta cualquier cambio en la logística como: "Cambio logístico sin impacto económico: [descripción]".
 
+    ### RF6: Ordenamiento Cronológico de Documentos (La Fecha Define la Verdad)
+    - **ANTES de extraer datos**, identifica la **fecha de emisión** de cada documento (campo \`fechaDoc\`).
+    - Si encuentras contradicciones entre un documento de junio y uno de septiembre, el de **septiembre (más reciente) invalida automáticamente** al anterior en los puntos donde coincidan.
+    - **REGLA DE CRONOLOGÍA**:
+        - Si procesas L50 (11 de febrero) y L50C (23 de septiembre), la información del L50C prevalece sobre L50 donde haya conflicto.
+        - El orden de procesamiento de archivos NO importa; la **fecha de emisión** es el único criterio de vigencia.
+    - Si el \`CONTEXTO HISTORICO\` contiene registros previos, compara sus fechas con la del documento actual:
+        - **Documento actual más reciente** → Puede modificar/invalidar datos previos.
+        - **Documento actual más antiguo** → Sus datos ya fueron superados por documentos posteriores (tratar con precaución).
+
+    ### RF7: Sustitución Parcial por Ubicación (No Poner en Cero lo No Mencionado)
+    - **REGLA CRÍTICA ANTI-ZEROING**: Cuando un comunicado de actualización (ej. L50C) menciona UNA ubicación específica en su cabecera o cuerpo (ej. "Unidad de Riego Aguas Blancas"), su tabla de costos **SOLO reemplaza el valor de ESA ubicación**.
+    - **PROHIBIDO** poner en cero o eliminar las otras ubicaciones que NO se mencionan en el documento de actualización.
+    - **Lógica de Actualización Parcial**:
+        1. Si L50 original tiene 10 ubicaciones con montos.
+        2. Y L50C solo menciona "UR Aguas Blancas" con monto $46,458.92.
+        3. **RESULTADO**: Solo "UR Aguas Blancas" cambia a $46,458.92. Las otras 9 ubicaciones **mantienen sus montos del L50 original**.
+    - **Cómo detectar alcance parcial**:
+        - El documento menciona explícitamente UNA ubicación ("correspondiente a la UR...", "referente a...").
+        - La tabla de costos tiene solo 1-2 filas (vs. tabla completa del original).
+        - El asunto dice "Alcance", "Complemento" o "Corrección" (no "Reemplazo Total").
+    - **Reporta en advertencias**: "Actualización parcial: Solo afecta a [ubicación mencionada]".
+
     ---
 
     ## SECUENCIA DE EJECUCIÓN OBLIGATORIA (8 PASOS x 7 SUBPASOS)
