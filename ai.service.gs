@@ -168,6 +168,8 @@ function procesarPdfIA(payload, optFilename) {
             if (identificadores && identificadores.refAjustador) {
                 payload.refCta = identificadores.refAjustador;
                 payload.comunicadoId = identificadores.comunicadoId;
+                // NUEVO: Guardar header de Fase 1 para completar campos vacíos después
+                payload._headerFase1 = identificadores.header || {};
                 console.log(`[${contexto}] ✓ Pasada 1 exitosa: Ref=${payload.refCta}, Com=${payload.comunicadoId}`);
 
                 // Cargar conceptos ahora que tenemos refCta seguro
@@ -215,7 +217,9 @@ function procesarPdfIA(payload, optFilename) {
                         siniestros: [...new Set(cache.siniestros.map(s => s.siniestro).filter(Boolean))],
                         fenomenos: [...new Set(cache.siniestros.map(s => s.fenomeno).filter(Boolean))],
                         distritos: [...new Set(cache.distritosRiego.map(d => d.distritoRiego).filter(Boolean))],
-                        aseguradoras: [...new Set(cache.aseguradoras.map(a => a.aseguradora || a.nombre).filter(Boolean))]
+                        aseguradoras: [...new Set(cache.aseguradoras.map(a => a.aseguradora || a.nombre).filter(Boolean))],
+                        // Cargar estados desde la tabla estados de la BD
+                        estados: [...new Set(cache.estados.map(e => e.estado || e.nombre).filter(Boolean))]
                     };
                 } catch (errCatalogs) {
                     console.warn(`[${contexto}] No se pudieron cargar catálogos para contexto AI:`, errCatalogs);
@@ -240,6 +244,38 @@ function procesarPdfIA(payload, optFilename) {
 
                     registrosContextoUnificado.push(...batchRelevantes);
                     console.log(`[${contexto}] Agregados ${batchRelevantes.length} registros del batch al contexto`);
+
+                    // =====================================================================
+                    // FIX CRÍTICO: Construir expectedLines desde BATCH si BD está vacía
+                    // Esto permite que L03A reconozca las líneas de L03 del mismo batch
+                    // =====================================================================
+                    if (expectedLines.length === 0 && batchRelevantes.length > 0) {
+                        console.log(`[${contexto}] expectedLines vacío, construyendo desde BATCH...`);
+
+                        // Parsear versión actual para filtrar solo predecesores
+                        const versionActual = _parseVersionLocal(payload.comunicadoId);
+
+                        for (const reg of batchRelevantes) {
+                            const versionReg = _parseVersionLocal(reg.header.comunicadoId);
+                            // Solo incluir si es predecesor (misma base, índice menor)
+                            if (versionReg.base === versionActual.base && versionReg.index < versionActual.index) {
+                                for (const linea of reg.lineas || []) {
+                                    if (linea.concepto && linea.concepto !== 'Sin descripción') {
+                                        const key = `${linea.concepto}|${linea.categoria}`;
+                                        if (!expectedLines.some(e => `${e.concepto}|${e.categoria}` === key)) {
+                                            expectedLines.push({
+                                                concepto: linea.concepto,
+                                                categoria: linea.categoria || 'DAÑO FISICO',
+                                                importe_previo: linea.importe || 0,
+                                                comunicado_origen: reg.header.comunicadoId
+                                            });
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        console.log(`[${contexto}] expectedLines construido desde BATCH: ${expectedLines.length} líneas`);
+                    }
                 }
 
                 console.log(`[${contexto}] Total contexto unificado: ${registrosContextoUnificado.length} registros`);
@@ -275,6 +311,48 @@ function procesarPdfIA(payload, optFilename) {
 
         if (!resultadoFinal) {
             throw new Error(`Falló tras ${MAX_RETRIES} intentos. Último error: ${lastError}`);
+        }
+
+        // =====================================================================
+        // POST-PROCESAMIENTO: Normalizar datos de la IA
+        // =====================================================================
+        // Convertir conceptos y categorías a mayúsculas para consistencia
+        if (resultadoFinal.lineas && Array.isArray(resultadoFinal.lineas)) {
+            resultadoFinal.lineas = resultadoFinal.lineas.map(linea => ({
+                ...linea,
+                concepto: String(linea.concepto || '').toUpperCase().trim(),
+                categoria: String(linea.categoria || 'DAÑO FISICO').toUpperCase().trim()
+            }));
+            console.log(`[procesarPdfIA] Normalizadas ${resultadoFinal.lineas.length} líneas a MAYÚSCULAS`);
+        }
+
+        // =====================================================================
+        // PASADA FINAL: Completar campos vacíos del header con datos de Fase 1
+        // =====================================================================
+        const headerFase1 = payload._headerFase1 || {};
+        const camposACompletar = [
+            { campo: 'distritoRiego', fuente: 'distritoRiego' },
+            { campo: 'ajustador', fuente: 'ajustador' },
+            { campo: 'aseguradora', fuente: 'aseguradora' },
+            { campo: 'fenomeno', fuente: 'fenomeno' },
+            { campo: 'siniestro', fuente: 'siniestro' },
+            { campo: 'fechaDoc', fuente: 'fechaDoc' }
+        ];
+
+        let camposCompletados = [];
+        camposACompletar.forEach(({ campo, fuente }) => {
+            const valorActual = resultadoFinal.header[campo];
+            const valorFase1 = headerFase1[fuente];
+
+            // Completar si está vacío y Fase 1 tiene valor
+            if ((!valorActual || valorActual === '' || valorActual === 'null') && valorFase1) {
+                resultadoFinal.header[campo] = valorFase1;
+                camposCompletados.push(campo);
+            }
+        });
+
+        if (camposCompletados.length > 0) {
+            console.log(`[procesarPdfIA] ✓ Pasada Final: Completados campos vacíos desde Fase 1: ${camposCompletados.join(', ')}`);
         }
 
         // Estructurar para el Importador
@@ -1049,6 +1127,19 @@ Genera el JSON con estructura \`{header, lineas}\`.
         - Ignora variaciones menores, abreviaturas entre paréntesis como "(DL)" o diferencias de espacios.
         - Tu objetivo es ENLAZAR con el existente, no crear uno nuevo.
     
+    * **1.4.1 Extracción de Estado de la República (CRÍTICO):
+        - **OBJETIVO**: Identificar el ESTADO DE MÉXICO donde ocurrió el siniestro.
+        - **FUENTES** (en orden de prioridad):
+            1. Busca la etiqueta "Estado:" o "Entidad:" en el encabezado del documento.
+            2. Extrae del nombre del Distrito/Dirección Local (ej. "DIRECCIÓN LOCAL GUERRERO" → estado = "GUERRERO").
+            3. Busca menciones geográficas en el cuerpo: "municipio de X, ESTADO" o "ubicado en ESTADO".
+        - **NORMALIZACIÓN**: Consulta la lista de "ESTADOS EXISTENTES" del catálogo.
+            - Si el PDF dice "Gro." o "Guerrero" y en la lista existe "GUERRERO", **USA EL DE LA LISTA**.
+            - Extrae SOLO el nombre del estado (ej. "GUERRERO", "JALISCO", "SINALOA").
+            - NO incluyas "Estado de" ni otros prefijos.
+        - **REGLA DE FALLBACK**: Si no encuentras el estado explícitamente pero tienes el Distrito de Riego, infiere el estado del nombre del distrito (ej. "DR 001 PABELLON" está en Aguascalientes).
+        - **NUNCA** dejes este campo como null si puedes inferirlo del contexto geográfico.
+
     * **1.5 Identificación de Aseguradora:
         - Busca referencias a "AGROASEMEX". 
         - Si el documento menciona otra aseguradora explícitamente, extráela. 
@@ -1193,11 +1284,15 @@ Genera el JSON con estructura \`{header, lineas}\`.
         - Extrae SIEMPRE el valor de la columna "Importe Remoción/Desazolves", INCLUSO si es $0.00.
         - Crea registro "DESAZOLVES" con la Identidad Geográfica (Paso 5.3) y este importe.
 
-    * **5.6 Separación de Líneas (Split Multiplicativo):**
-        - Si una fila tiene columnas para Daño Físico y Desazolves, **DEBES DUPLICAR** la extracción.
-        - **MANDATO MATEMÁTICO**: Si hay 10 ubicaciones en la tabla y ambas columnas existen, tu output debe tener **20 líneas** (10 de daño + 10 de desazolve).
+    * **5.6 Separación de Líneas (Split Multiplicativo) - REGLA OBLIGATORIA:**
+        - **REGLA PRINCIPAL**: Por cada ubicación/concepto extraído, SIEMPRE debes generar **2 LÍNEAS**:
+            1. Una línea con categoría "DAÑO FISICO"
+            2. Una línea con categoría "DESAZOLVES"
+        - Si la tabla solo muestra columna de Daño Físico sin Desazolve: Crea la línea de DESAZOLVES con importe = 0.
+        - Si la tabla solo muestra columna de Desazolve sin Daño Físico: Crea la línea de DAÑO FISICO con importe = 0.
+        - **MANDATO MATEMÁTICO**: Si hay 10 ubicaciones en la tabla, tu output debe tener **20 líneas** (10 DAÑO FISICO + 10 DESAZOLVES).
         - Nunca sumes los importes. Genera dos objetos independientes con la misma ubicación.
-        - Si el importe es 0 en una columna, agrega la línea con importe 0.
+        - **PROHIBIDO** devolver solo 1 línea por ubicación. Siempre deben ser 2.
     
     * **5.7 Extracción Narrativa (PRIORIDAD D - Modo Rescate):**
         - Si no hay tablas claras o el documento es un OFICIO DE RECLAMO/ACTUALIZACIÓN, busca montos en el texto.
@@ -1348,6 +1443,9 @@ Genera el JSON con estructura \`{header, lineas}\`.
         if (catalogs.aseguradoras && catalogs.aseguradoras.length > 0)
             promptSystem += `- ASEGURADORAS EXISTENTES: ${JSON.stringify(catalogs.aseguradoras.slice(0, 50))}
 `;
+        if (catalogs.estados && catalogs.estados.length > 0)
+            promptSystem += `- ESTADOS EXISTENTES (DE LA REPÚBLICA MEXICANA): ${JSON.stringify(catalogs.estados)}
+`;
 
         promptSystem += `
 **PRIORIDAD**: Si un valor del PDF coincide (incluso parcialmente) con un catálogo existente, DEVUELVE EL VALOR DEL CATÁLOGO, no el texto literal del PDF.`;
@@ -1438,15 +1536,50 @@ ${JSON.stringify(expectedLines.map((l, i) => ({
 * **5.6 Validación de Moneda:** NO extraigas "Precios Unitarios" como importes. Verifica la columna.
 * **5.7 Agrupación de Generadoras:** Si el PDF desglosa materiales para una partida existente, suma los materiales y presenta el TOTAL.
 
-### PASO 6: Lógica de Estado (El Juez)
-*Objetivo: Determinar la acción para cada línea.*
+### PASO 6: Lógica de Estado (El Juez) - REGLAS CRÍTICAS
+*Objetivo: Determinar la acción exacta basándose en la evidencia del texto.*
 
-| Situación | Acción | importe |
+| Situación en Texto | Acción | Importe Salida |
 |-----------|--------|---------|
 | ID existe Y monto cambió | **ACTUALIZAR** | nuevo monto |
 | ID existe Y NO aparece en PDF | **MANTENER** | \`null\` |
-| ID existe Y PDF dice "Cancelado" o $0 | **CANCELAR** | \`0\` |
+| "Cancelado", "Improcedente", "No autorizado" | **CANCELAR** | \`0\` |
 | Concepto NUEVO (no en contexto) | **CREAR** | monto del PDF |
+| "Se solicita bitácora", "Pendiente de acreditar", "Sujeto a revisión" | **MANTENER** | \`null\` |
+| "Se confirma existencia de material" pero "falta soporte" | **MANTENER** | \`null\` |
+| No se menciona la ubicación | **MANTENER** | \`null\` |
+
+* **6.1 REGLA DE ESTADOS CONDICIONADOS (CRÍTICO):**
+    - Si el texto contiene frases como:
+      - "pendiente de acreditar"
+      - "sujeto a revisión"
+      - "se solicita bitácora" / "se solicita planos"
+      - "pendiente de información"
+      - "en espera de documentación"
+      - "condicionado a entrega de..."
+      - "necesario contar con..."
+    - **PROHIBIDO** poner \`importe: 0\`. Eso significaría CANCELACIÓN.
+    - Tu acción debe ser **"MANTENER"** con \`importe: null\`.
+    - El sistema heredará automáticamente el monto del comunicado anterior.
+
+* **6.2 REGLA DE DESAZOLVES (Split Obligatorio):**
+    - Si el documento discute "limpieza", "remoción" o "material de azolve":
+    - Busca en el contexto (Partidas Vigentes) si existe una línea con categoría **"DESAZOLVES"**.
+    - Si el texto pide planos/bitácoras para liberar el pago → Tu acción es **"MANTENER"**.
+    - **PROHIBIDO** poner importe 0 si solo están pidiendo documentación.
+
+* **6.3 REGLA DE HERENCIA DUAL (Split Multiplicativo):**
+    - Si en el contexto (Partidas Vigentes) una ubicación tiene 2 líneas (Daño Físico + Desazolves):
+    - Y el PDF menciona la ubicación de forma general (ej. "En el Vado Saca Cosechas..."):
+    - Debes reportar el estado de **AMBAS** líneas en tu JSON de salida.
+    - Ejemplo: Si solo hablan de desazolve, reporta:
+      - Desazolves: MANTENER/ACTUALIZAR según corresponda
+      - Daño Físico: MANTENER (con \`importe: null\`)
+
+* **6.4 DIFERENCIA CRÍTICA ENTRE CANCELAR Y MANTENER:**
+    - \`"CANCELAR"\` con \`importe: 0\` = La partida fue RECHAZADA, no se pagará NUNCA.
+    - \`"MANTENER"\` con \`importe: null\` = La partida sigue VIGENTE, esperando documentación.
+    - Si el documento NO RECHAZA explícitamente la partida, usa MANTENER.
 
 * **6.5 Resolución de Conflictos:** Si hay dos montos (resumen vs detalle), el Detalle manda.
 * **6.6 No Inventar:** Si no estás seguro de un concepto, NO lo incluyas.
@@ -1512,6 +1645,58 @@ Genera el JSON con estructura \`{header, lineas}\`. Cada línea debe tener \`acc
 - Si el concepto tiene $0.00 explícito o dice "Cancelado" → \`"accion": "CANCELAR"\` + \`"importe": 0\`
 - NUNCA inventes importes. Si no lo ves, no lo reportes.
 `;
+    }
+
+    // =========================================================================
+    // REGLAS ESPECIALES PARA ACTUALIZACIONES INFORMATIVAS (L03A, L04A, etc.)
+    // Se inyectan SOLO cuando NO es origen (modo actualización)
+    // =========================================================================
+    if (!esOrigen) {
+        promptSystem += `
+
+    ### PASO CRÍTICO: REGLAS PARA ACTUALIZACIONES INFORMATIVAS (L03A, L04A, etc.)
+    *Objetivo: No destruir el presupuesto anterior si el documento solo pide requisitos.*
+
+    * **REGLA 1: NO INTERPRETAR "PENDIENTE" COMO CERO ($0.00)**
+        - Si el texto dice: "es necesario contar con bitácoras", "sujeto a revisión", "se solicita información", "pendiente de acreditar".
+        - TU ACCIÓN DEBE SER: **"MANTENER"**.
+        - TU IMPORTE DEBE SER: **null** (No pongas 0.00, pon null).
+        - Razón: $0.00 significa "cancelado/rechazado". null significa "sin cambios por ahora".
+
+    * **REGLA 2: HERENCIA DUAL (EL SPLIT OBLIGATORIO)**
+        - **Situación:** El documento L03A menciona "Vado Saca Cosechas" (o cualquier ubicación).
+        - **Contexto:** En la base de datos (ver 'PARTIDAS VIGENTES' arriba) esa ubicación tiene 2 líneas: "DAÑO FÍSICO" y "DESAZOLVES".
+        - **Instrucción:** Si el documento NO cancela explícitamente ninguna, DEBES REPORTAR AMBAS.
+        - Aunque el texto solo hable de "material de azolve", tú debes devolver:
+            1. { "concepto": "Vado Saca Cosechas...", "categoria": "DAÑO FISICO", "accion": "MANTENER", "importe": null }
+            2. { "concepto": "Vado Saca Cosechas...", "categoria": "DESAZOLVES", "accion": "MANTENER", "importe": null }
+    
+    * **REGLA 3: PROHIBIDO FUSIONAR**
+        - Nunca mezcles "Daño Físico" y "Desazolves" en una sola línea si en el origen estaban separadas.
+        - Si en PARTIDAS VIGENTES hay N líneas para una ubicación, tu output debe tener al menos N líneas para esa ubicación.
+
+    * **REGLA 4: CUENTA LAS LÍNEAS DEL CONTEXTO**
+        - ANTES de generar tu respuesta, CUENTA cuántas líneas hay en "PARTIDAS VIGENTES".
+        - Tu output DEBE tener AL MENOS esa cantidad de líneas (una por cada partida vigente).
+        - Cada línea del contexto debe aparecer en tu output con alguna acción (MANTENER/ACTUALIZAR/CANCELAR).
+
+    * **REGLA 5: SIN TABLA DE MONTOS = NULL (NO CERO)**
+        - Si el PDF NO contiene una tabla con montos nuevos/actualizados:
+        - TODAS las líneas deben tener **"accion": "MANTENER"** y **"importe": null**.
+        - NO pongas 0.00. Eso significa CANCELACIÓN.
+        - Si el PDF solo tiene texto narrativo (sin tabla de precios), usa null para TODAS las líneas.
+        - La palabra clave JSON es: null (sin comillas, no es string).
+
+    * **REGLA 6: DIFERENCIA CRÍTICA - CUÁNDO USAR 0 vs null**
+        | Situación en PDF | importe en JSON |
+        |------------------|-----------------|
+        | PDF dice "Cancelado", "Improcedente", "Rechazado" | **0** |
+        | PDF tiene tabla con nuevo monto $X | **X** (el nuevo monto) |
+        | PDF NO tiene tabla de montos | **null** |
+        | PDF pide documentación: "se solicita bitácora" | **null** |
+        | PDF menciona ubicación pero sin monto nuevo | **null** |
+        | PDF NO menciona la ubicación | **null** |
+    `;
     }
 
     // =========================================================================

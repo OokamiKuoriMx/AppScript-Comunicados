@@ -81,13 +81,16 @@
 
         const _handleFiles = (files) => {
             if (files.length > 0) {
-                // Agregar a la cola en lugar de procesar directo
+                // Agregar a la cola con propiedades de estado
                 const newFiles = Array.from(files).map(f => ({
                     id: Date.now() + Math.random().toString(36).substr(2, 9),
                     file: f,
                     name: f.name,
                     size: (f.size / 1024).toFixed(1) + ' KB',
-                    type: f.name.toLowerCase().endsWith('.pdf') ? 'PDF' : 'CSV/EXCEL'
+                    type: f.name.toLowerCase().endsWith('.pdf') ? 'PDF' : 'CSV/EXCEL',
+                    selected: true, // NUEVO: Seleccionado por defecto
+                    status: 'pending', // NUEVO: pending, analyzing, success, error
+                    errorMsg: null // NUEVO: Mensaje de error si aplica
                 }));
 
                 fileQueue = [...fileQueue, ...newFiles];
@@ -105,8 +108,21 @@
             const actionBar = document.getElementById('import-action-bar');
             const countSpan = document.getElementById('queue-count');
             const btnPdfText = document.getElementById('btn-pdf-text');
+            const selectedCountSpan = document.getElementById('queue-selected-count');
+            const selectAllCheckbox = document.getElementById('select-all-files');
 
             countSpan.innerText = fileQueue.length;
+
+            // Actualizar conteo de seleccionados
+            const selectedCount = fileQueue.filter(f => f.selected && f.status === 'pending').length;
+            const pendingCount = fileQueue.filter(f => f.status === 'pending').length;
+            if (selectedCountSpan) selectedCountSpan.innerText = selectedCount;
+
+            // Actualizar estado del checkbox "Todos"
+            if (selectAllCheckbox && pendingCount > 0) {
+                selectAllCheckbox.checked = selectedCount === pendingCount;
+                selectAllCheckbox.indeterminate = selectedCount > 0 && selectedCount < pendingCount;
+            }
 
             if (fileQueue.length === 0) {
                 // Show empty state, hide queue
@@ -127,14 +143,34 @@
 
             // Verificar tipos para mostrar botones adecuados
             const pdfCount = fileQueue.filter(f => f.type === 'PDF').length;
-            const hasCsv = fileQueue.some(f => f.type === 'CSV/EXCEL');
+            const pendingPdfCount = fileQueue.filter(f => f.type === 'PDF' && f.status === 'pending').length;
+            const hasCsv = fileQueue.some(f => f.type !== 'PDF');
 
-            if (pdfCount > 0) {
+            // Contar analizados válidos (para botón de importar)
+            const validAnalyzedCount = fileQueue.filter(f =>
+                f.status === 'success' && f.resultado?.esValido && f.selected
+            ).length;
+
+            // Mostrar botón Procesar PDF solo si hay PDFs pendientes
+            if (pendingPdfCount > 0) {
                 dom.btnAnalizarPdf.classList.remove('d-none');
-                if (btnPdfText) btnPdfText.textContent = `Procesar ${pdfCount} PDF${pdfCount > 1 ? 's' : ''} con IA`;
+                if (btnPdfText) btnPdfText.textContent = `Procesar ${pendingPdfCount} PDF${pendingPdfCount > 1 ? 's' : ''} con IA`;
                 dom.btnAnalizarPdf.disabled = false;
+            } else if (pdfCount > 0 && pendingPdfCount === 0) {
+                // Hay PDFs pero todos ya analizados - mostrar botón de importar
+                dom.btnAnalizarPdf.classList.add('d-none');
             } else {
                 dom.btnAnalizarPdf.classList.add('d-none');
+            }
+
+            // Mostrar botón Confirmar Importación si hay válidos analizados
+            if (validAnalyzedCount > 0) {
+                dom.btnConfirmar.classList.remove('d-none');
+                dom.btnConfirmar.disabled = false;
+                dom.btnConfirmar.innerHTML = `<i class="bi bi-cloud-upload me-2"></i>Importar ${validAnalyzedCount} Comunicado${validAnalyzedCount > 1 ? 's' : ''}`;
+                dom.btnConfirmar.onclick = confirmarImportacion;
+            } else {
+                dom.btnConfirmar.classList.add('d-none');
             }
 
             if (hasCsv && pdfCount === 0) { // Solo CSV individual por ahora en logica legacy
@@ -146,31 +182,205 @@
                 dom.btnAnalizar.classList.add('d-none');
             }
 
-            // Render Items con nuevo diseño
+            // Render Items: Unified Cards con datos extraídos
             fileQueue.forEach((item, index) => {
                 const div = document.createElement('div');
-                div.className = 'queue-item';
-                div.draggable = true;
+                div.className = 'queue-card';
+                div.id = `queue-item-${index}`;
                 div.dataset.index = index;
 
                 const iconClass = item.type === 'PDF' ? 'pdf' : 'excel';
                 const iconBi = item.type === 'PDF' ? 'bi-file-pdf-fill' : 'bi-file-earmark-spreadsheet-fill';
 
+                // Determinar indicador de estado
+                let statusHtml = '';
+                let statusBadge = '';
+                switch (item.status) {
+                    case 'analyzing':
+                        statusHtml = `<div class="spinner-border spinner-border-sm text-primary" role="status"></div>`;
+                        statusBadge = '<span class="badge bg-info">Analizando...</span>';
+                        div.className += ' analyzing';
+                        break;
+                    case 'success':
+                        statusHtml = `<i class="bi bi-check-circle-fill text-success fs-5"></i>`;
+                        statusBadge = '<span class="badge bg-success"><i class="bi bi-check-lg me-1"></i>Analizado</span>';
+                        div.className += ' success';
+                        break;
+                    case 'error':
+                        statusHtml = `<i class="bi bi-x-circle-fill text-danger fs-5"></i>`;
+                        statusBadge = '<span class="badge bg-danger"><i class="bi bi-x-lg me-1"></i>Error</span>';
+                        div.className += ' error';
+                        break;
+                    default: // pending
+                        statusHtml = `<span class="text-muted small">Pendiente</span>`;
+                        statusBadge = '<span class="badge bg-secondary">Pendiente</span>';
+                }
+
+                let extractedDataHtml = '';
+                const res = item.resultado;
+                if (res && item.status === 'success') {
+                    // Buscar líneas en diferentes posibles ubicaciones
+                    const lineas = res.rawPayload?.presupuesto?.lineas
+                        || res.rawPayload?.lineas
+                        || res.presupuesto?.lineas
+                        || res.lineas
+                        || [];
+                    const numLineas = lineas.length;
+                    const totalImporte = lineas.reduce((sum, l) => sum + (parseFloat(l.importe) || 0), 0);
+
+                    console.log('[DEBUG] Lineas encontradas:', numLineas, lineas);
+
+                    // Generar tabla de líneas de presupuesto
+                    let lineasHtml = '';
+                    if (numLineas > 0) {
+                        lineasHtml = `
+                            <div class="budget-lines mt-2">
+                                <table class="table table-sm table-borderless mb-0 small">
+                                    <thead class="text-muted">
+                                        <tr>
+                                            <th style="width: 20px;">#</th>
+                                            <th>Concepto / Ubicación</th>
+                                            <th class="text-end" style="width: 100px;">Importe</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        ${lineas.map((l, li) => `
+                                            <tr>
+                                                <td class="text-muted">${li + 1}</td>
+                                                <td class="text-truncate" style="max-width: 300px;" title="${l.concepto || ''}">${l.concepto || '-'}</td>
+                                                <td class="text-end font-monospace">$${(parseFloat(l.importe) || 0).toLocaleString('es-MX', { minimumFractionDigits: 2 })}</td>
+                                            </tr>
+                                        `).join('')}
+                                    </tbody>
+                                    <tfoot class="border-top">
+                                        <tr class="fw-bold">
+                                            <td colspan="2" class="text-end">Total:</td>
+                                            <td class="text-end font-monospace text-success">$${totalImporte.toLocaleString('es-MX', { minimumFractionDigits: 2 })}</td>
+                                        </tr>
+                                    </tfoot>
+                                </table>
+                            </div>
+                        `;
+                    }
+
+                    extractedDataHtml = `
+                        <div class="queue-card-data">
+                            <div class="d-flex flex-wrap gap-3 small mb-2">
+                                <div><span class="text-muted">Ref:</span> <strong>${res.ref || '-'}</strong></div>
+                                <div><span class="text-muted">Comunicado:</span> <strong>${res.comunicado || '-'}</strong></div>
+                                <div><span class="text-muted">Tipo:</span> <span class="badge ${res.tipo === 'ORIGEN' ? 'bg-primary' : 'bg-warning text-dark'}">${res.tipo || '-'}</span></div>
+                                <div><span class="text-muted">Partidas:</span> <strong>${numLineas}</strong></div>
+                            </div>
+                            ${res.esValido ?
+                            `<span class="badge bg-success"><i class="bi bi-check-circle me-1"></i>Válido para importar</span>` :
+                            `<span class="badge bg-danger"><i class="bi bi-x-circle me-1"></i>${res.motivo || 'Inválido'}</span>`
+                        }
+                            ${lineasHtml}
+                        </div>
+                    `;
+                } else if (item.status === 'error') {
+                    extractedDataHtml = `
+                        <div class="queue-card-data text-danger">
+                            <i class="bi bi-exclamation-triangle me-1"></i>${item.errorMsg || 'Error en el análisis'}
+                        </div>
+                    `;
+                }
+
+                // Checkbox habilitado solo si no está analizando y es válido
+                const checkboxDisabled = item.status === 'analyzing' || (item.status === 'success' && !item.resultado?.esValido);
+                const checkboxChecked = item.selected && (item.status === 'pending' || (item.status === 'success' && item.resultado?.esValido));
+
+                // Hacer draggable siempre (excepto mientras analiza)
+                div.draggable = item.status !== 'analyzing';
+
                 div.innerHTML = `
-                    <div class="queue-item-icon ${iconClass}">
-                        <i class="bi ${iconBi}"></i>
+                    <div class="queue-card-header" draggable="true">
+                        <div class="drag-handle me-2" title="Arrastrar para reordenar">
+                            <i class="bi bi-grip-vertical text-muted"></i>
+                        </div>
+                        <div class="form-check me-2">
+                            <input class="form-check-input" type="checkbox" ${checkboxChecked ? 'checked' : ''} 
+                                   onchange="event.stopPropagation(); Importacion.toggleFileSelection(${index})"
+                                   ${checkboxDisabled ? 'disabled' : ''}>
+                        </div>
+                        <div class="queue-item-icon ${iconClass}">
+                            <i class="bi ${iconBi}"></i>
+                        </div>
+                        <div class="queue-item-info ms-2 flex-grow-1">
+                            <div class="queue-item-name" title="${item.name}">${item.name}</div>
+                            <div class="queue-item-meta">${item.size} • ${statusBadge}</div>
+                        </div>
+                        <div class="d-flex align-items-center gap-2">
+                            ${statusHtml}
+                            ${item.status === 'error' || item.status === 'success' ? `
+                                <button class="btn btn-sm btn-outline-secondary" onclick="event.stopPropagation(); Importacion.reintentarAnalisis(${index})" title="Reintentar análisis">
+                                    <i class="bi bi-arrow-clockwise"></i>
+                                </button>
+                            ` : ''}
+                            <button class="btn btn-sm btn-outline-danger" onclick="event.stopPropagation(); Importacion.removeFromQueue(${index})" title="Eliminar documento">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </div>
                     </div>
-                    <div class="queue-item-info">
-                        <div class="queue-item-name" title="${item.name}">${item.name}</div>
-                        <div class="queue-item-size">${item.size}</div>
-                    </div>
-                    <button class="queue-item-remove" onclick="event.stopPropagation(); Importacion.removeFromQueue(${index})" title="Eliminar">
-                        <i class="bi bi-x-lg"></i>
-                    </button>
+                    ${extractedDataHtml}
                 `;
 
-                _addDragEvents(div);
+                // Agregar eventos de drag-drop
+                _addCardDragEvents(div);
                 container.appendChild(div);
+            });
+        };
+
+        // Variable para saber si hay análisis en progreso
+        let isAnalyzing = false;
+
+        // Drag-drop para cards unificados
+        const _addCardDragEvents = (el) => {
+            el.addEventListener('dragstart', (e) => {
+                if (isAnalyzing) {
+                    e.preventDefault();
+                    return;
+                }
+                dragSrcEl = el;
+                el.classList.add('dragging');
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/plain', el.dataset.index);
+            });
+
+            el.addEventListener('dragend', () => {
+                el.classList.remove('dragging');
+                document.querySelectorAll('.queue-card').forEach(c => c.classList.remove('drag-over'));
+            });
+
+            el.addEventListener('dragover', (e) => {
+                if (isAnalyzing) return;
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+            });
+
+            el.addEventListener('dragenter', (e) => {
+                if (isAnalyzing) return;
+                el.classList.add('drag-over');
+            });
+
+            el.addEventListener('dragleave', () => {
+                el.classList.remove('drag-over');
+            });
+
+            el.addEventListener('drop', (e) => {
+                if (isAnalyzing) return;
+                e.preventDefault();
+                const fromIndex = parseInt(e.dataTransfer.getData('text/plain'));
+                const toIndex = parseInt(el.dataset.index);
+
+                if (fromIndex !== toIndex && !isNaN(fromIndex) && !isNaN(toIndex)) {
+                    // Mover en array
+                    const item = fileQueue.splice(fromIndex, 1)[0];
+                    fileQueue.splice(toIndex, 0, item);
+                    _renderQueue();
+                }
+
+                document.querySelectorAll('.queue-card').forEach(c => c.classList.remove('drag-over', 'dragging'));
             });
         };
 
@@ -228,6 +438,19 @@
             });
         };
 
+        // Mover item en la cola (para botones de reordenar)
+        const moveQueueItem = (index, direction) => {
+            const newIndex = index + direction;
+            if (newIndex < 0 || newIndex >= fileQueue.length) return;
+
+            // Intercambiar posiciones
+            const temp = fileQueue[index];
+            fileQueue[index] = fileQueue[newIndex];
+            fileQueue[newIndex] = temp;
+
+            _renderQueue();
+        };
+
         const removeFromQueue = (index) => {
             fileQueue.splice(index, 1);
             _renderQueue();
@@ -238,13 +461,230 @@
             _renderQueue();
         };
 
+        // ========== NUEVAS FUNCIONES DE SELECCIÓN ==========
+        const toggleFileSelection = (index) => {
+            if (fileQueue[index]) {
+                fileQueue[index].selected = !fileQueue[index].selected;
+                _renderQueue();
+            }
+        };
+
+        const toggleAllSelection = (selectAll) => {
+            fileQueue.forEach(item => {
+                if (item.status === 'pending') {
+                    item.selected = selectAll;
+                }
+            });
+            _renderQueue();
+        };
+
+        const reintentarAnalisis = async (index) => {
+            const item = fileQueue[index];
+            if (!item || (item.status !== 'error' && item.status !== 'success')) return;
+
+            // Reset estado para reintentar
+            item.status = 'analyzing';
+            item.resultado = null;
+            item.errorMsg = null;
+            _renderQueue();
+
+            // Procesar solo este archivo
+            await _procesarArchivoIndividual(index);
+        };
+
         const procesarColaIA = () => {
-            const files = fileQueue.map(item => item.file);
-            _iniciarCargaIA(files);
+            // Filtrar solo archivos seleccionados y pendientes
+            const selectedIndices = fileQueue
+                .map((item, idx) => ({ item, idx }))
+                .filter(({ item }) => item.selected && item.status === 'pending')
+                .map(({ idx }) => idx);
+
+            if (selectedIndices.length === 0) {
+                alert('No hay archivos seleccionados para procesar.');
+                return;
+            }
+
+            _iniciarCargaIAMejorado(selectedIndices);
         };
 
         // ===============================================
-        //  GESTOR DE COLA IA (BATCH PDF)
+        //  GESTOR DE COLA IA MEJORADO (Con estados individuales)
+        // ===============================================
+        const _iniciarCargaIAMejorado = async (indices) => {
+            console.log(`Iniciando Carga IA Mejorada de ${indices.length} archivos`);
+
+            // Deshabilitar drag-drop durante análisis
+            isAnalyzing = true;
+
+            // Ocultar loader global, usaremos estados individuales
+            _showLoader(false);
+
+            const RESULTADOS_BATCH = [];
+            const conceptosPorRef = new Map();
+
+            for (let i = 0; i < indices.length; i++) {
+                const queueIdx = indices[i];
+                const item = fileQueue[queueIdx];
+                if (!item) continue;
+
+                // Actualizar estado a "analizando"
+                item.status = 'analyzing';
+                _renderQueue();
+
+                try {
+                    // Procesar archivo
+                    const resultado = await _procesarArchivoIA(item.file, conceptosPorRef, RESULTADOS_BATCH);
+
+                    if (resultado.success) {
+                        item.status = 'success';
+                        item.resultado = resultado.data;
+                        RESULTADOS_BATCH.push(resultado.data);
+
+                        // Acumular conceptos
+                        if (resultado.extractedConcepts && resultado.refCta) {
+                            const currentConcepts = conceptosPorRef.get(resultado.refCta) || [];
+                            const newConcepts = [...new Set([...currentConcepts, ...resultado.extractedConcepts])];
+                            conceptosPorRef.set(resultado.refCta, newConcepts);
+                        }
+                    } else {
+                        item.status = 'error';
+                        item.errorMsg = resultado.message || 'Error desconocido';
+                        RESULTADOS_BATCH.push(_crearErrorRow(item.name, item.errorMsg));
+                    }
+                } catch (error) {
+                    item.status = 'error';
+                    item.errorMsg = error.message;
+                    RESULTADOS_BATCH.push(_crearErrorRow(item.name, error.message));
+                }
+
+                _renderQueue();
+            }
+
+            // FIN: Mostrar resultados si hay alguno
+            if (RESULTADOS_BATCH.length > 0) {
+                // Ya no cambiamos de stage - todo está en vista unificada
+                // Los resultados ya están en fileQueue.resultado
+                currentPreviewData = RESULTADOS_BATCH;
+            }
+
+            // Rehabilitar drag-drop
+            isAnalyzing = false;
+            _renderQueue(); // Re-render con drag habilitado
+        };
+
+        // Procesa un archivo individual (para reintento)
+        const _procesarArchivoIndividual = async (index) => {
+            const item = fileQueue[index];
+            if (!item) return;
+
+            item.status = 'analyzing';
+            _renderQueue();
+
+            try {
+                const conceptosPorRef = new Map();
+                const resultado = await _procesarArchivoIA(item.file, conceptosPorRef, []);
+
+                if (resultado.success) {
+                    item.status = 'success';
+                    item.resultado = resultado.data;
+                } else {
+                    item.status = 'error';
+                    item.errorMsg = resultado.message || 'Error desconocido';
+                }
+            } catch (error) {
+                item.status = 'error';
+                item.errorMsg = error.message;
+            }
+
+            _renderQueue();
+        };
+
+        // Función auxiliar que procesa un archivo y retorna resultado estructurado
+        const _procesarArchivoIA = async (file, conceptosPorRef, batchResults) => {
+            // 1. Leer Archivo a Base64
+            const base64 = await _readFileAsBase64(file);
+
+            // 2. Extraer refCta y comunicadoId del nombre
+            let refCta = null;
+            let comIdPre = null;
+
+            const fullMatch = file.name.match(/^([A-Z]{2}\d+)[-_]?(L\d+[A-Z]?)?/i);
+            if (fullMatch) {
+                refCta = fullMatch[1].toUpperCase();
+                comIdPre = fullMatch[2] ? fullMatch[2].toUpperCase() : null;
+            }
+            if (!comIdPre) {
+                const lMatch = file.name.match(/(L\d+[A-Z]?)/i);
+                if (lMatch) comIdPre = lMatch[1].toUpperCase();
+            }
+
+            // 3. Obtener conceptos
+            let existingConcepts = refCta ? (conceptosPorRef.get(refCta) || []) : [];
+            if (existingConcepts.length === 0 && refCta) {
+                try {
+                    const conceptosDB = await serverCall('cargarConceptosPorRefCta', refCta);
+                    if (Array.isArray(conceptosDB) && conceptosDB.length > 0) {
+                        existingConcepts = conceptosDB;
+                        conceptosPorRef.set(refCta, conceptosDB);
+                    }
+                } catch (dbErr) {
+                    console.warn(`[Batch] No se pudieron cargar conceptos de BD para ${refCta}:`, dbErr);
+                }
+            }
+
+            // 4. Llamar IA
+            let resIA = await serverCall('procesarPdfIA', {
+                content: base64,
+                filename: file.name,
+                existingConcepts: existingConcepts,
+                refCta: refCta,
+                comunicadoId: comIdPre,
+                batchResults: batchResults.filter(r => r.esValido && r.rawPayload)
+            });
+
+            // Parsear si es string
+            if (typeof resIA === 'string') {
+                try { resIA = JSON.parse(resIA); } catch (e) { console.error('Error parseando resIA:', e); }
+            }
+
+            if (resIA && (resIA.success || resIA.header)) {
+                const datosIA = resIA.success ? resIA.data : resIA;
+
+                // Analizar datos
+                const analisis = await serverCall('analizarExtraccionIA', datosIA, batchResults);
+                let rowData = null;
+
+                if (analisis) {
+                    if (analisis.success && analisis.data) {
+                        rowData = analisis.data;
+                    } else if (analisis.esValido !== undefined || analisis.status) {
+                        rowData = analisis;
+                    }
+                }
+
+                if (rowData) {
+                    return {
+                        success: true,
+                        data: rowData,
+                        extractedConcepts: resIA.extractedConcepts,
+                        refCta: refCta
+                    };
+                } else {
+                    return {
+                        success: false,
+                        message: (analisis && analisis.message) ? analisis.message : 'Error en análisis'
+                    };
+                }
+            } else {
+                return {
+                    success: false,
+                    message: (resIA && resIA.message) ? resIA.message : 'Error IA: Respuesta inválida'
+                };
+            }
+        };
+
+        // ===============================================
+        //  GESTOR DE COLA IA (BATCH PDF) - LEGACY
         // ===============================================
         const _iniciarCargaIA = async (fileList) => {
             const files = Array.from(fileList);
@@ -562,6 +1002,149 @@
             }
         };
 
+        // Función para importar desde la vista unificada
+        const confirmarImportacion = async () => {
+            // Obtener items válidos, analizados y seleccionados
+            const toImport = fileQueue.filter(f =>
+                f.status === 'success' && f.resultado?.esValido && f.selected
+            );
+
+            if (toImport.length === 0) {
+                alert('No hay documentos válidos seleccionados para importar.');
+                return;
+            }
+
+            if (!confirm(`¿Importar ${toImport.length} comunicado(s)?`)) return;
+
+            // Deshabilitar botón de importar durante el proceso
+            if (dom.btnConfirmar) {
+                dom.btnConfirmar.disabled = true;
+                dom.btnConfirmar.innerHTML = '<i class="bi bi-hourglass-split me-2"></i>Importando...';
+            }
+
+            let successCount = 0;
+            let errorCount = 0;
+
+            for (const item of toImport) {
+                const idx = fileQueue.indexOf(item);
+
+                // Mostrar spinner EN EL CARD del documento
+                _updateQueueItemStatus(idx, 'importing');
+
+                try {
+                    const payload = item.resultado.rawPayload;
+                    if (!payload) {
+                        console.error(`[Import] Sin rawPayload para ${item.name}`);
+                        errorCount++;
+                        item.importError = 'Sin datos de importación';
+                        _updateQueueItemStatus(idx, 'import-error', 'Sin datos');
+                        continue;
+                    }
+
+                    // Importar
+                    const result = await serverCall('importarUnico', JSON.stringify(payload));
+
+                    if (result && result.success) {
+                        successCount++;
+                        item.imported = true;
+                        item.status = 'imported';
+                        _updateQueueItemStatus(idx, 'imported');
+                    } else {
+                        errorCount++;
+                        item.importError = result?.message || 'Error desconocido';
+                        _updateQueueItemStatus(idx, 'import-error', item.importError);
+                    }
+                } catch (err) {
+                    console.error(`[Import] Error:`, err);
+                    errorCount++;
+                    item.importError = err.message;
+                    _updateQueueItemStatus(idx, 'import-error', err.message);
+                }
+            }
+
+            // Restaurar botón
+            if (dom.btnConfirmar) {
+                dom.btnConfirmar.disabled = false;
+                const validCount = fileQueue.filter(f =>
+                    f.status === 'success' && f.resultado?.esValido && f.selected && !f.imported
+                ).length;
+                if (validCount > 0) {
+                    dom.btnConfirmar.innerHTML = `<i class="bi bi-cloud-upload me-2"></i>Importar ${validCount} Comunicado${validCount > 1 ? 's' : ''}`;
+                } else {
+                    dom.btnConfirmar.classList.add('d-none');
+                }
+            }
+
+            // Mostrar resumen con SweetAlert si está disponible, sino alert normal
+            const summaryHtml = `
+                <div class="text-center py-3">
+                    <div class="mb-3">
+                        <i class="bi bi-check-circle-fill text-success" style="font-size: 3rem;"></i>
+                    </div>
+                    <h5>Importación Completada</h5>
+                    <div class="d-flex justify-content-center gap-4 mt-3">
+                        <div class="text-center">
+                            <div class="fs-4 fw-bold text-success">${successCount}</div>
+                            <small class="text-muted">Éxitos</small>
+                        </div>
+                        <div class="text-center">
+                            <div class="fs-4 fw-bold text-danger">${errorCount}</div>
+                            <small class="text-muted">Errores</small>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            if (globalThis.Swal) {
+                Swal.fire({
+                    html: summaryHtml,
+                    showConfirmButton: true,
+                    confirmButtonText: 'Aceptar'
+                });
+            } else {
+                alert(`Importación completada.\n✓ Éxitos: ${successCount}\n✗ Errores: ${errorCount}`);
+            }
+
+            _renderQueue();
+        };
+
+        // Helper para actualizar status visual en la cola
+        const _updateQueueItemStatus = (index, status, message) => {
+            const card = document.getElementById(`queue-item-${index}`);
+            if (!card) return;
+
+            // Buscar o crear el área de status de importación
+            let importStatusEl = card.querySelector('.import-status-badge');
+            if (!importStatusEl) {
+                const statusArea = card.querySelector('.queue-item-meta');
+                if (statusArea) {
+                    importStatusEl = document.createElement('span');
+                    importStatusEl.className = 'import-status-badge ms-2';
+                    statusArea.appendChild(importStatusEl);
+                }
+            }
+
+            if (importStatusEl) {
+                if (status === 'importing') {
+                    importStatusEl.innerHTML = `
+                        <span class="badge bg-primary">
+                            <span class="spinner-border spinner-border-sm me-1" style="width: 0.8rem; height: 0.8rem;"></span>
+                            Importando...
+                        </span>
+                    `;
+                    card.style.opacity = '0.7';
+                } else if (status === 'imported') {
+                    importStatusEl.innerHTML = '<span class="badge bg-success"><i class="bi bi-check-lg me-1"></i>Importado ✓</span>';
+                    card.style.opacity = '1';
+                    card.classList.add('border-success');
+                } else if (status === 'import-error') {
+                    importStatusEl.innerHTML = `<span class="badge bg-danger" title="${message}"><i class="bi bi-x-lg me-1"></i>Error</span>`;
+                    card.style.opacity = '1';
+                    card.classList.add('border-danger');
+                }
+            }
+        };
+
         let currentPreviewData = [];
 
         const setStage = (stage) => {
@@ -607,6 +1190,68 @@
                 case 5:
                     dom.stage5.classList.remove('d-none');
                     break;
+            }
+        };
+
+        // ========== FUNCIONES PARA REORDENAR Y REINTENTAR EN PREVIEW ==========
+        const movePreviewRow = (index, direction) => {
+            if (!currentPreviewData || currentPreviewData.length === 0) return;
+
+            const newIndex = index + direction;
+            if (newIndex < 0 || newIndex >= currentPreviewData.length) return;
+
+            // Intercambiar posiciones
+            const temp = currentPreviewData[index];
+            currentPreviewData[index] = currentPreviewData[newIndex];
+            currentPreviewData[newIndex] = temp;
+
+            // Re-render con el nuevo orden
+            const resumen = {
+                total: currentPreviewData.length,
+                validos: currentPreviewData.filter(r => r.esValido && r.status !== 'OMITIDO').length,
+                omitidos: currentPreviewData.filter(r => r.status === 'OMITIDO').length,
+                errores: currentPreviewData.filter(r => !r.esValido).length
+            };
+            _renderResultados({ filas: currentPreviewData, resumen });
+        };
+
+        const reintentarPreviewRow = async (index) => {
+            const row = currentPreviewData[index];
+            if (!row) return;
+
+            // Buscar el archivo original en fileQueue por nombre
+            const queueItem = fileQueue.find(f => f.name.includes(row.ref) || f.name.includes(row.comunicado));
+
+            if (!queueItem) {
+                alert('No se encontró el archivo original para reintentar. Por favor, vuelva a cargar el documento.');
+                return;
+            }
+
+            // Marcar como procesando en la tabla
+            _updateRowStatus(index, 'loading');
+
+            try {
+                const conceptosPorRef = new Map();
+                const resultado = await _procesarArchivoIA(queueItem.file, conceptosPorRef, []);
+
+                if (resultado.success) {
+                    // Reemplazar la fila con el nuevo resultado
+                    currentPreviewData[index] = resultado.data;
+                    _updateRowStatus(index, 'success', 'Reanalizado correctamente');
+
+                    // Re-render para actualizar la UI completa
+                    const resumen = {
+                        total: currentPreviewData.length,
+                        validos: currentPreviewData.filter(r => r.esValido && r.status !== 'OMITIDO').length,
+                        omitidos: currentPreviewData.filter(r => r.status === 'OMITIDO').length,
+                        errores: currentPreviewData.filter(r => !r.esValido).length
+                    };
+                    _renderResultados({ filas: currentPreviewData, resumen });
+                } else {
+                    _updateRowStatus(index, 'error', resultado.message || 'Error en reintento');
+                }
+            } catch (error) {
+                _updateRowStatus(index, 'error', error.message);
             }
         };
 
@@ -908,7 +1553,22 @@
                         `<br>${d.analisis.advertencias.map(a => `<span class="badge bg-warning text-dark me-1"><i class="bi bi-exclamation-triangle me-1"></i>${a}</span>`).join('')}` : ''}
                         </td>
                         <td class="text-center" id="row-status-${i}">
-                            ${d.esValido && d.status !== 'OMITIDO' ? '<i class="bi bi-circle text-muted small"></i>' : '-'}
+                            ${!d.esValido && d.status === 'ERROR' ?
+                        `<button class="btn btn-sm btn-outline-warning" onclick="event.stopPropagation(); Importacion.reintentarPreviewRow(${i})" title="Reintentar análisis">
+                                    <i class="bi bi-arrow-clockwise"></i>
+                                </button>` :
+                        (d.esValido && d.status !== 'OMITIDO' ? '<i class="bi bi-circle text-muted small"></i>' : '-')
+                    }
+                        </td>
+                        <td class="text-center">
+                            <div class="d-flex gap-1 justify-content-center">
+                                <button class="btn btn-sm btn-link text-muted p-0" onclick="event.stopPropagation(); Importacion.movePreviewRow(${i}, -1)" title="Subir" ${i === 0 ? 'disabled' : ''}>
+                                    <i class="bi bi-arrow-up"></i>
+                                </button>
+                                <button class="btn btn-sm btn-link text-muted p-0" onclick="event.stopPropagation(); Importacion.movePreviewRow(${i}, 1)" title="Bajar">
+                                    <i class="bi bi-arrow-down"></i>
+                                </button>
+                            </div>
                         </td>
                     </tr>
                     ${expandedRowHtml}
@@ -1035,6 +1695,25 @@
             }
         };
 
+        // Función para cerrar el modal y actualizar la tabla de comunicados
+        const cerrarYActualizar = () => {
+            // 1. Cerrar el modal
+            const modalEl = document.getElementById('modalImportacion');
+            if (modalEl) {
+                const modal = bootstrap.Modal.getInstance(modalEl);
+                if (modal) modal.hide();
+            }
+
+            // 2. Recargar la tabla de comunicados
+            if (globalThis.Comunicados && typeof Comunicados.recargar === 'function') {
+                console.log('[Importacion] Actualizando tabla de comunicados...');
+                Comunicados.recargar();
+            }
+
+            // 3. Reset del estado del importador
+            setTimeout(() => reset(), 300);
+        };
+
         return {
             render,
             mount,
@@ -1045,7 +1724,15 @@
             openModal,
             removeFromQueue,
             clearQueue,
-            procesarColaIA
+            procesarColaIA,
+            // NUEVOS exports
+            toggleFileSelection,
+            toggleAllSelection,
+            reintentarAnalisis,
+            movePreviewRow,
+            reintentarPreviewRow,
+            moveQueueItem,
+            cerrarYActualizar // <-- NUEVO: Cerrar modal y actualizar tabla
         };
     })();
 

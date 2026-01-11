@@ -98,6 +98,14 @@ function analizarExtraccionIA(payload, batchContext = []) {
             validacion: { esValido: true, status: 'OK' }
         }));
 
+        // DEBUG: Log batch context conversion
+        console.log(`[${contexto}] BatchContext recibido: ${batchContext.length} items`);
+        batchDocs.forEach((d, i) => {
+            const lineasCount = d.lineas?.length || 0;
+            console.log(`[${contexto}] BatchDoc[${i}]: ${d.header?.refCta}-${d.header?.comunicadoId}, lineas: ${lineasCount}`);
+        });
+
+
         const analisisRow = _analizarDocumento(doc, cache, batchDocs);
         console.log(`[${contexto}] Análisis completado:`, JSON.stringify(analisisRow).substring(0, 300));
 
@@ -414,7 +422,10 @@ function _analizarDocumento(doc, cache, batchDocs = []) {
             try {
                 let lineasPadre = [];
                 if (statusCom === 'ACTUALIZACION_LOTE' && padreEnLote) {
-                    lineasPadre = padreEnLote.rawPayload.lineas || []; // Usar rawPayload.lineas del batch
+                    // FIX: Las lineas pueden estar directamente en padreEnLote.lineas (desde batchDocs)
+                    // O en padreEnLote.rawPayload.lineas (desde el frontend original)
+                    lineasPadre = padreEnLote.lineas || padreEnLote.rawPayload?.lineas || [];
+                    console.log(`[Import] MERGE LOTE: Encontradas ${lineasPadre.length} líneas del padre ${padreEnLote.header?.comunicadoId}`);
                 } else if (statusCom === 'ACTUALIZACION_BD' && padreEnDB) {
                     // Llamar a función global (definida en ai.service.gs o importacion.server.gs)
                     // Si no está disponible, implementar lógica simple de extracción aquí
@@ -444,23 +455,45 @@ function _analizarDocumento(doc, cache, batchDocs = []) {
                     const _norm = (s) => String(s || '').toUpperCase().trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, ' ');
                     const keyFunc = (c, cat) => `${_norm(c)}|${_norm(cat)}`;
 
+                    // DEBUG: Log de claves para diagnóstico
+                    console.log(`[Import] Claves PADRE:`, lineasPadre.map(l => keyFunc(l.concepto, l.categoria)));
+                    console.log(`[Import] Claves IA:`, doc.lineas.map(l => keyFunc(l.concepto, l.categoria)));
+
                     // Indexar líneas nuevas (IA)
                     const updatesMap = new Map();
                     doc.lineas.forEach(l => updatesMap.set(keyFunc(l.concepto, l.categoria), l));
 
                     // 1. Fusionar sobre la base del padre (ACTUALIZAR o CONSERVAR)
+                    // REGLA: Si importe es null (MANTENER), heredar del padre; si es número, actualizar
                     const lineasFinales = lineasPadre.map(lp => {
                         const k = keyFunc(lp.concepto, lp.categoria);
                         if (updatesMap.has(k)) {
                             const up = updatesMap.get(k);
                             updatesMap.delete(k); // Marcar como procesado
-                            return { ...lp, importe: up.importe }; // Actualizar importe
+                            // Si importe es null/undefined → heredar del padre (acción MANTENER)
+                            // Si importe es número (incluido 0) → usar nuevo valor
+                            const nuevoImporte = (up.importe === null || up.importe === undefined)
+                                ? lp.importe
+                                : up.importe;
+                            console.log(`[Import] MERGE: ${k} -> importe ${lp.importe} -> ${nuevoImporte}`);
+                            return { ...lp, importe: nuevoImporte };
                         }
+                        console.log(`[Import] CONSERVAR: ${k} (no en IA)`);
                         return lp; // Conservar original
                     });
 
                     // 2. Agregar líneas nuevas (las que sobraron en updatesMap)
-                    updatesMap.forEach(nuevo => lineasFinales.push(nuevo));
+                    // PERO primero verificar que no sean duplicados con diferente formato
+                    const clavesExistentes = new Set(lineasFinales.map(l => keyFunc(l.concepto, l.categoria)));
+                    updatesMap.forEach((nuevo, key) => {
+                        if (!clavesExistentes.has(key)) {
+                            console.log(`[Import] AGREGAR NUEVO: ${key}`);
+                            lineasFinales.push(nuevo);
+                            clavesExistentes.add(key);
+                        } else {
+                            console.log(`[Import] DUPLICADO DETECTADO, NO AGREGAR: ${key}`);
+                        }
+                    });
 
                     doc.lineas = lineasFinales;
                     console.log(`[Import] MERGE COMPLETADO: Resultado final ${lineasFinales.length} líneas.`);
@@ -470,6 +503,34 @@ function _analizarDocumento(doc, cache, batchDocs = []) {
             }
         }
 
+        // =====================================================================
+        // DEDUPLICACIÓN UNIVERSAL: Eliminar duplicados antes de construir rawPayload
+        // Esto aplica a TODOS los casos (ORIGEN, ACTUALIZACION, etc.)
+        // =====================================================================
+        if (doc.lineas && doc.lineas.length > 0) {
+            const _normKey = (s) => String(s || '').toUpperCase().trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, ' ');
+            const keyFunc = (c, cat) => `${_normKey(c)}|${_normKey(cat)}`;
+
+            const lineasDedupMap = new Map();
+            doc.lineas.forEach(l => {
+                const k = keyFunc(l.concepto, l.categoria);
+                if (!lineasDedupMap.has(k)) {
+                    lineasDedupMap.set(k, l);
+                } else {
+                    // Si ya existe, tomar el que tiene mayor importe
+                    const existente = lineasDedupMap.get(k);
+                    if ((parseFloat(l.importe) || 0) > (parseFloat(existente.importe) || 0)) {
+                        lineasDedupMap.set(k, l);
+                    }
+                    console.log(`[Import] DEDUP rawPayload: ${k} - conservando importe mayor`);
+                }
+            });
+
+            if (lineasDedupMap.size < doc.lineas.length) {
+                console.log(`[Import] DEDUP: ${doc.lineas.length} -> ${lineasDedupMap.size} líneas (eliminados ${doc.lineas.length - lineasDedupMap.size} duplicados)`);
+                doc.lineas = Array.from(lineasDedupMap.values());
+            }
+        }
         // Validar si es una versión obsoleta (Ej: Subir L30 cuando ya existe L30A)
         if (statusCom !== 'OMITIDO' && statusCom !== 'ERROR_SIN_PADRE') {
             const checkObsoleto = _validarVersionObsoleta(cache, cta.id, h.comunicadoId);
@@ -549,7 +610,7 @@ function _analizarDocumento(doc, cache, batchDocs = []) {
                 }
 
                 // Edo
-                resEstadoId = _resolveIdFromCache(cache.estados, h.estado, 'estado');
+                resEstadoId = _resolveIdFromCache(cache.estados, h.estado, ['estado', 'nombre', 'Nombre', 'Estado']);
                 if (resEstadoId) {
                     if (String(resEstadoId) !== String(dgActual.idEstado)) {
                         hasChanges = true;
@@ -1483,7 +1544,7 @@ function _procesarBatchInterno(loteAgrupado, cache) {
                 if (!dgExistente && !idComunicadoExistente) {
 
                     // CREAR nuevo DatosGenerales (primera versión del comunicado)
-                    const idEstado = _resolveIdFromCache(cache.estados, doc.header.estado, 'estado');
+                    const idEstado = _resolveIdFromCache(cache.estados, doc.header.estado, ['estado', 'nombre', 'Nombre', 'Estado']);
                     const idSiniestro = _resolveIdFromCache(cache.siniestros, doc.header.refSiniestro, 'siniestro');
                     const idDR = _resolveIdFromCache(cache.distritosRiego, doc.header.distritoRiego, 'distritoRiego');
                     let idAjustador = _resolveIdFromCache(cache.ajustadores, doc.header.ajustador, ['nombreAjustador', 'nombre']) || idAjustadorDefault;
@@ -1631,7 +1692,7 @@ function _procesarBatchInterno(loteAgrupado, cache) {
                     let doUpdate = false;
 
                     // 1. Estado
-                    const idEstado = _resolveIdFromCache(cache.estados, doc.header.estado, 'estado');
+                    const idEstado = _resolveIdFromCache(cache.estados, doc.header.estado, ['estado', 'nombre', 'Nombre', 'Estado']);
                     if (idEstado && String(idEstado) !== String(existingDG.idEstado)) {
                         logBatch(`[${contexto}] -> Estado CAMBIO: ${existingDG.idEstado} -> ${idEstado}`);
                         updates.idEstado = idEstado;
@@ -1954,12 +2015,22 @@ function _procesarBatchInterno(loteAgrupado, cache) {
 
                 // 2.5 CASO INFORMATIVO: Copiar líneas del predecesor como propias
                 // El comunicado no tiene cambios de presupuesto, solo es una notificación
+                // Las líneas del predecesor pasan a esVigente=FALSE, las nuevas copias son TRUE
                 const esInformativo = updateObj._tipoAccion === 'INFORMATIVO';
 
                 if (esInformativo && !esOrigen) {
-                    logBatch(`[INFORMATIVO] ActID ${idActReal}: Copiando ${lineasPredecesor.length} líneas del predecesor`);
+                    logBatch(`[INFORMATIVO] ActID ${idActReal}: Copiando ${lineasPredecesor.length} líneas del predecesor y marcando originales como no vigentes`);
 
-                    // Insertar las líneas del predecesor como propias de esta actualización
+                    // PRIMERO: Marcar las líneas originales del predecesor como NO vigentes
+                    lineasPredecesor.forEach(l => {
+                        if (l.idRegistroPrevio) {
+                            try {
+                                updateRow('presupuestoLineas', l.idRegistroPrevio, { esVigente: false });
+                            } catch (e) { console.error(`Error marcando línea ${l.idRegistroPrevio} como no vigente:`, e); }
+                        }
+                    });
+
+                    // SEGUNDO: Insertar las líneas como nuevas para esta actualización
                     lineasPredecesor.forEach(l => {
                         const catNum = l.categoria == 2 || String(l.categoria).toUpperCase().includes('DESAZOLVE') ? 2 : 1;
                         batchPresupuestos.push({
@@ -1969,7 +2040,8 @@ function _procesarBatchInterno(loteAgrupado, cache) {
                             categoria: catNum,
                             importe: l.importe, // Mismo importe del predecesor
                             esVigente: true,
-                            fechaCreacion: new Date()
+                            fechaCreacion: new Date(),
+                            _skipDelta: true // Marcar para que filtro DELTA no las procese
                         });
                     });
 
@@ -1990,6 +2062,27 @@ function _procesarBatchInterno(loteAgrupado, cache) {
                     let catLimpia = String(cat).toUpperCase().includes('DESAZOLVE') || String(cat) == '2' ? '2' : '1';
                     return `${limpio}|${catLimpia}`;
                 };
+
+                // =====================================================================
+                // FIX: DEDUPLICAR lineasDelPdf ANTES de procesar
+                // Si la IA envió duplicados, combinamos tomando el mayor importe
+                // =====================================================================
+                const lineasDedupMap = new Map();
+                lineasDelPdf.forEach(l => {
+                    const k = _key(l.concepto, l.categoria);
+                    if (lineasDedupMap.has(k)) {
+                        const existente = lineasDedupMap.get(k);
+                        // Tomar el importe mayor (o el más reciente si son iguales)
+                        if ((parseFloat(l.importe) || 0) > (parseFloat(existente.importe) || 0)) {
+                            lineasDedupMap.set(k, l);
+                        }
+                        logBatch(`[DEDUP] Duplicado detectado en PDF: ${k}, conservando importe mayor`);
+                    } else {
+                        lineasDedupMap.set(k, l);
+                    }
+                });
+                const lineasPdfDedup = Array.from(lineasDedupMap.values());
+                logBatch(`[DEDUP] Líneas PDF: ${lineasDelPdf.length} -> ${lineasPdfDedup.length} (después de dedup)`);
 
                 const mapSnapshot = new Map();
 
@@ -2012,8 +2105,8 @@ function _procesarBatchInterno(loteAgrupado, cache) {
                     });
                 });
 
-                // B) APLICAR LO NUEVO (PDF)
-                lineasDelPdf.forEach(l => {
+                // B) APLICAR LO NUEVO (PDF) - usando líneas deduplicadas
+                lineasPdfDedup.forEach(l => {
                     const key = _key(l.concepto, l.categoria);
                     const importeNuevo = parseFloat(l.importe) || 0;
                     const catNum = (String(l.categoria).toUpperCase().includes('DESAZOLVE')) ? 2 : 1;
@@ -2200,6 +2293,11 @@ function _procesarBatchInterno(loteAgrupado, cache) {
                 logBatch(`[${contexto}] Procesando ${lineasDelCom.length} líneas para Com ${idComunicado} (Cta: ${idCuentaContexto || '?'}). Diccionario Local: ${localDiccionario.size} conceptos.`);
 
                 lineasDelCom.forEach(({ linea, idx }) => {
+                    // FIX: Si la línea ya tiene idLinea (ej: copiada de predecesor), no buscar nuevo
+                    if (linea.idLinea) {
+                        return; // Ya tiene ID, no necesita resolución
+                    }
+
                     const descripcionNorm = _normalizarUbicacion(linea._descripcionTemp);
                     const catLineaRaw = String(linea.categoria).toUpperCase();
                     const catLinea = (catLineaRaw.includes('DESAZOLVE') || catLineaRaw === '2') ? '2' : '1';
@@ -2223,10 +2321,15 @@ function _procesarBatchInterno(loteAgrupado, cache) {
             const descripcionesNuevas = new Map();
             batchPresupuestos.forEach((linea, idx) => {
                 if (linea._needsNewDescripcion) {
-                    const key = `${linea._descripcionTemp}|${linea.categoria}`;
+                    // FIX: Usar la misma normalización que en la búsqueda para consistencia
+                    const descripcionNorm = _normalizarUbicacion(linea._descripcionTemp);
+                    const catLineaRaw = String(linea.categoria).toUpperCase();
+                    const catKey = (catLineaRaw.includes('DESAZOLVE') || catLineaRaw === '2') ? '2' : '1';
+                    const key = `${descripcionNorm}|${catKey}`;
+
                     if (!descripcionesNuevas.has(key)) {
                         descripcionesNuevas.set(key, {
-                            descripcion: linea._descripcionTemp,
+                            descripcion: linea._descripcionTemp, // Guardamos el texto original
                             categoria: linea.categoria,
                             indices: [idx]
                         });
@@ -2283,9 +2386,17 @@ function _procesarBatchInterno(loteAgrupado, cache) {
         if (batchPresupuestos.length > 0 && batchActualizaciones.length > 0) {
             logBatch(`[${contexto}] Aplicando filtro DELTA a ${batchPresupuestos.length} líneas...`);
 
-            // 1. Agrupar líneas por actualización
+            // FIX: Separar líneas que ya fueron procesadas por INFORMATIVO
+            const lineasSkipDelta = batchPresupuestos.filter(l => l._skipDelta === true);
+            const lineasParaDelta = batchPresupuestos.filter(l => l._skipDelta !== true);
+
+            if (lineasSkipDelta.length > 0) {
+                logBatch(`[${contexto}] Líneas INFORMATIVO (skip DELTA): ${lineasSkipDelta.length}`);
+            }
+
+            // 1. Agrupar solo las líneas que NECESITAN procesamiento DELTA
             const linesByAct = new Map();
-            batchPresupuestos.forEach(l => {
+            lineasParaDelta.forEach(l => {
                 const aid = String(l.idActualizacion);
                 if (!linesByAct.has(aid)) linesByAct.set(aid, []);
                 linesByAct.get(aid).push(l);
@@ -2400,9 +2511,10 @@ function _procesarBatchInterno(loteAgrupado, cache) {
                 });
             }
 
-            // Reemplazar líneas a insertar con las filtradas
-            logBatch(`[${contexto}] Filtro DELTA completado: ${batchPresupuestos.length} -> ${filteredLines.length} líneas.`);
-            linesToInsert = filteredLines;
+            // Reemplazar líneas a insertar con las filtradas + las de INFORMATIVO
+            const allFilteredLines = [...filteredLines, ...lineasSkipDelta];
+            logBatch(`[${contexto}] Filtro DELTA completado: ${batchPresupuestos.length} -> ${allFilteredLines.length} líneas (${filteredLines.length} DELTA + ${lineasSkipDelta.length} INFORMATIVO).`);
+            linesToInsert = allFilteredLines;
         }
 
 
@@ -2990,7 +3102,19 @@ function _prepareCuentasBatch(validos, cache, idAjustadorDefault) {
 function _resolveIdFromCache(list, value, fieldName) {
     if (!value) return null;
     const clean = String(value).toUpperCase().trim();
-    // Arrays handles compuesto ? No, simple
+
+    // DEBUG: Log para diagnóstico de estados
+    const isEstadoSearch = fieldName === 'estado' ||
+        (Array.isArray(fieldName) && fieldName.some(f => f.toLowerCase() === 'estado'));
+
+    if (isEstadoSearch) {
+        console.log(`[_resolveIdFromCache] Buscando estado: "${clean}" en lista de ${list.length} elementos`);
+        if (list.length > 0) {
+            console.log(`[_resolveIdFromCache] Primer elemento:`, JSON.stringify(list[0]));
+            console.log(`[_resolveIdFromCache] Campos a buscar:`, JSON.stringify(fieldName));
+        }
+    }
+
     // Si fieldName es array, checkeamos cualquiera
     const found = list.find(item => {
         if (Array.isArray(fieldName)) {
@@ -2998,6 +3122,12 @@ function _resolveIdFromCache(list, value, fieldName) {
         }
         return String(item[fieldName] || '').toUpperCase().trim() === clean;
     });
+
+    // DEBUG: Log resultado para estados
+    if (isEstadoSearch) {
+        console.log(`[_resolveIdFromCache] Resultado para "${clean}":`, found ? found.id : 'NO ENCONTRADO');
+    }
+
     return found ? found.id : null;
 }
 

@@ -1,5 +1,6 @@
 <!-- MODAL DE IMPORTACIÓN INTELIGENTE (Reutilizable) -->
-<div class="modal fade" id="modalImportacion" tabindex="-1" aria-hidden="true">
+<div class="modal fade" id="modalImportacion" tabindex="-1" aria-hidden="true" data-bs-backdrop="static"
+    data-bs-keyboard="false">
     <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
         <div class="modal-content border-0 shadow-lg">
 
@@ -47,9 +48,19 @@
                         <div id="dropzone-queue-state" class="dropzone-queue-state d-none">
                             <!-- Header with count and actions -->
                             <div class="queue-header">
-                                <div class="d-flex align-items-center">
-                                    <i class="bi bi-stack text-primary me-2"></i>
-                                    <span class="fw-bold"><span id="queue-count">0</span> archivo(s) en cola</span>
+                                <div class="d-flex align-items-center gap-3">
+                                    <div class="form-check mb-0">
+                                        <input class="form-check-input" type="checkbox" id="select-all-files"
+                                            onchange="Importacion.toggleAllSelection(this.checked)" checked>
+                                        <label class="form-check-label small text-muted"
+                                            for="select-all-files">Todos</label>
+                                    </div>
+                                    <div>
+                                        <i class="bi bi-stack text-primary me-1"></i>
+                                        <span class="fw-bold"><span id="queue-count">0</span> archivo(s)</span>
+                                        <span class="text-muted small ms-1">(<span id="queue-selected-count">0</span>
+                                            seleccionados)</span>
+                                    </div>
                                 </div>
                                 <div class="d-flex gap-2">
                                     <button class="btn btn-sm btn-outline-primary rounded-pill"
@@ -138,6 +149,7 @@
                                     <th class="text-center">Estado</th>
                                     <th>Detalles</th>
                                     <th class="text-center col-progress">Progreso</th>
+                                    <th class="text-center" style="width: 70px;">Orden</th>
                                 </tr>
                             </thead>
                             <tbody id="preview-body">
@@ -166,39 +178,69 @@
                     </div>
                 </div>
 
-                <!-- STAGE 5: SUMMARY (Final) -->
-                <div id="summary-stage" class="d-none wizard-stage text-center py-5">
-                    <div class="mb-4">
-                        <i class="bi bi-check-circle-fill text-success" style="font-size: 5rem;"></i>
+                <!-- STAGE 5: SUMMARY (Final) - PREMIUM DESIGN -->
+                <div id="summary-stage" class="d-none wizard-stage text-center py-4">
+                    <!-- Success Animation Container -->
+                    <div class="success-animation-container mb-4">
+                        <div class="success-checkmark">
+                            <div class="check-icon">
+                                <span class="icon-line line-tip"></span>
+                                <span class="icon-line line-long"></span>
+                                <div class="icon-circle"></div>
+                                <div class="icon-fix"></div>
+                            </div>
+                        </div>
+                        <div class="confetti-container" id="confetti-container"></div>
                     </div>
-                    <h3 class="fw-bold mb-3 text-success">¡Proceso Finalizado!</h3>
-                    <div class="row justify-content-center mt-4">
-                        <div class="col-md-6">
-                            <div class="card border-0 shadow-sm bg-light">
-                                <div class="card-body">
-                                    <div class="d-flex justify-content-between border-bottom pb-2 mb-2">
-                                        <span class="text-muted">Total Procesado</span>
-                                        <strong id="summary-total">0</strong>
-                                    </div>
-                                    <div class="d-flex justify-content-between border-bottom pb-2 mb-2">
-                                        <span class="text-muted">Importados Exitosamente</span>
-                                        <strong class="text-success" id="summary-success">0</strong>
-                                    </div>
-                                    <div class="d-flex justify-content-between">
-                                        <span class="text-muted">Fallidos</span>
-                                        <strong class="text-danger" id="summary-errors">0</strong>
-                                    </div>
+
+                    <h2 class="fw-bold mb-2 text-success-gradient">¡Importación Exitosa!</h2>
+                    <p class="text-muted fs-6 mb-4">Tus comunicados han sido procesados correctamente</p>
+
+                    <!-- Stats Cards -->
+                    <div class="row justify-content-center g-3 mb-4">
+                        <div class="col-auto">
+                            <div class="stat-card stat-total">
+                                <div class="stat-icon">
+                                    <i class="bi bi-files"></i>
+                                </div>
+                                <div class="stat-content">
+                                    <span class="stat-value" id="summary-total">0</span>
+                                    <span class="stat-label">Total Procesados</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-auto">
+                            <div class="stat-card stat-success">
+                                <div class="stat-icon">
+                                    <i class="bi bi-check-circle-fill"></i>
+                                </div>
+                                <div class="stat-content">
+                                    <span class="stat-value" id="summary-success">0</span>
+                                    <span class="stat-label">Importados</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-auto">
+                            <div class="stat-card stat-error">
+                                <div class="stat-icon">
+                                    <i class="bi bi-exclamation-circle-fill"></i>
+                                </div>
+                                <div class="stat-content">
+                                    <span class="stat-value" id="summary-errors">0</span>
+                                    <span class="stat-label">Con Errores</span>
                                 </div>
                             </div>
                         </div>
                     </div>
 
-                    <div class="mt-5">
+                    <!-- Action Buttons -->
+                    <div class="d-flex justify-content-center gap-3 flex-wrap">
                         <button class="btn btn-outline-primary rounded-pill px-4" onclick="Importacion.reset()">
-                            <i class="bi bi-arrow-clockwise me-2"></i> Importar Otro Archivo
+                            <i class="bi bi-arrow-clockwise me-2"></i>Nueva Importación
                         </button>
-                        <button class="btn btn-primary rounded-pill px-4 ms-2" data-bs-dismiss="modal">
-                            <i class="bi bi-check-lg me-2"></i> Finalizar
+                        <button class="btn btn-primary btn-lg rounded-pill px-5 shadow-lg btn-finish-import"
+                            onclick="Importacion.cerrarYActualizar()">
+                            <i class="bi bi-check2-all me-2"></i>Finalizar
                         </button>
                     </div>
                 </div>
@@ -536,6 +578,411 @@
             flex-direction: column;
             gap: 0.5rem;
             align-items: flex-start;
+        }
+    }
+
+    /* ====== UNIFIED QUEUE CARDS ====== */
+    .queue-card {
+        border: 1px solid #e9ecef;
+        border-radius: 0.625rem;
+        background: #fff;
+        margin-bottom: 0.75rem;
+        transition: all 0.2s ease;
+        overflow: hidden;
+    }
+
+    .queue-card:hover {
+        border-color: #dee2e6;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+    }
+
+    .queue-card.analyzing {
+        border-color: #0d6efd;
+        background: #f8fbff;
+    }
+
+    .queue-card.success {
+        border-color: #198754;
+        border-left: 3px solid #198754;
+    }
+
+    .queue-card.error {
+        border-color: #dc3545;
+        border-left: 3px solid #dc3545;
+        background: #fff5f5;
+    }
+
+    .queue-card-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0.75rem 1rem;
+        background: #f8f9fa;
+        border-bottom: 1px solid #e9ecef;
+    }
+
+    .queue-card.success .queue-card-header,
+    .queue-card.error .queue-card-header {
+        background: transparent;
+        border-bottom: 1px solid #e9ecef;
+    }
+
+    .queue-card-data {
+        padding: 0.75rem 1rem;
+        background: #fff;
+        border-top: 1px dashed #e9ecef;
+    }
+
+    .queue-item-meta {
+        font-size: 0.75rem;
+        color: #6b7280;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+
+    .reorder-buttons {
+        display: flex;
+        flex-direction: column;
+        gap: 0;
+    }
+
+    .reorder-buttons button {
+        line-height: 1;
+        font-size: 0.75rem;
+    }
+
+    .reorder-buttons button:disabled {
+        opacity: 0.3;
+    }
+
+    /* Drag handle */
+    .drag-handle {
+        cursor: grab;
+        padding: 0.25rem;
+        opacity: 0.5;
+        transition: opacity 0.2s;
+    }
+
+    .drag-handle:hover {
+        opacity: 1;
+    }
+
+    .queue-card.dragging {
+        opacity: 0.5;
+        transform: scale(0.98);
+    }
+
+    .queue-card.drag-over {
+        border-color: #0d6efd !important;
+        box-shadow: 0 0 0 2px rgba(13, 110, 253, 0.25);
+    }
+
+    /* Budget lines table */
+    .budget-lines {
+        background: #f8f9fa;
+        border-radius: 0.375rem;
+        padding: 0.5rem;
+        max-height: 200px;
+        overflow-y: auto;
+    }
+
+    .budget-lines table {
+        background: transparent;
+    }
+
+    .budget-lines th {
+        font-weight: 500;
+        font-size: 0.7rem;
+        text-transform: uppercase;
+    }
+
+    /* ====== SUCCESS ANIMATION STYLES ====== */
+    .success-animation-container {
+        position: relative;
+        display: inline-block;
+    }
+
+    .text-success-gradient {
+        background: linear-gradient(135deg, #10b981 0%, #059669 50%, #047857 100%);
+        -webkit-background-clip: text;
+        background-clip: text;
+        -webkit-text-fill-color: transparent;
+    }
+
+    /* Animated Checkmark */
+    .success-checkmark {
+        width: 80px;
+        height: 80px;
+        margin: 0 auto;
+    }
+
+    .check-icon {
+        width: 80px;
+        height: 80px;
+        position: relative;
+        border-radius: 50%;
+        box-sizing: content-box;
+        border: 4px solid #10b981;
+        background: linear-gradient(135deg, #10b981, #059669);
+        box-shadow: 0 10px 40px rgba(16, 185, 129, 0.3);
+    }
+
+    .check-icon::before {
+        top: 3px;
+        left: -2px;
+        width: 30px;
+        transform-origin: 100% 50%;
+        border-radius: 100px 0 0 100px;
+    }
+
+    .check-icon::after {
+        top: 0;
+        left: 30px;
+        width: 60px;
+        transform-origin: 0 50%;
+        border-radius: 0 100px 100px 0;
+        animation: rotate-circle 4.25s ease-in;
+    }
+
+    .check-icon::before,
+    .check-icon::after {
+        content: '';
+        height: 100px;
+        position: absolute;
+        background: transparent;
+        transform: rotate(-45deg);
+    }
+
+    .icon-line {
+        height: 5px;
+        background-color: #fff;
+        display: block;
+        border-radius: 2px;
+        position: absolute;
+        z-index: 10;
+    }
+
+    .icon-line.line-tip {
+        top: 46px;
+        left: 14px;
+        width: 25px;
+        transform: rotate(45deg);
+        animation: icon-line-tip 0.75s;
+    }
+
+    .icon-line.line-long {
+        top: 38px;
+        right: 8px;
+        width: 47px;
+        transform: rotate(-45deg);
+        animation: icon-line-long 0.75s;
+    }
+
+    .icon-circle {
+        top: -4px;
+        left: -4px;
+        z-index: 10;
+        width: 80px;
+        height: 80px;
+        border-radius: 50%;
+        position: absolute;
+        box-sizing: content-box;
+        border: 4px solid rgba(16, 185, 129, 0.5);
+    }
+
+    .icon-fix {
+        top: 8px;
+        width: 5px;
+        left: 26px;
+        z-index: 1;
+        height: 85px;
+        position: absolute;
+        transform: rotate(-45deg);
+        background-color: transparent;
+    }
+
+    @keyframes rotate-circle {
+        0% {
+            transform: rotate(-45deg);
+        }
+
+        5% {
+            transform: rotate(-45deg);
+        }
+
+        12% {
+            transform: rotate(-405deg);
+        }
+
+        100% {
+            transform: rotate(-405deg);
+        }
+    }
+
+    @keyframes icon-line-tip {
+        0% {
+            width: 0;
+            left: 1px;
+            top: 19px;
+        }
+
+        54% {
+            width: 0;
+            left: 1px;
+            top: 19px;
+        }
+
+        70% {
+            width: 50px;
+            left: -8px;
+            top: 37px;
+        }
+
+        84% {
+            width: 17px;
+            left: 21px;
+            top: 48px;
+        }
+
+        100% {
+            width: 25px;
+            left: 14px;
+            top: 46px;
+        }
+    }
+
+    @keyframes icon-line-long {
+        0% {
+            width: 0;
+            right: 46px;
+            top: 54px;
+        }
+
+        65% {
+            width: 0;
+            right: 46px;
+            top: 54px;
+        }
+
+        84% {
+            width: 55px;
+            right: 0px;
+            top: 35px;
+        }
+
+        100% {
+            width: 47px;
+            right: 8px;
+            top: 38px;
+        }
+    }
+
+    /* Stat Cards */
+    .stat-card {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        padding: 1rem 1.5rem;
+        border-radius: 1rem;
+        background: #fff;
+        border: 1px solid #e5e7eb;
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
+        transition: all 0.3s ease;
+        min-width: 160px;
+    }
+
+    .stat-card:hover {
+        transform: translateY(-3px);
+        box-shadow: 0 8px 25px rgba(0, 0, 0, 0.1);
+    }
+
+    .stat-icon {
+        width: 48px;
+        height: 48px;
+        border-radius: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.5rem;
+    }
+
+    .stat-total .stat-icon {
+        background: linear-gradient(135deg, #e0e7ff, #c7d2fe);
+        color: #4f46e5;
+    }
+
+    .stat-success .stat-icon {
+        background: linear-gradient(135deg, #d1fae5, #a7f3d0);
+        color: #059669;
+    }
+
+    .stat-error .stat-icon {
+        background: linear-gradient(135deg, #fee2e2, #fecaca);
+        color: #dc2626;
+    }
+
+    .stat-content {
+        display: flex;
+        flex-direction: column;
+    }
+
+    .stat-value {
+        font-size: 1.75rem;
+        font-weight: 700;
+        line-height: 1;
+        color: #1f2937;
+    }
+
+    .stat-label {
+        font-size: 0.75rem;
+        color: #6b7280;
+        margin-top: 0.25rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+
+    /* Finish Button */
+    .btn-finish-import {
+        background: linear-gradient(135deg, #10b981, #059669);
+        border: none;
+        transition: all 0.3s ease;
+    }
+
+    .btn-finish-import:hover {
+        background: linear-gradient(135deg, #059669, #047857);
+        transform: scale(1.02);
+        box-shadow: 0 12px 35px rgba(16, 185, 129, 0.35) !important;
+    }
+
+    /* Confetti Effect */
+    .confetti-container {
+        position: absolute;
+        top: 0;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 200px;
+        height: 100px;
+        pointer-events: none;
+    }
+
+    .confetti {
+        position: absolute;
+        width: 10px;
+        height: 10px;
+        opacity: 0;
+        animation: confetti-fall 1.5s ease-out forwards;
+    }
+
+    @keyframes confetti-fall {
+        0% {
+            opacity: 1;
+            transform: translateY(0) rotate(0deg);
+        }
+
+        100% {
+            opacity: 0;
+            transform: translateY(100px) rotate(720deg);
         }
     }
 </style>

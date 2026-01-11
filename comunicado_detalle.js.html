@@ -948,8 +948,8 @@
             _attachCurrencyFormatters();
         }
         function _addActualizacionPresupuesto() {
-            state.data.presupuesto.push({ revision: '', fecha: new Date().toISOString(), monto: 0 });
-            _renderPresupuesto();
+            // NUEVO: Mostrar modal de selección de tipo en lugar de crear directamente
+            _mostrarModalTipoActualizacion();
         }
 
         function toggleManualInput(idx, activate) {
@@ -1103,6 +1103,12 @@
                     catOptions += `<option value="${c.id}" ${isSelected ? 'selected' : ''}>${c.nombre}</option>`;
                 });
 
+                // Determinar si esta línea puede eliminarse:
+                // Puede eliminarse si NO existe en la revisión anterior (es nueva en esta actualización)
+                // prevLine ya fue calculado arriba - si es null, la línea es nueva
+                const esLineaNuevaEnEstaRevision = !prevLine;
+                const puedeEliminar = esLineaNuevaEnEstaRevision;
+
                 tr.innerHTML = `
                     <td><input type="text" class="form-control form-control-sm" value="${l.descripcion || ''}" placeholder="Descripción" onchange="ComunicadoDetalle.updateLineaPresupuesto(${i}, 'descripcion', this.value)"></td>
                     <td>
@@ -1117,7 +1123,12 @@
                     <td class="text-end ${difClass}">
                         ${hasPrevRevision ? difPrefix + _formatCurrency(Math.abs(diferencia)) : '<small class="text-muted">—</small>'}
                     </td>
-                    <td class="text-center"><button class="btn btn-sm text-danger" onclick="ComunicadoDetalle.removeLineaPresupuesto(${i})"><i class="bi bi-trash"></i></button></td>
+                    <td class="text-center">
+                        ${puedeEliminar
+                        ? `<button class="btn btn-sm text-danger" onclick="ComunicadoDetalle.removeLineaPresupuesto(${i})" title="Eliminar línea"><i class="bi bi-trash"></i></button>`
+                        : `<span class="text-muted" title="Línea vinculada a actualizaciones anteriores - no se puede eliminar"><i class="bi bi-lock-fill"></i></span>`
+                    }
+                    </td>
                 `;
                 tbody.appendChild(tr);
             });
@@ -1130,7 +1141,40 @@
         }
 
         function removeLineaPresupuesto(lineIdx) {
-            state.data.presupuesto[state.editingPresupuestoIdx].lineas.splice(lineIdx, 1);
+            const idx = state.editingPresupuestoIdx;
+            const linea = state.data.presupuesto[idx].lineas[lineIdx];
+
+            // Verificar si existe en CUALQUIER revisión anterior (incluyendo origen)
+            // Recopilar todas las líneas de revisiones anteriores
+            let todasLineasAnteriores = [];
+            for (let i = 0; i < idx; i++) {
+                const rev = state.data.presupuesto[i];
+                if (rev && rev.lineas) {
+                    todasLineasAnteriores = todasLineasAnteriores.concat(rev.lineas);
+                }
+            }
+
+            // Buscar si la línea existe en alguna revisión anterior
+            let existeEnRevisionAnterior = false;
+            if (linea.idLinea) {
+                existeEnRevisionAnterior = todasLineasAnteriores.some(pl => String(pl.idLinea) === String(linea.idLinea));
+            } else if (linea.descripcion) {
+                const descNorm = (linea.descripcion || '').toUpperCase().trim();
+                const catNorm = (linea.categoria || '').toUpperCase().trim();
+                existeEnRevisionAnterior = todasLineasAnteriores.some(pl => {
+                    const prevDesc = (pl.descripcion || '').toUpperCase().trim();
+                    const prevCat = (pl.categoria || '').toUpperCase().trim();
+                    return prevDesc === descNorm && prevCat === catNorm;
+                });
+            }
+
+            // Validación: Solo líneas nuevas (que no existen en revisiones anteriores ni origen) pueden eliminarse
+            if (existeEnRevisionAnterior) {
+                _showAlert('Acción No Permitida', 'Esta línea existe en el origen o revisiones anteriores y no puede eliminarse.', 'warning');
+                return;
+            }
+
+            state.data.presupuesto[idx].lineas.splice(lineIdx, 1);
             _renderModalLines();
             _recalcularTotalModal();
         }
@@ -1234,6 +1278,72 @@
             }
         }
 
+        // --- MODAL TIPO DE ACTUALIZACIÓN (NUEVO) ---
+        function _mostrarModalTipoActualizacion() {
+            const modalEl = document.getElementById('modalTipoActualizacion');
+            if (modalEl) {
+                const modal = new bootstrap.Modal(modalEl);
+                modal.show();
+            }
+        }
+
+        function crearActualizacionConTipo(tipo) {
+            // Cerrar modal de selección
+            const modalEl = document.getElementById('modalTipoActualizacion');
+            if (modalEl) {
+                const modal = bootstrap.Modal.getInstance(modalEl);
+                if (modal) modal.hide();
+            }
+
+            const presupuestos = state.data.presupuesto || [];
+            const ultimoIdx = presupuestos.length - 1;
+            const ultimaActualizacion = ultimoIdx >= 0 ? presupuestos[ultimoIdx] : null;
+
+            // Crear nueva actualización
+            const nuevaActualizacion = {
+                revision: '',
+                fecha: new Date().toISOString(),
+                monto: 0,
+                montoCapturado: null,
+                montoSupervision: 0,
+                lineas: [],
+                _tipoAccion: tipo, // Guardar tipo para el backend
+                _esNueva: true // Marcar como nueva para lógica delta
+            };
+
+            // Lógica según tipo
+            if (tipo === 'SUSTITUCION_TOTAL') {
+                // Empezar vacío
+                nuevaActualizacion.lineas = [];
+            } else if (ultimaActualizacion && ultimaActualizacion.lineas && ultimaActualizacion.lineas.length > 0) {
+                // INFORMATIVO o ACTUALIZACION: Copiar líneas del predecesor
+                nuevaActualizacion.lineas = ultimaActualizacion.lineas.map(l => ({
+                    ...l,
+                    // Preservar idLinea para mantener relación
+                    idLinea: l.idLinea,
+                    // Nuevo registro, no tiene id propio todavía
+                    id: undefined,
+                    // Copia del importe
+                    importe: l.importe || 0
+                }));
+
+                // Calcular monto total de las líneas copiadas
+                const total = nuevaActualizacion.lineas.reduce((sum, l) => sum + (parseFloat(l.importe) || 0), 0);
+                nuevaActualizacion.monto = total;
+                nuevaActualizacion.montoSupervision = total * 0.05;
+            }
+
+            // Agregar al array
+            state.data.presupuesto.push(nuevaActualizacion);
+            _renderPresupuesto();
+
+            // Si es ACTUALIZACION o SUSTITUCION, abrir editor de líneas
+            if (tipo !== 'INFORMATIVO') {
+                const nuevoIdx = state.data.presupuesto.length - 1;
+                setTimeout(() => abrirEditorPresupuesto(nuevoIdx), 300);
+            }
+        }
+
         return {
             init,
             mount: (container) => init(container), // Alias para mount
@@ -1248,7 +1358,9 @@
             removeLineaPresupuesto,
             updateLineaPresupuesto,
             calcularSupervision,
-            toggleManualInput
+            toggleManualInput,
+            // NUEVO: Función para modal de tipo
+            crearActualizacionConTipo
         };
 
     })();

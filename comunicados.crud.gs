@@ -1167,17 +1167,10 @@ function _handlePresupuestoUpdate(comunicadoId, datosGenerales, presupuestoItems
                 }
             }
 
-            // LÓGICA NUEVA: Sincronizar HIJOS
+            // LÓGICA DELTA PARA LÍNEAS (Manual Entry)
+            // Preserva idLinea y maneja esVigente correctamente
             if (actualizacionId && Array.isArray(item.lineas)) {
-                // Mapear al formato de BD
-                const lineasParaGuardar = item.lineas.map(l => ({
-                    descripcion: l.descripcion,
-                    categoria: l.categoria,
-                    importe: parseFloat(l.importe) || 0,
-                    fechaCreacion: new Date()
-                }));
-                // Usamos la función helper existente _syncChildTable
-                _syncChildTable('presupuestoLineas', 'idActualizacion', actualizacionId, lineasParaGuardar);
+                _syncLineasConDelta(comunicadoId, actualizacionId, item.lineas, item._tipoAccion, existente);
             }
         });
 
@@ -1193,6 +1186,78 @@ function _handlePresupuestoUpdate(comunicadoId, datosGenerales, presupuestoItems
 
     } catch (error) {
         console.error('Error en _handlePresupuestoUpdate:', error);
+        throw error;
+    }
+}
+
+/**
+ * NUEVA FUNCIÓN: Sincroniza líneas de presupuesto usando lógica DELTA
+ * Preserva idLinea y maneja esVigente correctamente
+ * NO MODIFICA la lógica de importación IA - solo para entrada manual
+ * 
+ * @param {number} comunicadoId - ID del comunicado
+ * @param {number} actualizacionId - ID de la actualización actual
+ * @param {Array} lineasNuevas - Líneas desde el frontend
+ * @param {string} tipoAccion - INFORMATIVO, ACTUALIZACION, SUSTITUCION_TOTAL
+ * @param {Object} existenteAct - Actualización existente si es update
+ */
+function _syncLineasConDelta(comunicadoId, actualizacionId, lineasNuevas, tipoAccion, existenteAct) {
+    if (!lineasNuevas || !Array.isArray(lineasNuevas)) return;
+
+    try {
+        // 1. Leer líneas existentes para esta actualización
+        const allLineas = readAllRows('presupuestoLineas');
+        const lineasExistentes = (allLineas.success && allLineas.data) ?
+            allLineas.data.filter(l => String(l.idActualizacion) === String(actualizacionId)) : [];
+
+        // 2. Crear mapa de líneas existentes por idLinea
+        const existentesMap = new Map();
+        lineasExistentes.forEach(l => {
+            if (l.idLinea) existentesMap.set(String(l.idLinea), l);
+        });
+
+        // 3. Procesar cada línea nueva
+        lineasNuevas.forEach(linea => {
+            const idLinea = linea.idLinea;
+            const importe = parseFloat(linea.importe) || 0;
+            const categoria = linea.categoria || 1;
+
+            // Si tiene idLinea, verificar si ya existe
+            if (idLinea && existentesMap.has(String(idLinea))) {
+                const existente = existentesMap.get(String(idLinea));
+                const importeExistente = parseFloat(existente.importe) || 0;
+
+                // Si el importe cambió, actualizar
+                if (Math.abs(importe - importeExistente) > 0.01) {
+                    actualizarRegistro('presupuestoLineas', existente.id, {
+                        importe: importe,
+                        categoria: categoria,
+                        esVigente: true
+                    });
+                }
+                existentesMap.delete(String(idLinea)); // Marcar como procesado
+            } else {
+                // Insertar nueva línea
+                insertarRegistro('presupuestoLineas', {
+                    idActualizacion: actualizacionId,
+                    idLinea: idLinea || null, // Preservar o null si es nueva
+                    categoria: categoria,
+                    importe: importe,
+                    esVigente: true,
+                    fechaCreacion: new Date()
+                });
+            }
+        });
+
+        // 4. Líneas huérfanas: Si tipo es SUSTITUCION_TOTAL, marcar como no vigentes
+        if (tipoAccion === 'SUSTITUCION_TOTAL') {
+            existentesMap.forEach((linea) => {
+                actualizarRegistro('presupuestoLineas', linea.id, { esVigente: false });
+            });
+        }
+
+    } catch (error) {
+        console.error('Error en _syncLineasConDelta:', error);
         throw error;
     }
 }
