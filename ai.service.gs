@@ -37,6 +37,8 @@ const PROMPT_CORE_EXTRACTION = `
     - Antes de extraer, define el SITIO. 
     - Si es Hoja Generadora y la fila dice "Cemento", **MIRA ARRIBA** (encabezado \`UBICACIÓN:\`).
     - Usa el sitio, no el material.
+    - **PRESERVAR SUFIJOS DISTINTIVOS:** Si el nombre incluye "(Continuación)", "(Tramo X)", "(Sección Y)" o "(Parte Z)", MANTENLO como parte del concepto. Son ubicaciones DISTINTAS.
+    - Ejemplo: "Canal Principal Cuxtepeques" ≠ "Canal Principal Cuxtepeques (Continuación)". Son 2 conceptos separados.
 
 * **5.4 Extracción de DAÑO FÍSICO:**
     - Extrae SIEMPRE el valor de la columna "Importe daño físico", INCLUSO si es $0.00.
@@ -58,9 +60,14 @@ const PROMPT_CORE_EXTRACTION = `
 ### PASO 6: Consolidación y Limpieza
 *Objetivo: Refinar los datos crudos extraídos.*
 
+* **6.0 Preservación de Sufijos Distintivos (ANTES DE AGREGAR):**
+    - **NUNCA FUSIONES** conceptos que tengan sufijos como "(Continuación)", "(Tramo)", "(Sección)", "(Parte)".
+    - "Canal X" y "Canal X (Continuación)" son ubicaciones DIFERENTES. Mantén ambos por separado.
+
 * **6.1 Agregación de Generadoras:**
     - Si extrajiste datos de "Hojas Generadoras" (10 filas de materiales para 1 ubicación), **AGRUPA Y SUMA**.
     - El output debe tener una sola línea por \`Concepto\` con la suma total.
+    - **EXCEPCIÓN:** No agregues conceptos con sufijos distintivos (Continuación, Tramo, Sección) - son ubicaciones distintas.
 
 * **6.2 Discriminación de Columnas:**
     - Descarta valores de "Anterior" y conserva solo "Actual/Revisado".
@@ -71,6 +78,7 @@ const PROMPT_CORE_EXTRACTION = `
 * **6.4 Entity Resolution de Conceptos:**
     - Si el concepto se parece a uno de la lista de "CONCEPTOS EXISTENTES" (Contexto), USA EL NOMBRE DE LA LISTA.
     - Normaliza: "UR" → "Unidad de Riego", "DR" → "Distrito de Riego".
+    - **PRESERVAR:** Mantén "(Continuación)" y similares aunque no estén en la lista.
 
 ### PASO 7: Integración Final y Auditoría
 * **7.1 Ensamble del Header:** Compila \`refAjustador\`, \`comunicadoId\`, \`fechaDoc\`.
@@ -230,12 +238,19 @@ function procesarPdfIA(payload, optFilename) {
                 // También agregar registros del batch actual que tengan la misma refCta
                 let registrosContextoUnificado = [...registrosContextoBD];
 
+                // [FIX] Extraer familia actual para filtro de aislamiento RF8
+                const familiaActual = _extractFamily(payload.comunicadoId);
+                console.log(`[${contexto}] Familia actual: ${familiaActual}`);
+
                 if (batchResults && batchResults.length > 0 && payload.refCta) {
                     const refClean = String(payload.refCta).toUpperCase().trim();
                     const batchRelevantes = batchResults
                         .filter(r => {
                             const rRef = String(r.rawPayload?.header?.refCta || r.header?.refCta || '').toUpperCase().trim();
-                            return rRef === refClean;
+                            // [FIX] Filtrar por familia además de referencia
+                            const rComId = r.rawPayload?.header?.comunicadoId || r.header?.comunicadoId || '';
+                            const rFamilia = _extractFamily(rComId);
+                            return rRef === refClean && rFamilia === familiaActual;
                         })
                         .map(r => ({
                             header: r.rawPayload?.header || r.header || {},
@@ -243,7 +258,7 @@ function procesarPdfIA(payload, optFilename) {
                         }));
 
                     registrosContextoUnificado.push(...batchRelevantes);
-                    console.log(`[${contexto}] Agregados ${batchRelevantes.length} registros del batch al contexto`);
+                    console.log(`[${contexto}] Agregados ${batchRelevantes.length} registros del batch (familia ${familiaActual}) al contexto`);
 
                     // =====================================================================
                     // FIX CRÍTICO: Construir expectedLines desde BATCH si BD está vacía
@@ -257,8 +272,9 @@ function procesarPdfIA(payload, optFilename) {
 
                         for (const reg of batchRelevantes) {
                             const versionReg = _parseVersionLocal(reg.header.comunicadoId);
-                            // Solo incluir si es predecesor (misma base, índice menor)
-                            if (versionReg.base === versionActual.base && versionReg.index < versionActual.index) {
+                            const regFamilia = _extractFamily(reg.header.comunicadoId);
+                            // Solo incluir si es predecesor (misma familia, índice menor)
+                            if (regFamilia === familiaActual && versionReg.index < versionActual.index) {
                                 for (const linea of reg.lineas || []) {
                                     if (linea.concepto && linea.concepto !== 'Sin descripción') {
                                         const key = `${linea.concepto}|${linea.categoria}`;
@@ -290,7 +306,7 @@ function procesarPdfIA(payload, optFilename) {
                 const esOrigen = expectedLines.length === 0;
                 console.log(`[${contexto}] MODO DE EXTRACCIÓN: ${esOrigen ? 'ORIGEN (Línea Base)' : 'ACTUALIZACIÓN (Diferencial)'} [${expectedLines.length} líneas previas]`);
 
-                const jsonResponse = _callGeminiWithPdf(base64Content, filename, lastError, catalogsContext, existingConcepts, registrosContextoUnificado, expectedLines, esOrigen);
+                const jsonResponse = _callGeminiWithPdf(base64Content, filename, lastError, catalogsContext, existingConcepts, registrosContextoUnificado, expectedLines, esOrigen, payload.comunicadoId);
 
                 // Validar Lógica de Negocio básica (Suma)
                 const validacion = _validarLogicaNegocio(jsonResponse);
@@ -464,10 +480,13 @@ function cargarRegistrosRelacionados(refCta, comunicadoId, batchResults = [], ca
     const contexto = '[cargarRegistrosRelacionados]';
     const refClean = String(refCta).toUpperCase().trim();
 
+    // [FIX] Extraer familia para aislamiento RF8
+    const familiaActual = _extractFamily(comunicadoId);
+
     // Parsear versión actual para determinar predecesores esperados
     const versionActual = _parseVersionLocal(comunicadoId);
     const predecesoresEsperados = _calcularPredecesores(versionActual);
-    console.log(`${contexto} Buscando candidatos para ${refCta}-${comunicadoId}. Predecesores: ${predecesoresEsperados.join(', ')}`);
+    console.log(`${contexto} Buscando candidatos para ${refCta}-${comunicadoId}. Familia: ${familiaActual}. Predecesores: ${predecesoresEsperados.join(', ')}`);
 
     const candidatos = [];
 
@@ -476,7 +495,10 @@ function cargarRegistrosRelacionados(refCta, comunicadoId, batchResults = [], ca
         const batchCandidatos = batchResults
             .filter(r => {
                 const rRef = String(r.rawPayload?.header?.refCta || r.header?.refCta || '').toUpperCase().trim();
-                return rRef === refClean;
+                // [FIX] Filtrar por familia además de referencia
+                const rComId = r.rawPayload?.header?.comunicadoId || r.header?.comunicadoId || '';
+                const rFamilia = _extractFamily(rComId);
+                return rRef === refClean && rFamilia === familiaActual;
             })
             .map(r => ({
                 source: 'BATCH',
@@ -485,14 +507,15 @@ function cargarRegistrosRelacionados(refCta, comunicadoId, batchResults = [], ca
             }));
 
         candidatos.push(...batchCandidatos);
-        console.log(`${contexto} Encontrados ${batchCandidatos.length} candidatos en batch`);
+        console.log(`${contexto} Encontrados ${batchCandidatos.length} candidatos en batch (familia ${familiaActual})`);
     }
 
-    // 2. Buscar en BD (prioridad 2)
+    // 2. Buscar en BD (prioridad 2) - También filtrar por familia
     if (cache) {
-        const dbCandidatos = _buscarCandidatosEnBD(refClean, cache);
+        const dbCandidatos = _buscarCandidatosEnBD(refClean, cache)
+            .filter(c => _extractFamily(c.header.comunicadoId) === familiaActual);
         candidatos.push(...dbCandidatos);
-        console.log(`${contexto} Encontrados ${dbCandidatos.length} candidatos en BD`);
+        console.log(`${contexto} Encontrados ${dbCandidatos.length} candidatos en BD (familia ${familiaActual})`);
     }
 
     // 3. Ordenar por cercanía de versión (predecesor exacto primero)
@@ -533,6 +556,21 @@ function _parseVersionLocal(comunicadoId) {
         return { base: match[1], sufijo, index: sufijo ? sufijo.charCodeAt(0) - 64 : 0 };
     }
     return { base: cleanId, sufijo: '', index: 0 };
+}
+
+/**
+ * Extrae la familia base de un comunicadoId.
+ * Ejemplos:
+ *   "L50" -> "L50"
+ *   "L50A" -> "L50"
+ *   "L81B" -> "L81"
+ * @param {string} comunicadoId - ID del comunicado (ej: L50A)
+ * @returns {string} Familia base (ej: L50)
+ */
+function _extractFamily(comunicadoId) {
+    if (!comunicadoId) return '';
+    const match = String(comunicadoId).toUpperCase().trim().match(/^(L\d+)/);
+    return match ? match[1] : String(comunicadoId).toUpperCase().trim();
 }
 
 /**
@@ -991,8 +1029,9 @@ function _consultarContextoBD(refAjustador, comunicadoId, cache) {
  * @param {Array} relatedRecords - Registros relacionados para carry-forward
  * @param {Array} expectedLines - Líneas esperadas para Schema Injection (extracción dirigida)
  * @param {boolean} esOrigen - Si true, es documento ORIGEN (extracción total); si false, es ACTUALIZACIÓN (diferencial)
+ * @param {string} comunicadoId - ID del comunicado actual para aislamiento de familia
  */
-function _callGeminiWithPdf(base64Content, filename, errorFeedback = null, catalogs = null, existingConcepts = [], relatedRecords = [], expectedLines = [], esOrigen = true) {
+function _callGeminiWithPdf(base64Content, filename, errorFeedback = null, catalogs = null, existingConcepts = [], relatedRecords = [], expectedLines = [], esOrigen = true, comunicadoId = null) {
     const apiKey = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY');
     if (!apiKey) throw new Error('GEMINI_API_KEY no configurada en Propiedades del Script.');
 
@@ -1593,6 +1632,41 @@ Si procesas "L50B" y el contexto tiene L50A con descripcion "GL098774-L50, L50A"
 
 Si procesas un concepto "Canal Lat. Coyuca" y en el contexto existe "Canal Lateral Coyuca":
 → Tu línea debe usar "Canal Lateral Coyuca" (el nombre normalizado)`;
+    }
+
+    // =========================================================================
+    // REGLA DE AISLAMIENTO DE FAMILIAS (RF8.1) - Inyección crítica
+    // =========================================================================
+    const familiaActual = _extractFamily(comunicadoId);
+    if (familiaActual) {
+        promptSystem += `
+
+## ⚠️ REGLA CRÍTICA: AISLAMIENTO DE FAMILIAS (RF8.1)
+
+**CONTEXTO ACTUAL:**
+- Este documento pertenece a la familia: **${familiaActual}**
+- ComunicadoId actual: **${comunicadoId}**
+- SOLO puedes usar información de registros de esta misma familia para construir la descripción
+
+**REGLA PARA CONSTRUIR \`header.descripcion\`:**
+- La descripción debe construirse ÚNICAMENTE con comunicados de la misma familia ${familiaActual}
+- Familias permitidas: ${familiaActual}, ${familiaActual}A, ${familiaActual}B, ${familiaActual}C, etc.
+- NUNCA incluyas IDs de otras familias (L80, L81, etc. si estás procesando ${familiaActual})
+
+**EJEMPLO CORRECTO:**
+- Si procesas ${familiaActual}C y el contexto tiene ${familiaActual}A:
+  - descripcion = "GL...-${familiaActual}, ${familiaActual}A, ${familiaActual}C" ✅
+- NUNCA: "GL...-L80, L81, ${familiaActual}C" ❌ (mezcla de familias)
+
+**PROHIBICIONES ESTRICTAS:**
+- ❌ PROHIBIDO usar descripciones de otras familias (L80 ≠ L81 ≠ L50)
+- ❌ PROHIBIDO mezclar narrativas de diferentes familias
+- ❌ PROHIBIDO heredar contexto de una familia a otra
+
+**VERIFICACIÓN FINAL:**
+- Antes de generar la descripción, verifica que TODOS los IDs listados pertenezcan a la familia ${familiaActual}
+- Si ves IDs de otras familias en el contexto, IGNÓRALOS completamente
+`;
     }
 
     // =========================================================================

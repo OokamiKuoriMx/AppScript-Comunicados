@@ -163,8 +163,15 @@
                 dom.btnAnalizarPdf.classList.add('d-none');
             }
 
-            // Mostrar botón Confirmar Importación si hay válidos analizados
-            if (validAnalyzedCount > 0) {
+            // Mostrar botón Confirmar Importación SOLO SI:
+            // 1. No está analizando
+            // 2. Hay items válidos analizados
+            // 3. Todos los análisis terminaron (no hay pending)
+            const allAnalyzed = fileQueue.length > 0 && fileQueue.every(item =>
+                item.status !== 'pending' && item.status !== 'analyzing'
+            );
+
+            if (validAnalyzedCount > 0 && !isAnalyzing && allAnalyzed) {
                 dom.btnConfirmar.classList.remove('d-none');
                 dom.btnConfirmar.disabled = false;
                 dom.btnConfirmar.innerHTML = `<i class="bi bi-cloud-upload me-2"></i>Importar ${validAnalyzedCount} Comunicado${validAnalyzedCount > 1 ? 's' : ''}`;
@@ -294,10 +301,24 @@
                                 <div><span class="text-muted">Tipo:</span> <span class="badge ${res.tipo === 'ORIGEN' ? 'bg-primary' : 'bg-warning text-dark'}">${res.tipo || '-'}</span></div>
                                 <div><span class="text-muted">Partidas:</span> <strong>${numLineas}</strong></div>
                             </div>
-                            ${res.esValido ?
-                            `<span class="badge bg-success"><i class="bi bi-check-circle me-1"></i>Válido para importar</span>` :
-                            `<span class="badge bg-danger"><i class="bi bi-x-circle me-1"></i>${res.motivo || 'Inválido'}</span>`
-                        }
+                            ${(() => {
+                            // Determinar badge según status
+                            const status = res.status || '';
+                            if (status === 'OMITIDO') {
+                                return `<span class="badge bg-secondary"><i class="bi bi-slash-circle me-1"></i>OMITIDO - ${res.motivo || 'Ya existe'}</span>`;
+                            } else if (status === 'REEMPLAZAR') {
+                                // Extraer los cambios del motivo para mostrarlos
+                                const cambiosTexto = res.motivo?.replace('Actualización disponible: ', '') || 'Cambios detectados';
+                                return `<span class="badge bg-info text-dark"><i class="bi bi-arrow-repeat me-1"></i>Actualización disponible</span>
+                                        <span class="text-muted small ms-2"><i class="bi bi-pencil-square me-1"></i>${cambiosTexto}</span>`;
+                            } else if (!res.esValido) {
+                                return `<span class="badge bg-danger"><i class="bi bi-x-circle me-1"></i>${res.motivo || 'Inválido'}</span>`;
+                            } else if (status === 'NUEVO' || status === 'ACTUALIZACION' || status === 'ACTUALIZACION_BD' || status === 'ACTUALIZACION_LOTE') {
+                                return `<span class="badge bg-success"><i class="bi bi-check-circle me-1"></i>Válido para importar</span>`;
+                            } else {
+                                return `<span class="badge bg-success"><i class="bi bi-check-circle me-1"></i>Válido para importar</span>`;
+                            }
+                        })()}
                             ${lineasHtml}
                         </div>
                     `;
@@ -309,9 +330,10 @@
                     `;
                 }
 
-                // Checkbox habilitado solo si no está analizando y es válido
-                const checkboxDisabled = item.status === 'analyzing' || (item.status === 'success' && !item.resultado?.esValido);
-                const checkboxChecked = item.selected && (item.status === 'pending' || (item.status === 'success' && item.resultado?.esValido));
+                // Checkbox habilitado solo si no está analizando, es válido y no está OMITIDO
+                const isOmitido = item.resultado?.status === 'OMITIDO';
+                const checkboxDisabled = item.status === 'analyzing' || (item.status === 'success' && (!item.resultado?.esValido || isOmitido));
+                const checkboxChecked = item.selected && !isOmitido && (item.status === 'pending' || (item.status === 'success' && item.resultado?.esValido));
 
                 // Hacer draggable siempre (excepto mientras analiza)
                 div.draggable = item.status !== 'analyzing';
@@ -356,6 +378,35 @@
 
         // Variable para saber si hay análisis en progreso
         let isAnalyzing = false;
+        let isCancelled = false;
+
+        // ========== FUNCIONES DE CONTROL DE PROCESO ==========
+        const cancelarProceso = () => {
+            if (confirm('¿Cancelar el proceso de análisis? Los archivos pendientes no serán procesados.')) {
+                isCancelled = true;
+                _restoreAnalyzeButton();
+
+                // Marcar items en análisis como pendientes
+                fileQueue.forEach(item => {
+                    if (item.status === 'analyzing') {
+                        item.status = 'pending';
+                    }
+                });
+
+                isAnalyzing = false;
+                _renderQueue();
+            }
+        };
+
+        const _restoreAnalyzeButton = () => {
+            const btnPdfText = document.getElementById('btn-pdf-text');
+            if (dom.btnAnalizarPdf) {
+                dom.btnAnalizarPdf.innerHTML = '<i class="bi bi-robot me-2"></i><span id="btn-pdf-text">Procesar PDFs con IA</span>';
+                dom.btnAnalizarPdf.classList.remove('btn-danger');
+                dom.btnAnalizarPdf.classList.add('btn-warning', 'text-white');
+                dom.btnAnalizarPdf.onclick = procesarColaIA;
+            }
+        };
 
         // Drag-drop para cards unificados
         const _addCardDragEvents = (el) => {
@@ -536,8 +587,24 @@
         const _iniciarCargaIAMejorado = async (indices) => {
             console.log(`Iniciando Carga IA Mejorada de ${indices.length} archivos`);
 
+            // Reset cancellation flag
+            isCancelled = false;
+
             // Deshabilitar drag-drop durante análisis
             isAnalyzing = true;
+
+            // ===== TRANSFORMAR BOTÓN A "CANCELAR" =====
+            if (dom.btnAnalizarPdf) {
+                dom.btnAnalizarPdf.innerHTML = '<i class="bi bi-x-circle me-2"></i>Cancelar';
+                dom.btnAnalizarPdf.classList.remove('btn-warning');
+                dom.btnAnalizarPdf.classList.add('btn-danger');
+                dom.btnAnalizarPdf.onclick = cancelarProceso;
+            }
+
+            // Ocultar botón de importar durante análisis
+            if (dom.btnConfirmar) {
+                dom.btnConfirmar.classList.add('d-none');
+            }
 
             // Ocultar loader global, usaremos estados individuales
             _showLoader(false);
@@ -546,6 +613,12 @@
             const conceptosPorRef = new Map();
 
             for (let i = 0; i < indices.length; i++) {
+                // ===== CHECK PARA CANCELACIÓN =====
+                if (isCancelled) {
+                    console.log('[Batch] Proceso cancelado por usuario');
+                    break;
+                }
+
                 const queueIdx = indices[i];
                 const item = fileQueue[queueIdx];
                 if (!item) continue;
@@ -590,7 +663,8 @@
                 currentPreviewData = RESULTADOS_BATCH;
             }
 
-            // Rehabilitar drag-drop
+            // ===== RESTAURAR BOTÓN Y ESTADO =====
+            _restoreAnalyzeButton();
             isAnalyzing = false;
             _renderQueue(); // Re-render con drag habilitado
         };
@@ -933,7 +1007,137 @@
             };
         };
 
+        // === MODAL DE CONFIRMACIÓN PREMIUM ===
+        const _mostrarConfirmacionImport = (count) => {
+            return new Promise((resolve) => {
+                const modalEl = document.getElementById('modalConfirmImport');
+                const countEl = document.getElementById('confirm-import-count');
+                const btnCancel = document.getElementById('btn-confirm-cancel');
+                const btnAccept = document.getElementById('btn-confirm-accept');
 
+                if (!modalEl) {
+                    // Fallback al confirm nativo si el modal no existe
+                    resolve(confirm(`¿Importar ${count} comunicado(s)?`));
+                    return;
+                }
+
+                // Actualizar el contador
+                if (countEl) countEl.textContent = count;
+
+                // Crear instancia del modal
+                const modal = new bootstrap.Modal(modalEl, {
+                    backdrop: 'static',
+                    keyboard: false
+                });
+
+                // Limpiar eventos previos
+                const newBtnCancel = btnCancel.cloneNode(true);
+                const newBtnAccept = btnAccept.cloneNode(true);
+                btnCancel.parentNode.replaceChild(newBtnCancel, btnCancel);
+                btnAccept.parentNode.replaceChild(newBtnAccept, btnAccept);
+
+                // Event handlers
+                const handleCancel = () => {
+                    modal.hide();
+                    resolve(false);
+                };
+
+                const handleAccept = () => {
+                    modal.hide();
+                    resolve(true);
+                };
+
+                // Asignar eventos
+                newBtnCancel.addEventListener('click', handleCancel);
+                newBtnAccept.addEventListener('click', handleAccept);
+
+                // Mostrar modal
+                modal.show();
+            });
+        };
+
+        // === MODAL DE RESULTADO DE IMPORTACIÓN ===
+        const _mostrarResultadoImport = (successCount, errorCount) => {
+            return new Promise((resolve) => {
+                const modalEl = document.getElementById('modalImportResult');
+                const titleEl = document.getElementById('result-title');
+                const subtitleEl = document.getElementById('result-subtitle');
+                const successCountEl = document.getElementById('result-success-count');
+                const errorCountEl = document.getElementById('result-error-count');
+                const iconSuccess = document.getElementById('result-icon-success');
+                const iconWarning = document.getElementById('result-icon-warning');
+                const glowEl = modalEl?.querySelector('.result-modal-glow');
+                const btnAccept = document.getElementById('btn-result-accept');
+
+                if (!modalEl) {
+                    // Fallback al alert nativo si el modal no existe
+                    alert(`Importación completada.\n\n✓ Éxitos: ${successCount}\n✗ Errores: ${errorCount}`);
+                    resolve();
+                    return;
+                }
+
+                // Actualizar contadores
+                if (successCountEl) successCountEl.textContent = successCount;
+                if (errorCountEl) errorCountEl.textContent = errorCount;
+
+                // Determinar si hay errores
+                const hasErrors = errorCount > 0;
+
+                // Ocultar ambos iconos primero
+                if (iconSuccess) iconSuccess.classList.add('d-none');
+                if (iconWarning) iconWarning.classList.add('d-none');
+
+                // Configurar apariencia según resultado
+                if (hasErrors) {
+                    // Modo advertencia (con errores)
+                    if (iconWarning) iconWarning.classList.remove('d-none');
+                    if (glowEl) {
+                        glowEl.classList.remove('success-glow');
+                        glowEl.classList.add('warning-glow');
+                    }
+                    if (titleEl) {
+                        titleEl.textContent = 'Importación con Advertencias';
+                        titleEl.classList.remove('success-title');
+                        titleEl.classList.add('warning-title');
+                    }
+                    if (subtitleEl) subtitleEl.textContent = 'Algunos documentos no pudieron procesarse';
+                    if (btnAccept) btnAccept.classList.add('warning-btn');
+                } else {
+                    // Modo éxito (sin errores)
+                    if (iconSuccess) iconSuccess.classList.remove('d-none');
+                    if (glowEl) {
+                        glowEl.classList.remove('warning-glow');
+                        glowEl.classList.add('success-glow');
+                    }
+                    if (titleEl) {
+                        titleEl.textContent = '¡Importación Exitosa!';
+                        titleEl.classList.remove('warning-title');
+                        titleEl.classList.add('success-title');
+                    }
+                    if (subtitleEl) subtitleEl.textContent = 'Todos los documentos fueron procesados correctamente';
+                    if (btnAccept) btnAccept.classList.remove('warning-btn');
+                }
+
+                // Crear instancia del modal
+                const modal = new bootstrap.Modal(modalEl);
+
+                // Limpiar eventos previos
+                const newBtnAccept = btnAccept.cloneNode(true);
+                if (hasErrors) newBtnAccept.classList.add('warning-btn');
+                btnAccept.parentNode.replaceChild(newBtnAccept, btnAccept);
+
+                // Event handler
+                const handleAccept = () => {
+                    modal.hide();
+                    resolve();
+                };
+
+                newBtnAccept.addEventListener('click', handleAccept);
+
+                // Mostrar modal
+                modal.show();
+            });
+        };
 
         const reset = () => {
             currentFile = null;
@@ -1037,7 +1241,9 @@
                 return;
             }
 
-            if (!confirm(`¿Importar ${toImport.length} comunicado(s)?`)) return;
+            // Mostrar modal de confirmación premium
+            const confirmed = await _mostrarConfirmacionImport(toImport.length);
+            if (!confirmed) return;
 
             // Deshabilitar botón de importar durante el proceso
             if (dom.btnConfirmar) {
@@ -1111,8 +1317,13 @@
                 }
             }
 
-            // DESBLOQUEAR botón cerrar y convertirlo en "Finalizar"
-            if (btnCerrar) {
+            // ===== VERIFICAR SI TODOS LOS ITEMS ESTÁN IMPORTADOS =====
+            const allImported = fileQueue.filter(f =>
+                f.status === 'success' && f.resultado?.esValido && f.selected
+            ).every(f => f.imported);
+
+            // DESBLOQUEAR botón cerrar y convertirlo en "Finalizar" SOLO SI todo terminó
+            if (btnCerrar && allImported) {
                 btnCerrar.disabled = false;
                 btnCerrar.removeAttribute('data-bs-dismiss'); // Quitar dismiss automático
                 btnCerrar.innerHTML = '<i class="bi bi-check2-all me-1"></i>Finalizar';
@@ -1121,37 +1332,14 @@
                 btnCerrar.onclick = () => {
                     cerrarYActualizar();
                 };
+            } else if (btnCerrar) {
+                // Si hay items pendientes, mantener botón cerrar deshabilitado
+                btnCerrar.disabled = true;
+                btnCerrar.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Procesando...';
             }
 
-            // Mostrar resumen con SweetAlert si está disponible, sino alert normal
-            const summaryHtml = `
-                <div class="text-center py-3">
-                    <div class="mb-3">
-                        <i class="bi bi-check-circle-fill text-success" style="font-size: 3rem;"></i>
-                    </div>
-                    <h5>Importación Completada</h5>
-                    <div class="d-flex justify-content-center gap-4 mt-3">
-                        <div class="text-center">
-                            <div class="fs-4 fw-bold text-success">${successCount}</div>
-                            <small class="text-muted">Éxitos</small>
-                        </div>
-                        <div class="text-center">
-                            <div class="fs-4 fw-bold text-danger">${errorCount}</div>
-                            <small class="text-muted">Errores</small>
-                        </div>
-                    </div>
-                </div>
-            `;
-
-            if (globalThis.Swal) {
-                Swal.fire({
-                    html: summaryHtml,
-                    showConfirmButton: true,
-                    confirmButtonText: 'Aceptar'
-                });
-            } else {
-                alert(`Importación completada.\n✓ Éxitos: ${successCount}\n✗ Errores: ${errorCount}`);
-            }
+            // ===== MODAL DE RESULTADO (Premium) =====
+            await _mostrarResultadoImport(successCount, errorCount);
 
             _renderQueue();
         };
@@ -1184,7 +1372,46 @@
                 } else if (status === 'imported') {
                     importStatusEl.innerHTML = '<span class="badge bg-success"><i class="bi bi-check-lg me-1"></i>Importado ✓</span>';
                     card.style.opacity = '1';
-                    card.classList.add('border-success');
+                    card.classList.add('border-success', 'imported');
+
+                    // ===== ANIMACIÓN SLIDE-OUT (ESTILO CARTUCHO) =====
+                    // Guardar altura original antes de animar
+                    const originalHeight = card.offsetHeight;
+                    card.style.maxHeight = originalHeight + 'px';
+                    card.style.overflow = 'hidden';
+
+                    // Fase 1: Deslizar a la derecha
+                    setTimeout(() => {
+                        card.style.transition = 'all 0.4s ease-out';
+                        card.style.transform = 'translateX(100%)';
+                        card.style.opacity = '0';
+                    }, 600);
+
+                    // Fase 2: Colapsar altura (las demás suben)
+                    setTimeout(() => {
+                        card.style.transition = 'all 0.3s ease-in-out';
+                        card.style.maxHeight = '0';
+                        card.style.marginBottom = '0';
+                        card.style.padding = '0';
+                        card.style.border = 'none';
+                    }, 1000);
+
+                    // Fase 3: Remover del DOM
+                    setTimeout(() => {
+                        // Encontrar y eliminar del fileQueue por id
+                        const itemId = fileQueue[index]?.id;
+                        if (itemId) {
+                            const queueIndex = fileQueue.findIndex(f => f.id === itemId);
+                            if (queueIndex > -1) {
+                                fileQueue.splice(queueIndex, 1);
+                            }
+                        }
+                        card.remove();
+                        // Actualizar contadores
+                        const countSpan = document.getElementById('queue-count');
+                        if (countSpan) countSpan.innerText = fileQueue.length;
+                    }, 1350);
+
                 } else if (status === 'import-error') {
                     importStatusEl.innerHTML = `<span class="badge bg-danger" title="${message}"><i class="bi bi-x-lg me-1"></i>Error</span>`;
                     card.style.opacity = '1';
@@ -1773,6 +2000,7 @@
             removeFromQueue,
             clearQueue,
             procesarColaIA,
+            cancelarProceso, // <-- NUEVO: Cancelar proceso de análisis
             // NUEVOS exports
             toggleFileSelection,
             toggleAllSelection,

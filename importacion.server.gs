@@ -316,10 +316,23 @@ function _analizarDocumento(doc, cache, batchDocs = []) {
             );
 
             if (existingCom) {
-                // EXISTE en BD → OMITIR (evitar duplicados)
-                statusCom = 'OMITIDO';
-                doc.validacion.motivo = `El comunicado ${h.comunicadoId} ya existe en la Base de Datos`;
-                console.log(`[Import] ORIGEN ${h.comunicadoId} ya existe en BD → OMITIDO`);
+                // EXISTE en BD → Comparación profunda para detectar cambios
+                console.log(`[Import] ORIGEN ${h.comunicadoId} ya existe en BD (ID=${existingCom.id}) → Comparando...`);
+
+                const comparacion = _compararConExistente(doc, existingCom, cache);
+
+                if (comparacion.tieneCambios) {
+                    // Hay cambios → Permitir REEMPLAZAR
+                    statusCom = 'REEMPLAZAR';
+                    changes = comparacion.cambios;
+                    doc.validacion.motivo = `Actualización disponible: ${comparacion.cambios.join(', ')}`;
+                    console.log(`[Import] ORIGEN ${h.comunicadoId} tiene CAMBIOS → REEMPLAZAR: ${comparacion.cambios.join(', ')}`);
+                } else {
+                    // Sin cambios → OMITIR
+                    statusCom = 'OMITIDO';
+                    doc.validacion.motivo = `El comunicado ${h.comunicadoId} es idéntico al existente en BD`;
+                    console.log(`[Import] ORIGEN ${h.comunicadoId} es IDÉNTICO → OMITIDO`);
+                }
             } else {
                 // NO EXISTE → NUEVO REGISTRO
                 statusCom = 'NUEVO';
@@ -721,11 +734,25 @@ function _analizarDocumento(doc, cache, batchDocs = []) {
 
         if (isComOmitido && !isCtaNueva && !isSinNuevo && !isDrNuevo) {
             finalStatus = 'OMITIDO';
-            finalMotivo = 'Registro idéntico a Base de Datos.';
+            // Usar el motivo personalizado si ya fue establecido
+            if (!finalMotivo || finalMotivo === 'OK') {
+                finalMotivo = doc.validacion.motivo || 'Registro idéntico a Base de Datos.';
+            }
         }
+
+        // Propagar status REEMPLAZAR con su motivo
+        if (statusCom === 'REEMPLAZAR') {
+            finalStatus = 'REEMPLAZAR';
+            finalMotivo = doc.validacion.motivo || `Cambios detectados: ${changes.join(', ')}`;
+        }
+
+        // Propagar status NUEVO
+        if (statusCom === 'NUEVO' || statusCom === 'ACTUALIZACION' || statusCom === 'ACTUALIZACION_BD' || statusCom === 'ACTUALIZACION_LOTE') {
+            finalStatus = statusCom;
+        }
+
         if (statusCom === 'DUPLICADO_CONTENIDO') {
             // No bloqueamos, pero advertimos
-            // finalStatus = 'ALERT'; 
             finalMotivo = `Posible duplicado de ${posibleDuplicadoId}`;
         }
     }
@@ -3293,6 +3320,98 @@ function compararVersiones(idComunicado, idActAnterior, idActActual) {
     };
 }
 
+/**
+ * Compara un documento entrante contra uno existente en BD para detectar cambios.
+ * @param {Object} doc - Documento entrante {header, lineas, validacion}
+ * @param {Object} existingCom - Comunicado existente en cache
+ * @param {Object} cache - Cache de catálogos
+ * @returns {Object} {tieneCambios, cambios[], detalles}
+ */
+function _compararConExistente(doc, existingCom, cache) {
+    const contexto = '_compararConExistente';
+    const h = doc.header;
+    const cambios = [];
+    let tieneCambios = false;
+
+    console.log(`[${contexto}] Comparando ${h.comunicadoId} con existente ID=${existingCom.id}`);
+
+    // 1. Obtener datosGenerales del comunicado existente
+    const dgActual = cache.datosGenerales.find(dg => String(dg.idComunicado) === String(existingCom.id));
+
+    if (!dgActual) {
+        console.log(`[${contexto}] No existe datosGenerales para el comunicado - tratando como nuevo`);
+        return { tieneCambios: true, cambios: ['Sin datos generales previos'], detalles: 'NUEVO_DG' };
+    }
+
+    // 2. Comparar fechas
+    if (h.fechaDoc) {
+        try {
+            const fechaPdf = new Date(h.fechaDoc).toISOString().split('T')[0];
+            const fechaBd = dgActual.fecha ? new Date(dgActual.fecha).toISOString().split('T')[0] : '';
+            if (fechaPdf !== fechaBd) {
+                cambios.push(`Fecha (${fechaBd || 'N/A'} → ${fechaPdf})`);
+                tieneCambios = true;
+                console.log(`[${contexto}] Diferencia en fecha: BD=${fechaBd}, PDF=${fechaPdf}`);
+            }
+        } catch (e) {
+            console.log(`[${contexto}] Error comparando fechas: ${e.message}`);
+        }
+    }
+
+    // 3. Comparar monto total
+    const totalPdf = parseFloat(h.totalPdf) || 0;
+    const totalBd = parseFloat(dgActual.total) || 0;
+    if (Math.abs(totalPdf - totalBd) > 0.01) {
+        cambios.push(`Monto ($${totalBd.toLocaleString('es-MX')} → $${totalPdf.toLocaleString('es-MX')})`);
+        tieneCambios = true;
+        console.log(`[${contexto}] Diferencia en monto: BD=${totalBd}, PDF=${totalPdf}`);
+    }
+
+    // 4. Comparar líneas de presupuesto (más detallado)
+    if (doc.lineas && doc.lineas.length > 0) {
+        // Buscar la última actualización del comunicado
+        const actsPrevias = cache.actualizaciones.filter(a => String(a.idComunicado) === String(existingCom.id));
+        const actMasReciente = actsPrevias.sort((a, b) => Number(b.consecutivo) - Number(a.consecutivo))[0];
+
+        if (actMasReciente && actMasReciente.id) {
+            // Cargar líneas existentes
+            const lineasBDResponse = readAllRows('presupuestoLineas');
+            if (lineasBDResponse.success) {
+                const lineasExistentes = (lineasBDResponse.data || []).filter(l =>
+                    String(l.idActualizacion) === String(actMasReciente.id)
+                );
+
+                // Comparar líneas
+                const diffLineas = _compararLineas(doc.lineas, lineasExistentes);
+                console.log(`[${contexto}] Resultado comparación líneas: inserts=${diffLineas.inserts}, updates=${diffLineas.updates}, deletes=${diffLineas.deletes}`);
+
+                if (diffLineas.hasDifferences) {
+                    const detalle = [];
+                    if (diffLineas.inserts > 0) detalle.push(`${diffLineas.inserts} nuevas`);
+                    if (diffLineas.updates > 0) detalle.push(`${diffLineas.updates} modificadas`);
+                    if (diffLineas.deletes > 0) detalle.push(`${diffLineas.deletes} eliminadas`);
+                    cambios.push(`Líneas (${detalle.join(', ')})`);
+                    tieneCambios = true;
+                }
+            }
+        } else {
+            // No hay actualización previa pero el doc tiene líneas
+            if (doc.lineas.length > 0) {
+                cambios.push(`${doc.lineas.length} líneas nuevas`);
+                tieneCambios = true;
+            }
+        }
+    }
+
+    console.log(`[${contexto}] Resultado final: tieneCambios=${tieneCambios}, cambios=[${cambios.join(', ')}]`);
+
+    return {
+        tieneCambios,
+        cambios,
+        detalles: tieneCambios ? 'CON_CAMBIOS' : 'IDENTICO'
+    };
+}
+
 
 /**
  * Compara líneas del PDF con líneas existentes en BD.
@@ -3393,11 +3512,26 @@ function _syncLineasPresupuesto(idActualizacion, lineasNuevas, logFn) {
         return result;
     }
 
-    const lineasExistentes = (lineasBDResponse.data || []).filter(l =>
+    const lineasExistentesRaw = (lineasBDResponse.data || []).filter(l =>
         String(l.idActualizacion) === String(idActualizacion)
     );
 
-    logFn(`[${contexto}]Líneas existentes en BD: ${lineasExistentes.length}`);
+    logFn(`[${contexto}]Líneas existentes en BD (raw): ${lineasExistentesRaw.length}`);
+
+    // JOIN: Obtener descripciones para las líneas existentes
+    const descResponse = readAllRows('descripcionLineas');
+    const descripcionesMap = new Map();
+    if (descResponse.success && descResponse.data) {
+        descResponse.data.forEach(d => descripcionesMap.set(String(d.id), d.descripcion));
+    }
+
+    // Enriquecer líneas existentes con su descripción
+    const lineasExistentes = lineasExistentesRaw.map(le => {
+        const descripcion = descripcionesMap.get(String(le.idLinea)) || '';
+        return { ...le, descripcion };
+    });
+
+    logFn(`[${contexto}]Líneas existentes con descripción: ${lineasExistentes.length}`);
 
     // 2. Normalizar líneas del PDF para comparación
     const _normKey = (concepto, categoria) => {
@@ -3420,8 +3554,9 @@ function _syncLineasPresupuesto(idActualizacion, lineasNuevas, logFn) {
         mapExistentes.set(key, le);
     });
 
-    logFn(`[${contexto}]Claves nuevas: ${[...mapNuevas.keys()].join(', ')}`);
-    logFn(`[${contexto}]Claves existentes: ${[...mapExistentes.keys()].join(', ')}`);
+    logFn(`[${contexto}]Claves nuevas: ${[...mapNuevas.keys()].slice(0, 5).join(', ')}${mapNuevas.size > 5 ? '...' : ''}`);
+    logFn(`[${contexto}]Claves existentes: ${[...mapExistentes.keys()].slice(0, 5).join(', ')}${mapExistentes.size > 5 ? '...' : ''}`);
+
 
     // 3. ACTUALIZAR líneas existentes que cambiaron
     for (const [key, lineaNueva] of mapNuevas) {
@@ -3520,15 +3655,34 @@ function _syncLineasPresupuesto(idActualizacion, lineasNuevas, logFn) {
 /**
  * Normaliza una ubicación para comparación fuzzy.
  * Elimina palabras comunes, acentos, deja solo palabras clave.
+ * PRESERVA: (Continuación), (Tramo X), etc. como sufijos distintivos
  */
 function _normalizarUbicacion(ubicacion) {
     if (!ubicacion) return '';
-    return String(ubicacion)
-        .toUpperCase()
+
+    let str = String(ubicacion).toUpperCase();
+
+    // Extraer y preservar sufijos distintivos ANTES de normalizar
+    let sufijo = '';
+    const sufijoMatch = str.match(/\((?:CONTINUACION|CONTINUACIÓN|TRAMO\s*\d*|SECCION\s*\d*|PARTE\s*\d*)\)/i);
+    if (sufijoMatch) {
+        sufijo = ' ' + sufijoMatch[0]
+            .replace(/Á/g, 'A').replace(/É/g, 'E').replace(/Í/g, 'I')
+            .replace(/Ó/g, 'O').replace(/Ú/g, 'U')
+            .replace(/[()]/g, '') // Quitar paréntesis para normalizar
+            .trim();
+    }
+
+    // Normalizar el resto
+    const normalizado = str
         .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // Quitar acentos
+        .replace(/\([^)]*\)/g, '') // Quitar todos los paréntesis después de extraer sufijo
         .replace(/[^A-Z0-9\s]/g, ' ') // Solo letras y números
         .replace(/\s+/g, ' ')
         .trim();
+
+    // Retornar con sufijo distintivo si existe
+    return (normalizado + sufijo).trim();
 }
 
 /**
