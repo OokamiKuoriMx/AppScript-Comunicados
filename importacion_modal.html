@@ -248,7 +248,7 @@
 
             <!-- FOOTER -->
             <div id="import-modal-footer" class="modal-footer bg-white border-top-0">
-                <button type="button" class="btn btn-secondary rounded-pill px-4"
+                <button type="button" id="btn-cerrar-modal" class="btn btn-secondary rounded-pill px-4"
                     data-bs-dismiss="modal">Cerrar</button>
                 <button type="button" id="btn-confirmar-importacion" class="btn btn-primary rounded-pill px-4 d-none">
                     <i class="bi bi-check-circle-fill me-2"></i>Confirmar Importación
@@ -695,6 +695,48 @@
         font-weight: 500;
         font-size: 0.7rem;
         text-transform: uppercase;
+    }
+
+    /* Chevron rotation for collapsible sections */
+    .chevron-icon {
+        transition: transform 0.2s ease;
+    }
+
+    .chevron-icon.rotated {
+        transform: rotate(90deg);
+    }
+
+    /* Slide-out animation for imported items */
+    @keyframes slideOutRight {
+        0% {
+            opacity: 1;
+            transform: translateX(0);
+        }
+
+        100% {
+            opacity: 0;
+            transform: translateX(100%);
+        }
+    }
+
+    .queue-card.slide-out-right {
+        animation: slideOutRight 0.5s ease forwards;
+        animation-delay: 0.8s;
+    }
+
+    .queue-card.imported {
+        background: linear-gradient(135deg, #d1fae5, #a7f3d0) !important;
+        border-color: #10b981 !important;
+    }
+
+    .queue-card.importing {
+        background: linear-gradient(135deg, #fef3c7, #fde68a) !important;
+        border-color: #f59e0b !important;
+    }
+
+    .queue-card.import-error {
+        background: linear-gradient(135deg, #fee2e2, #fecaca) !important;
+        border-color: #dc2626 !important;
     }
 
     /* ====== SUCCESS ANIMATION STYLES ====== */

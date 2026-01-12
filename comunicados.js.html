@@ -206,6 +206,21 @@
                         statusBadge = '<span class="badge bg-success"><i class="bi bi-check-lg me-1"></i>Analizado</span>';
                         div.className += ' success';
                         break;
+                    case 'importing':
+                        statusHtml = `<div class="spinner-border spinner-border-sm text-warning" role="status"></div>`;
+                        statusBadge = '<span class="badge bg-warning text-dark"><i class="bi bi-cloud-arrow-up me-1"></i>Importando...</span>';
+                        div.className += ' importing';
+                        break;
+                    case 'imported':
+                        statusHtml = `<i class="bi bi-check-all text-white fs-5"></i>`;
+                        statusBadge = '<span class="badge bg-success"><i class="bi bi-check2-circle me-1"></i>Importado</span>';
+                        div.className += ' imported slide-out-right';
+                        break;
+                    case 'import-error':
+                        statusHtml = `<i class="bi bi-exclamation-triangle-fill text-danger fs-5"></i>`;
+                        statusBadge = '<span class="badge bg-danger"><i class="bi bi-x-lg me-1"></i>Error Import</span>';
+                        div.className += ' import-error';
+                        break;
                     case 'error':
                         statusHtml = `<i class="bi bi-x-circle-fill text-danger fs-5"></i>`;
                         statusBadge = '<span class="badge bg-danger"><i class="bi bi-x-lg me-1"></i>Error</span>';
@@ -230,35 +245,43 @@
 
                     console.log('[DEBUG] Lineas encontradas:', numLineas, lineas);
 
-                    // Generar tabla de líneas de presupuesto
+                    // Generar tabla de líneas de presupuesto (COLAPSABLE con total visible)
                     let lineasHtml = '';
                     if (numLineas > 0) {
+                        const budgetId = `budget-collapse-${index}`;
                         lineasHtml = `
-                            <div class="budget-lines mt-2">
-                                <table class="table table-sm table-borderless mb-0 small">
-                                    <thead class="text-muted">
-                                        <tr>
-                                            <th style="width: 20px;">#</th>
-                                            <th>Concepto / Ubicación</th>
-                                            <th class="text-end" style="width: 100px;">Importe</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        ${lineas.map((l, li) => `
+                            <div class="budget-section mt-2">
+                                <div class="budget-header d-flex justify-content-between align-items-center p-2 rounded" 
+                                     style="background: linear-gradient(135deg, #f8f9fa, #e9ecef); cursor: pointer;"
+                                     onclick="document.getElementById('${budgetId}').classList.toggle('d-none'); this.querySelector('.chevron-icon').classList.toggle('rotated');">
+                                    <div class="d-flex align-items-center gap-2">
+                                        <i class="bi bi-chevron-right chevron-icon transition-transform"></i>
+                                        <span class="fw-medium small text-muted">Ver ${numLineas} partida${numLineas > 1 ? 's' : ''}</span>
+                                    </div>
+                                    <div class="fw-bold text-success">
+                                        $${totalImporte.toLocaleString('es-MX', { minimumFractionDigits: 2 })}
+                                    </div>
+                                </div>
+                                <div id="${budgetId}" class="budget-lines d-none mt-1">
+                                    <table class="table table-sm table-borderless mb-0 small">
+                                        <thead class="text-muted">
                                             <tr>
-                                                <td class="text-muted">${li + 1}</td>
-                                                <td class="text-truncate" style="max-width: 300px;" title="${l.concepto || ''}">${l.concepto || '-'}</td>
-                                                <td class="text-end font-monospace">$${(parseFloat(l.importe) || 0).toLocaleString('es-MX', { minimumFractionDigits: 2 })}</td>
+                                                <th style="width: 20px;">#</th>
+                                                <th>Concepto / Ubicación</th>
+                                                <th class="text-end" style="width: 100px;">Importe</th>
                                             </tr>
-                                        `).join('')}
-                                    </tbody>
-                                    <tfoot class="border-top">
-                                        <tr class="fw-bold">
-                                            <td colspan="2" class="text-end">Total:</td>
-                                            <td class="text-end font-monospace text-success">$${totalImporte.toLocaleString('es-MX', { minimumFractionDigits: 2 })}</td>
-                                        </tr>
-                                    </tfoot>
-                                </table>
+                                        </thead>
+                                        <tbody>
+                                            ${lineas.map((l, li) => `
+                                                <tr>
+                                                    <td class="text-muted">${li + 1}</td>
+                                                    <td class="text-truncate" style="max-width: 300px;" title="${l.concepto || ''}">${l.concepto || '-'}</td>
+                                                    <td class="text-end font-monospace">$${(parseFloat(l.importe) || 0).toLocaleString('es-MX', { minimumFractionDigits: 2 })}</td>
+                                                </tr>
+                                            `).join('')}
+                                        </tbody>
+                                    </table>
+                                </div>
                             </div>
                         `;
                     }
@@ -1022,6 +1045,19 @@
                 dom.btnConfirmar.innerHTML = '<i class="bi bi-hourglass-split me-2"></i>Importando...';
             }
 
+            // BLOQUEAR botón cerrar y modal durante importación
+            const btnCerrar = document.getElementById('btn-cerrar-modal');
+            const modalEl = document.getElementById('modalImportacion');
+            if (btnCerrar) {
+                btnCerrar.disabled = true;
+                btnCerrar.innerHTML = '<i class="bi bi-lock me-1"></i>Importando...';
+            }
+            // Evitar cerrar con click fuera o ESC
+            if (modalEl) {
+                modalEl.dataset.bsBackdrop = 'static';
+                modalEl.dataset.bsKeyboard = 'false';
+            }
+
             let successCount = 0;
             let errorCount = 0;
 
@@ -1073,6 +1109,18 @@
                 } else {
                     dom.btnConfirmar.classList.add('d-none');
                 }
+            }
+
+            // DESBLOQUEAR botón cerrar y convertirlo en "Finalizar"
+            if (btnCerrar) {
+                btnCerrar.disabled = false;
+                btnCerrar.removeAttribute('data-bs-dismiss'); // Quitar dismiss automático
+                btnCerrar.innerHTML = '<i class="bi bi-check2-all me-1"></i>Finalizar';
+                btnCerrar.className = 'btn btn-success rounded-pill px-4';
+                // Al hacer clic, cerrar modal y actualizar tabla
+                btnCerrar.onclick = () => {
+                    cerrarYActualizar();
+                };
             }
 
             // Mostrar resumen con SweetAlert si está disponible, sino alert normal
