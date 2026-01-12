@@ -1171,6 +1171,31 @@ Genera el JSON con estructura \`{header, lineas}\`.
         - El asunto dice "Alcance", "Complemento" o "Corrección" (no "Reemplazo Total").
     - **Reporta en advertencias**: "Actualización parcial: Solo afecta a [ubicación mencionada]".
 
+    ### RF8: Llave Compuesta (Referencia + ComunicadoId = Compartimentos Estancos)
+    - **REGLA DE AISLAMIENTO**: Cada \`ComunicadoId\` (L50, L84, L22, etc.) es un **compartimento estanco**.
+    - **NUNCA** sumes, mezcles o compares importes de un L50 con un L84, aunque compartan la misma Referencia de ajuste (ej. GL098774).
+    - **Llave única de identificación**: \`Referencia + ComunicadoId\` (ej. "GL098774-L50" es distinto de "GL098774-L84").
+    - **Actualiza solo líneas** siempre debe respetar las líneas correspondientes a comunicadoId del documento actual (ej L50, L50A, L50B comparten la misma familia, pero L84 es una familia diferente).
+    - **Regla de Familias**:
+        - L50, L50A, L50B, L50C = misma familia (el sufijo letra indica versión).
+        - L84, L84A = otra familia completamente separada.
+        - **PROHIBIDO** cruzar datos entre familias distintas.
+    - Si procesas L50C, solo puedes modificar líneas de la familia L50, nunca de L84.
+
+    ### RF9: Análisis de Exclusiones y Deducciones Narrativas
+    - **EXPANDE el alcance de la extracción** más allá de las tablas numéricas.
+    - Busca en los párrafos de "Apreciaciones", "Observaciones", "Notas" o correos anexos las siguientes palabras clave:
+        - "no indemnizable", "absorbido", "rechazado", "excluido", "deducido", "no procedente", "no autorizado", "improcedente".
+    - **Si encuentras una exclusión**:
+        1. Identifica el concepto afectado (ej. "camino de acceso").
+        2. Identifica el monto excluido si lo menciona.
+        3. **NO incluyas ese concepto/monto** en las líneas de presupuesto, O
+        4. Si ya está en la tabla, márcalo con importe = 0 y agrega advertencia: "Excluido: [concepto] - [razón]".
+    - **Ejemplos de exclusiones**:
+        - "El camino de acceso no es indemnizable" → Excluir de presupuesto.
+        - "El monto de limpieza será absorbido por la contratista" → No contabilizar.
+        - "Rechazamos el concepto de materiales de importación" → Marcar con 0.
+
     ---
 
     ## SECUENCIA DE EJECUCIÓN OBLIGATORIA (8 PASOS x 7 SUBPASOS)
