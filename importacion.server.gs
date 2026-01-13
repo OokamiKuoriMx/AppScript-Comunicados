@@ -1664,7 +1664,7 @@ function _procesarBatchInterno(loteAgrupado, cache) {
                     monto: doc.header.totalPdf,
                     montoCapturado: null,
                     montoSupervisión: (doc.header.totalPdf || 0) * 0.05,
-                    fecha: new Date(),
+                    fecha: doc.header.fechaDoc || new Date(),
                     _docLineas: doc.lineas,
                     _tipoAccion: doc.header.tipoAccion || null,
                     _ubicacionEspecifica: doc.header.ubicacionEspecifica || null
@@ -1867,7 +1867,7 @@ function _procesarBatchInterno(loteAgrupado, cache) {
                         monto: doc.header.totalPdf,
                         montoCapturado: null,
                         montoSupervisión: (doc.header.totalPdf || 0) * 0.05,
-                        fecha: new Date(),
+                        fecha: doc.header.fechaDoc || new Date(),
                         _docLineas: doc.lineas,
                         _tipoAccion: doc.header.tipoAccion || null,
                         _ubicacionEspecifica: doc.header.ubicacionEspecifica || null

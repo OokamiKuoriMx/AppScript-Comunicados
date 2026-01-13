@@ -1,12 +1,12 @@
 /**
  * ============================================================================
- * SERVICIO DE INTELIGENCIA ARTIFICIAL (Gemini 1.5 Flash)
+ * SERVICIO DE INTELIGENCIA ARTIFICIAL (Gemini 1.5 Flash - Estable)
  * Descripción: Procesa archivos PDF usando OCR y LLM para extracción estructurada.
  * ============================================================================
  */
 
 // Configuración - TIER DE PAGO
-const GEMINI_MODEL = 'gemini-2.0-flash-001';  // Modelo estable para producción (con facturación)
+const GEMINI_MODEL = 'gemini-2.5-flash';  // Modelo estable para producción (con facturación)
 const MAX_RETRIES = 5;                     // Reintentos para errores de validación/parseo
 const MAX_RATE_LIMIT_RETRIES = 3;          // Reintentos para Rate Limit (menos necesarios con pago)
 const BASE_COOLDOWN_MS = 1000;             // 1 segundo entre archivos (tier de pago tiene límites altos)
@@ -24,11 +24,20 @@ const PROMPT_CORE_EXTRACTION = `
 ### PASO 5: Análisis de Presupuestos (Sabueso Geográfico)
 *Objetivo: Extraer montos y asignarles su identidad geográfica correcta.*
 
-* **5.1 Jerarquía de Fuente:**
-    - Prioridad A: Busca declaraciones explícitas en el cuerpo del texto como "estimar un monto preliminar de...".    
-    - Prioridad B: Busca tabla "RESUMEN GENERAL" o "PRESUPUESTO". 
-    - Prioridad C: Si no hay A, busca "HOJA GENERADORA" o "CÉDULA DE CUANTIFICACIÓN".
-    - Prioridad D: Si alguna de las columnas contiene "CONCEPTO" O "UBICACION".
+* **5.1 Estrategia de Fuente Dual (CRÍTICO):**
+    - **NO TE DETENGAS EN EL RESUMEN.** Debes escanear el documento completo.
+    - **FUENTE 1: TABLA RESUMEN (Validación):**
+        - Úsala SOLO para detectar si una categoría completa (Daño Físico o Desazolve) está en **$0.00**.
+        - Si aquí dice $0.00, eso confirma que NO hay cambios para esa categoría en todo el reporte.
+    - **FUENTE 2: TABLA DETALLADA / GENERADORA (Extracción):**
+        - Busca tablas tituladas "Hoja Generadora", "Cédula", "Anexo", "Desglose", "Ubicación Específica", "Localización", "Sitio" o "Tramo".
+        - **PRIORIDADES DE BÚSQUEDA:**
+            - Prioridad A: Declaraciones explícitas en texto: "estimar un monto preliminar de...".
+            - Prioridad B: Tablas con columna "UBICACIÓN" o "CONCEPTO" geográfico.
+            - Prioridad C: "HOJA GENERADORA" o "CÉDULA DE CUANTIFICACIÓN".
+            - Prioridad D: Cualquier tabla con coordenadas (km, GPS) o nombres de tramos.
+        - **ESTA ES LA ÚNICA FUENTE VÁLIDA** para extraer ubicaciones y sus importes.
+        - Si extraes conceptos genéricos como "Preliminares" o "Terracerías", **ESTÁS EN LA TABLA INCORRECTA**. Busca el desglose geográfico.
 
 * **5.2 Mapeo de Columnas:**
     - Identifica columna Infraestructura ("Importe", "Daño Físico", "Total") e identifica columna Desazolve ("Limpieza", "Desazolve").
@@ -41,12 +50,20 @@ const PROMPT_CORE_EXTRACTION = `
     - Ejemplo: "Canal Principal Cuxtepeques" ≠ "Canal Principal Cuxtepeques (Continuación)". Son 2 conceptos separados.
 
 * **5.4 Extracción de DAÑO FÍSICO:**
-    - Extrae SIEMPRE el valor de la columna "Importe daño físico", INCLUSO si es $0.00.
-    - Crea registro "DAÑO FISICO" con la Identidad Geográfica (Paso 5.3) y este importe.
+    - Identifica la columna "Importe daño físico".
+    - **REGLA DE EXISTENCIA:** Solo extrae el valor si la fila corresponde explícitamente a la ubicación (Concepto) que estás analizando.
+    - **MANEJO DE VALOR:**
+        - Si la celda dice "$0.00": Extrae \`0\` (Cero Numérico).
+        - Si la celda está vacía o la ubicación no aparece: No generes extracción para este campo.
+    - Crea registro "DAÑO FISICO" solo si encontraste un valor explícito (incluyendo 0).
 
 * **5.5 Extracción de DESAZOLVES:**
-    - Extrae SIEMPRE el valor de la columna "Importe Remoción/Desazolves", INCLUSO si es $0.00.
-    - Crea registro "DESAZOLVES" con la Identidad Geográfica (Paso 5.3) y este importe.
+    - Identifica la columna "Importe Remoción/Desazolves".
+    - **REGLA DE EXISTENCIA:** Mismo criterio. Solo extrae si la ubicación está presente en la tabla.
+    - **MANEJO DE VALOR:**
+        - Si la celda dice "$0.00": Extrae \`0\`.
+        - Si existe un valor: Extráelo.
+    - Crea registro "DESAZOLVES" solo si encontraste un valor explícito.
 
 * **5.6 Separación de Líneas (Split Multiplicativo):**
     - Si una fila tiene columnas para Daño Físico y Desazolves, **DEBES DUPLICAR** la extracción.
@@ -270,16 +287,28 @@ function procesarPdfIA(payload, optFilename) {
                         // Parsear versión actual para filtrar solo predecesores
                         const versionActual = _parseVersionLocal(payload.comunicadoId);
 
+                        // [FIX] Ordenar batchRelevantes Descendente (Z -> A)
+                        // Para que L30B tenga prioridad sobre L30A, y L30A sobre L30
+                        batchRelevantes.sort((a, b) => {
+                            const vA = _parseVersionLocal(a.header.comunicadoId);
+                            const vB = _parseVersionLocal(b.header.comunicadoId);
+                            return vB.index - vA.index;
+                        });
+
                         for (const reg of batchRelevantes) {
                             const versionReg = _parseVersionLocal(reg.header.comunicadoId);
                             const regFamilia = _extractFamily(reg.header.comunicadoId);
-                            // Solo incluir si es predecesor (misma familia, índice menor)
+                            // Solo considerar predecesores estrictos (misma familia, índice menor)
                             if (regFamilia === familiaActual && versionReg.index < versionActual.index) {
                                 for (const linea of reg.lineas || []) {
                                     if (linea.concepto && linea.concepto !== 'Sin descripción') {
-                                        const key = `${linea.concepto}|${linea.categoria}`;
-                                        if (!expectedLines.some(e => `${e.concepto}|${e.categoria}` === key)) {
+                                        // Normalización clave para comparación robusta
+                                        const key = `${linea.concepto}|${linea.categoria}`.toUpperCase();
+                                        // Acumulación defensiva: Si ya tengo el concepto (de un doc más nuevo), no lo sobrescribo
+                                        if (!expectedLines.some(e => `${e.concepto}|${e.categoria}`.toUpperCase() === key)) {
                                             expectedLines.push({
+                                                // id_bd será null para origen en batch -> FASE 2B asignará ID virtual (100+i)
+                                                id_bd: linea.id_bd || null,
                                                 concepto: linea.concepto,
                                                 categoria: linea.categoria || 'DAÑO FISICO',
                                                 importe_previo: linea.importe || 0,
@@ -290,7 +319,7 @@ function procesarPdfIA(payload, optFilename) {
                                 }
                             }
                         }
-                        console.log(`[${contexto}] expectedLines construido desde BATCH: ${expectedLines.length} líneas`);
+                        console.log(`[${contexto}] expectedLines construido desde BATCH: ${expectedLines.length} líneas acumuladas`);
                     }
                 }
 
@@ -809,6 +838,13 @@ Genera un JSON estricto con la llave raíz \`"header"\`.
                 { inline_data: { mime_type: "application/pdf", data: base64Content } }
             ]
         }],
+        // FIX: Desactivar filtros de seguridad para contenido de siniestros (huracanes, daños, etc.)
+        safetySettings: [
+            { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
+            { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
+            { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
+            { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
+        ],
         generationConfig: { response_mime_type: "application/json" }
     };
 
@@ -835,7 +871,12 @@ Genera un JSON estricto con la llave raíz \`"header"\`.
         }
 
         const rawContent = respJson.candidates[0]?.content?.parts?.[0]?.text || '';
-        const cleanJson = rawContent.replace(/```json/g, '').replace(/```/g, '').trim();
+        // FIX: Extracción robusta de JSON usando regex para ignorar texto extra
+        const jsonMatch = rawContent.match(/\{[\s\S]*\}/);
+        if (!jsonMatch) {
+            throw new Error('No se encontró un objeto JSON válido en la respuesta de Gemini (Fase 1).');
+        }
+        const cleanJson = jsonMatch[0];
         const result = JSON.parse(cleanJson);
 
         // Extraer campos para compatibilidad con el flujo existente
@@ -934,6 +975,7 @@ function _consultarContextoBD(refAjustador, comunicadoId, cache) {
             ) || [];
 
             // Construir lineas con formato de salida AI
+            // [FIX CRÍTICO 1] Incluir id_bd real para actualizaciones precisas
             const lineas = lineasBD.map(l => {
                 const desc = cache.descripcionLineas?.find(d => String(d.id) === String(l.idLinea)) || {};
                 let catFinal = String(l.categoria || 'DAÑO FISICO').toUpperCase();
@@ -941,6 +983,7 @@ function _consultarContextoBD(refAjustador, comunicadoId, cache) {
                 if (catFinal === '2') catFinal = 'DESAZOLVES';
 
                 return {
+                    id_bd: l.idLinea, // <-- ID REAL para actualizaciones al registro correcto
                     concepto: desc.descripcion || 'Sin descripción',
                     categoria: catFinal,
                     importe: parseFloat(l.importe || 0)
@@ -970,13 +1013,12 @@ function _consultarContextoBD(refAjustador, comunicadoId, cache) {
             registrosContexto.push({ header, lineas });
         }
 
-        // 5. Ordenar por cercanía de versión (predecesor más cercano primero)
+        // 5. [FIX CRÍTICO 2] ORDENAMIENTO DESCENDENTE (Del más nuevo al más viejo)
+        // Esto asegura que si L30B y L30A tienen el mismo concepto, nos quedamos con el de L30B
         registrosContexto.sort((a, b) => {
-            const idA = String(a.header.comunicadoId).toUpperCase();
-            const idB = String(b.header.comunicadoId).toUpperCase();
-            const indexA = comunicadosRelevantes.indexOf(idA);
-            const indexB = comunicadosRelevantes.indexOf(idB);
-            return indexA - indexB;
+            const vA = _parseVersionLocal(a.header.comunicadoId).index;
+            const vB = _parseVersionLocal(b.header.comunicadoId).index;
+            return vB - vA; // Descendente: C(3) antes que B(2) antes que A(1)
         });
 
         // 6. Excluir el comunicadoId actual si está presente (solo queremos predecesores)
@@ -984,16 +1026,22 @@ function _consultarContextoBD(refAjustador, comunicadoId, cache) {
             String(r.header.comunicadoId).toUpperCase() !== String(comunicadoId).toUpperCase()
         );
 
-        // 7. NUEVO: Construir lista plana de conceptos esperados para Schema Injection
-        // Esta lista se inyecta al prompt para que la IA busque importes ESPECÍFICOS
+        // 7. [FIX CRÍTICO 3] CONSTRUCCIÓN ACUMULATIVA DE LÍNEAS ESPERADAS
+        // Al recorrer del más nuevo al más viejo, "llenamos" los huecos:
+        // 1. Entra todo lo de L30B
+        // 2. Entra lo de L30A que NO estaba en L30B
+        // 3. Entra lo de L30 que NO estaba en L30A ni L30B
         const expectedLines = [];
         for (const reg of resultado) {
             for (const linea of reg.lineas || []) {
                 if (linea.concepto && linea.concepto !== 'Sin descripción') {
-                    // Evitar duplicados por concepto+categoria
-                    const key = `${linea.concepto}|${linea.categoria}`;
-                    if (!expectedLines.some(e => `${e.concepto}|${e.categoria}` === key)) {
+                    // Normalización clave para comparación robusta
+                    const key = `${linea.concepto}|${linea.categoria}`.toUpperCase();
+
+                    // Solo agregamos si NO existe ya (preservamos el valor más reciente)
+                    if (!expectedLines.some(e => `${e.concepto}|${e.categoria}`.toUpperCase() === key)) {
                         expectedLines.push({
+                            id_bd: linea.id_bd, // <-- Propagamos el ID real
                             concepto: linea.concepto,
                             categoria: linea.categoria || 'DAÑO FISICO',
                             importe_previo: linea.importe || 0,
@@ -1716,6 +1764,7 @@ ${JSON.stringify(expectedLines.map((l, i) => ({
 | ID existe Y monto cambió | **ACTUALIZAR** | nuevo monto |
 | ID existe Y NO aparece en PDF | **MANTENER** | \`null\` |
 | "Cancelado", "Improcedente", "No autorizado" | **CANCELAR** | \`0\` |
+| **Valor $0.00 en tabla (sin nota de cancelación)** | **MANTENER** | \`null\` |
 | Concepto NUEVO (no en contexto) | **CREAR** | monto del PDF |
 | "Se solicita bitácora", "Pendiente de acreditar", "Sujeto a revisión" | **MANTENER** | \`null\` |
 | "Se confirma existencia de material" pero "falta soporte" | **MANTENER** | \`null\` |
@@ -1756,6 +1805,51 @@ ${JSON.stringify(expectedLines.map((l, i) => ({
 * **6.5 Resolución de Conflictos:** Si hay dos montos (resumen vs detalle), el Detalle manda.
 * **6.6 No Inventar:** Si no estás seguro de un concepto, NO lo incluyas.
 * **6.7 Verificar IDs:** Devuelve el \`id_bd\` correcto del JSON de entrada.
+
+* **6.8 REGLA DE JERARQUÍA DE TABLAS (Resumen vs Detalle):**
+    - **CONFLICTO:** Si la Tabla Resumen dice "Daño Físico: $0.00" pero la Tabla Detallada muestra materiales, **EL RESUMEN MANDA SOBRE EL TOTAL**.
+      - Significa que esos materiales ya no se cobran o son informativos.
+      - Acción: **MANTENER** con \`null\` (o 0 si dice Cancelado).
+    
+    - **EXTRACCIÓN DE UBICACIONES:**
+      - **NUNCA** extraigas líneas de la Tabla Resumen (ej. no quiero una línea llamada "Total" o "Suma").
+      - Extrae líneas SOLO de la Tabla Detallada donde aparezcan las ubicaciones (ej. "Río Marabasco km 8+400").
+
+* **6.9 REGLA MAESTRA DE ALCANCE (SCOPE):**
+    *Objetivo: Diferenciar qué se actualiza y qué se mantiene intacto.*
+    
+    - **Paso A: Identificar Ubicación Activa:**
+      - ¿Qué ubicación menciona el encabezado o el detalle? (Ej. "Tramo El Rincón").
+
+    - **Paso B: Aplicar Lógica Diferencial:**
+      | Situación | Acción JSON | Importe |
+      | :--- | :--- | :--- |
+      | Ubicación Activa + Tabla Resumen dice $0.00 | **ACTUALIZAR** | \`0\` (Cero Real confirmado por Resumen) |
+      | Ubicación Activa + Tabla Resumen dice $X | **ACTUALIZAR** | \`X\` (Monto del Detalle validado) |
+      | Ubicación **NO** mencionada en este PDF | **MANTENER** | \`null\` (Protección histórica) |
+
+* **6.10 REGLA DE CONFIRMACIÓN CONTEXTUAL (Suma Coincidente):**
+    *Objetivo: Detectar comunicados informativos donde no hay cambios reales.*
+    
+    - **Paso A: Detección de Confirmación:**
+      - Si el PDF menciona un monto total para una ubicación (ej. "Río Tamaulipas: $2,000,000").
+      - Y en las PARTIDAS VIGENTES esa ubicación tiene líneas que SUMAN ese monto.
+        - Ejemplo: Río Tamaulipas DAÑO FÍSICO = $1,000,000 + Río Tamaulipas DESAZOLVES = $1,000,000 = $2,000,000.
+      - **INTERPRETACIÓN:** El comunicado es INFORMATIVO. No hay cambios individuales.
+
+    - **Paso B: Acción para Confirmación:**
+      | Situación | Acción JSON | Importe |
+      | :--- | :--- | :--- |
+      | Total PDF = Suma de líneas existentes | **MANTENER** TODAS las líneas | \`null\` (copiar del anterior) |
+      | Total PDF ≠ Suma de líneas existentes | Aplicar lógica normal (6.9) | según corresponda |
+
+    - **EJEMPLO:**
+      - BD tiene: "Río Tamaulipas" con Daño=$1M, Desazolve=$1M (Total=$2M).
+      - PDF L05B dice: "Se confirma importe de $2,000,000 para Río Tamaulipas".
+      - **Salida Correcta (INFORMATIVO):**
+        1. Río Tamaulipas (Daño Físico): MANTENER → null
+        2. Río Tamaulipas (Desazolves): MANTENER → null
+      - El sistema heredará automáticamente $1M y $1M del L05A.
 
 ### PASO 7: Normalización
 * **7.1 Montos:** Sin signos de peso, sin comas. Formato numérico.
@@ -1903,6 +1997,13 @@ REVISA TUS CÁLCULOS Y EL FORMATO JSON.`;
                 { text: `Analiza el documento PDF adjunto (${filename}) y extrae los datos según el formato especificado.` }
             ]
         }],
+        // FIX: Desactivar filtros de seguridad para contenido de siniestros (huracanes, daños, destrucción, colapso, etc.)
+        safetySettings: [
+            { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
+            { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
+            { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
+            { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
+        ],
         generationConfig: {
             response_mime_type: "application/json"
         }
@@ -1930,6 +2031,18 @@ REVISA TUS CÁLCULOS Y EL FORMATO JSON.`;
             try {
                 const respJson = JSON.parse(text);
 
+                // =====================================================================
+                // LOG DE CONSUMO DE TOKENS (Prompt + PDF + Contexto BD)
+                // =====================================================================
+                if (respJson.usageMetadata) {
+                    const usage = respJson.usageMetadata;
+                    console.log(`[📊 TOKENS] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+                    console.log(`[📊 TOKENS] 📥 Prompt (Sistema + PDF + Contexto): ${usage.promptTokenCount || 'N/A'} tokens`);
+                    console.log(`[📊 TOKENS] 📤 Respuesta IA: ${usage.candidatesTokenCount || 'N/A'} tokens`);
+                    console.log(`[📊 TOKENS] 📊 TOTAL: ${usage.totalTokenCount || 'N/A'} tokens`);
+                    console.log(`[📊 TOKENS] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+                }
+
                 // Verificar si hay candidatos válidos
                 if (!respJson.candidates || respJson.candidates.length === 0) {
                     console.error('[Gemini API] No hay candidatos en la respuesta:', text);
@@ -1952,8 +2065,12 @@ REVISA TUS CÁLCULOS Y EL FORMATO JSON.`;
                 const rawContent = candidate.content.parts[0].text;
                 console.log(`[Gemini API] Respuesta recibida: ${rawContent.substring(0, 200)}...`);
 
-                // Limpieza de Markdown si la IA lo incluye
-                let cleanJson = rawContent.replace(/```json/g, '').replace(/```/g, '').trim();
+                // FIX: Extracción robusta de JSON usando regex para ignorar texto extra
+                const jsonMatch = rawContent.match(/\{[\s\S]*\}/);
+                if (!jsonMatch) {
+                    throw new Error('No se encontró un objeto JSON válido en la respuesta de Gemini.');
+                }
+                const cleanJson = jsonMatch[0];
                 const parsedResult = JSON.parse(cleanJson);
 
                 // COMPATIBILIDAD (v6.3): Mapear refAjustador -> refCta para el resto del sistema
