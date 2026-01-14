@@ -252,10 +252,42 @@
 
                     console.log('[DEBUG] Lineas encontradas:', numLineas, lineas);
 
+                    // ALERTAS: Generar HTML de alertas del backend (SIEMPRE, incluso con 0 líneas)
+                    let alertasHtml = '';
+                    if (res.alertas && res.alertas.length > 0) {
+                        alertasHtml = res.alertas.map(alerta => `
+                            <div class="alert alert-${alerta.tipo} alert-dismissible py-1 px-2 mb-1 small fade show" role="alert">
+                                <i class="bi ${alerta.icono || 'bi-info-circle'} me-1"></i>
+                                ${alerta.mensaje}
+                                <button type="button" class="btn-close btn-close-sm py-1" data-bs-dismiss="alert" aria-label="Close" style="padding: 0.5rem;"></button>
+                            </div>
+                        `).join('');
+                    }
+
+
                     // Generar tabla de líneas de presupuesto (COLAPSABLE con total visible)
                     let lineasHtml = '';
                     if (numLineas > 0) {
                         const budgetId = `budget-collapse-${index}`;
+
+                        // Helper para determinar estilo de fila según acción
+                        const getRowStyle = (linea) => {
+                            const accion = (linea.accion || '').toUpperCase();
+                            const esPreservado = linea._preservadoDeInformativo === true;
+
+                            if (esPreservado || accion === 'PRESERVADO') {
+                                return { badgeClass: 'bg-warning text-dark', rowClass: 'table-warning', label: 'PRESERVADO' };
+                            } else if (accion === 'CREAR') {
+                                return { badgeClass: 'bg-success', rowClass: 'table-success', label: 'CREAR' };
+                            } else if (accion === 'ACTUALIZAR') {
+                                return { badgeClass: 'bg-primary', rowClass: 'table-info', label: 'ACTUALIZAR' };
+                            } else if (accion === 'CANCELAR') {
+                                return { badgeClass: 'bg-danger', rowClass: 'table-danger text-decoration-line-through', label: 'CANCELAR' };
+                            } else {
+                                return { badgeClass: 'bg-secondary', rowClass: 'table-light text-muted', label: 'MANTENER' };
+                            }
+                        };
+
                         lineasHtml = `
                             <div class="budget-section mt-2">
                                 <div class="budget-header d-flex justify-content-between align-items-center p-2 rounded" 
@@ -274,18 +306,22 @@
                                         <thead class="text-muted">
                                             <tr>
                                                 <th style="width: 20px;">#</th>
+                                                <th style="width: 80px;">Acción</th>
                                                 <th>Concepto / Ubicación</th>
                                                 <th class="text-end" style="width: 100px;">Importe</th>
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            ${lineas.map((l, li) => `
-                                                <tr>
+                                            ${lineas.map((l, li) => {
+                            const style = getRowStyle(l);
+                            return `
+                                                <tr class="${style.rowClass}">
                                                     <td class="text-muted">${li + 1}</td>
-                                                    <td class="text-truncate" style="max-width: 300px;" title="${l.concepto || ''}">${l.concepto || '-'}</td>
+                                                    <td><span class="badge ${style.badgeClass}" style="font-size: 0.65rem;">${style.label}</span></td>
+                                                    <td class="text-truncate" style="max-width: 250px;" title="${l.concepto || ''}">${l.concepto || '-'}</td>
                                                     <td class="text-end font-monospace">$${(parseFloat(l.importe) || 0).toLocaleString('es-MX', { minimumFractionDigits: 2 })}</td>
                                                 </tr>
-                                            `).join('')}
+                                            `}).join('')}
                                         </tbody>
                                     </table>
                                 </div>
@@ -293,8 +329,10 @@
                         `;
                     }
 
+
                     extractedDataHtml = `
                         <div class="queue-card-data">
+                            ${alertasHtml}
                             <div class="d-flex flex-wrap gap-3 small mb-2">
                                 <div><span class="text-muted">Ref:</span> <strong>${res.ref || '-'}</strong></div>
                                 <div><span class="text-muted">Comunicado:</span> <strong>${res.comunicado || '-'}</strong></div>
@@ -307,10 +345,9 @@
                             if (status === 'OMITIDO') {
                                 return `<span class="badge bg-secondary"><i class="bi bi-slash-circle me-1"></i>OMITIDO - ${res.motivo || 'Ya existe'}</span>`;
                             } else if (status === 'REEMPLAZAR') {
-                                // Extraer los cambios del motivo para mostrarlos
                                 const cambiosTexto = res.motivo?.replace('Actualización disponible: ', '') || 'Cambios detectados';
                                 return `<span class="badge bg-info text-dark"><i class="bi bi-arrow-repeat me-1"></i>Actualización disponible</span>
-                                        <span class="text-muted small ms-2"><i class="bi bi-pencil-square me-1"></i>${cambiosTexto}</span>`;
+                                            <span class="text-muted small ms-2"><i class="bi bi-pencil-square me-1"></i>${cambiosTexto}</span>`;
                             } else if (!res.esValido) {
                                 return `<span class="badge bg-danger"><i class="bi bi-x-circle me-1"></i>${res.motivo || 'Inválido'}</span>`;
                             } else if (status === 'NUEVO' || status === 'ACTUALIZACION' || status === 'ACTUALIZACION_BD' || status === 'ACTUALIZACION_LOTE') {
@@ -725,7 +762,7 @@
                         conceptosPorRef.set(refCta, conceptosDB);
                     }
                 } catch (dbErr) {
-                    console.warn(`[Batch] No se pudieron cargar conceptos de BD para ${refCta}:`, dbErr);
+                    console.warn(`[Batch] No se pudieron cargar conceptos de BD para ${refCta}: `, dbErr);
                 }
             }
 
@@ -798,7 +835,7 @@
 
             for (let i = 0; i < total; i++) {
                 const file = files[i];
-                const msg = `🤖 IA Analizando (${i + 1}/${total}): ${file.name}`;
+                const msg = `🤖 IA Analizando(${i + 1}/ ${total}): ${file.name} `;
                 dom.loaderMsg.textContent = msg;
 
                 try {
@@ -837,11 +874,11 @@
                                 console.log(`[Batch] ${file.name}: Cargados ${conceptosDB.length} conceptos desde BD`);
                             }
                         } catch (dbErr) {
-                            console.warn(`[Batch] No se pudieron cargar conceptos de BD para ${refCta}:`, dbErr);
+                            console.warn(`[Batch] No se pudieron cargar conceptos de BD para ${refCta}: `, dbErr);
                         }
                     }
 
-                    console.log(`[Batch] ${file.name}: refCta=${refCta}, comIdPre=${comIdPre}, conceptos=${existingConcepts.length}`);
+                    console.log(`[Batch] ${file.name}: refCta = ${refCta}, comIdPre = ${comIdPre}, conceptos = ${existingConcepts.length} `);
 
                     // 3. Enviar a Backend (IA + Extracción) con conceptos existentes
                     // También pasar resultados ya procesados para carry-forward de registros relacionados
@@ -875,7 +912,7 @@
                             const currentConcepts = conceptosPorRef.get(refCta) || [];
                             const newConcepts = [...new Set([...currentConcepts, ...resIA.extractedConcepts])];
                             conceptosPorRef.set(refCta, newConcepts);
-                            console.log(`[Batch] ${file.name}: Acumulados ${newConcepts.length} conceptos para ${refCta}`);
+                            console.log(`[Batch] ${file.name}: Acumulados ${newConcepts.length} conceptos para ${refCta} `);
                         }
 
                         // 5. Analizar Datos vs DB (Previsualización)
@@ -967,7 +1004,7 @@
                 return vA.index - vB.index;
             });
 
-            console.log('[Batch] Orden final:', RESULTADOS_BATCH.map(r => `${r.ref}-${r.comunicado} (${r.fecha})`).join(', '));
+            console.log('[Batch] Orden final:', RESULTADOS_BATCH.map(r => `${r.ref} -${r.comunicado} (${r.fecha})`).join(', '));
 
             // Construir estructura compatible con _renderResultados
             const reportData = {
@@ -1017,7 +1054,7 @@
 
                 if (!modalEl) {
                     // Fallback al confirm nativo si el modal no existe
-                    resolve(confirm(`¿Importar ${count} comunicado(s)?`));
+                    resolve(confirm(`¿Importar ${count} comunicado(s) ? `));
                     return;
                 }
 
@@ -1071,7 +1108,7 @@
 
                 if (!modalEl) {
                     // Fallback al alert nativo si el modal no existe
-                    alert(`Importación completada.\n\n✓ Éxitos: ${successCount}\n✗ Errores: ${errorCount}`);
+                    alert(`Importación completada.\n\n✓ Éxitos: ${successCount} \n✗ Errores: ${errorCount} `);
                     resolve();
                     return;
                 }
@@ -1276,7 +1313,7 @@
                 try {
                     const payload = item.resultado.rawPayload;
                     if (!payload) {
-                        console.error(`[Import] Sin rawPayload para ${item.name}`);
+                        console.error(`[Import] Sin rawPayload para ${item.name} `);
                         errorCount++;
                         item.importError = 'Sin datos de importación';
                         _updateQueueItemStatus(idx, 'import-error', 'Sin datos');
@@ -1297,7 +1334,7 @@
                         _updateQueueItemStatus(idx, 'import-error', item.importError);
                     }
                 } catch (err) {
-                    console.error(`[Import] Error:`, err);
+                    console.error(`[Import] Error: `, err);
                     errorCount++;
                     item.importError = err.message;
                     _updateQueueItemStatus(idx, 'import-error', err.message);
@@ -1311,7 +1348,7 @@
                     f.status === 'success' && f.resultado?.esValido && f.selected && !f.imported
                 ).length;
                 if (validCount > 0) {
-                    dom.btnConfirmar.innerHTML = `<i class="bi bi-cloud-upload me-2"></i>Importar ${validCount} Comunicado${validCount > 1 ? 's' : ''}`;
+                    dom.btnConfirmar.innerHTML = `< i class="bi bi-cloud-upload me-2" ></i > Importar ${validCount} Comunicado${validCount > 1 ? 's' : ''} `;
                 } else {
                     dom.btnConfirmar.classList.add('d-none');
                 }
@@ -1363,11 +1400,11 @@
             if (importStatusEl) {
                 if (status === 'importing') {
                     importStatusEl.innerHTML = `
-                        <span class="badge bg-primary">
-                            <span class="spinner-border spinner-border-sm me-1" style="width: 0.8rem; height: 0.8rem;"></span>
+        < span class="badge bg-primary" >
+            <span class="spinner-border spinner-border-sm me-1" style="width: 0.8rem; height: 0.8rem;"></span>
                             Importando...
-                        </span>
-                    `;
+                        </span >
+        `;
                     card.style.opacity = '0.7';
                 } else if (status === 'imported') {
                     importStatusEl.innerHTML = '<span class="badge bg-success"><i class="bi bi-check-lg me-1"></i>Importado ✓</span>';
@@ -1413,7 +1450,7 @@
                     }, 1350);
 
                 } else if (status === 'import-error') {
-                    importStatusEl.innerHTML = `<span class="badge bg-danger" title="${message}"><i class="bi bi-x-lg me-1"></i>Error</span>`;
+                    importStatusEl.innerHTML = `< span class="badge bg-danger" title = "${message}" > <i class="bi bi-x-lg me-1"></i>Error</span > `;
                     card.style.opacity = '1';
                     card.classList.add('border-danger');
                 }
@@ -1559,7 +1596,7 @@
 
             setStage(4); // Switch to Progress View
 
-            // if (!confirm(`Se importarán ${toImportIndices.length} registros uno por uno. ¿Continuar?`)) return;
+            // if (!confirm(`Se importarán ${ toImportIndices.length } registros uno por uno. ¿Continuar ? `)) return;
 
             dom.btnConfirmar.disabled = true;
             let successCount = 0;
@@ -1585,7 +1622,7 @@
                     const res = await serverCall('importarUnico', payloadStr);
 
                     if (res.success) {
-                        console.log(`Row ${idx} Logs:`, res.debugLogs);
+                        console.log(`Row ${idx} Logs: `, res.debugLogs);
                         _updateRowStatus(idx, 'success', res.message);
                         successCount++;
                     } else {
@@ -1609,10 +1646,10 @@
                 Swal.fire({
                     icon: errorCount === 0 ? 'success' : 'warning',
                     title: 'Proceso Finalizado',
-                    text: `Importados: ${successCount}\nFallidos: ${errorCount}`,
+                    text: `Importados: ${ successCount } \nFallidos: ${ errorCount } `,
                 });
             } else {
-                alert(`Proceso Finalizado.\nImportados: ${successCount}\nFallidos: ${errorCount}`);
+                alert(`Proceso Finalizado.\nImportados: ${ successCount } \nFallidos: ${ errorCount } `);
             }
             */
 
@@ -1624,23 +1661,23 @@
         };
 
         const _updateRowStatus = (index, type, msg) => {
-            const el = document.getElementById(`row-status-${index}`);
+            const el = document.getElementById(`row - status - ${index} `);
             if (!el) return;
 
             if (type === 'loading') {
-                el.innerHTML = `<div class="spinner-border spinner-border-sm text-primary" role="status"></div>`;
+                el.innerHTML = `< div class="spinner-border spinner-border-sm text-primary" role = "status" ></div > `;
             } else if (type === 'success') {
-                el.innerHTML = `<i class="bi bi-check-circle-fill text-success fs-5" title="${msg || 'Éxito'}"></i>`;
+                el.innerHTML = `< i class="bi bi-check-circle-fill text-success fs-5" title = "${msg || 'Éxito'}" ></i > `;
             } else if (type === 'error') {
-                el.innerHTML = `<i class="bi bi-x-circle-fill text-danger fs-5" title="${msg || 'Error'}"></i>
-                                <div class="text-danger small mt-1" style="font-size: 0.7em; line-height: 1.1;">${msg || 'Error'}</div>`;
+                el.innerHTML = `< i class="bi bi-x-circle-fill text-danger fs-5" title = "${msg || 'Error'}" ></i >
+        <div class="text-danger small mt-1" style="font-size: 0.7em; line-height: 1.1;">${msg || 'Error'}</div>`;
             }
         };
 
         // Función global para expandir/contraer filas de detalle
         globalThis._toggleRowDetail = (rowIndex) => {
-            const detailRow = document.getElementById(`row-${rowIndex}-detail`);
-            const chevron = document.getElementById(`row-${rowIndex}-chevron`);
+            const detailRow = document.getElementById(`row - ${rowIndex} -detail`);
+            const chevron = document.getElementById(`row - ${rowIndex} -chevron`);
 
             if (detailRow) {
                 const isHidden = detailRow.classList.contains('d-none');
@@ -1680,18 +1717,18 @@
             const resumen = data.resumen || {};
 
             dom.previewSummary.innerHTML = `
-                <strong>Total Filas:</strong> ${resumen.total || 0} <span class="mx-2">|</span>
+        < strong > Total Filas:</strong > ${resumen.total || 0} <span class="mx-2">|</span>
                 <strong class="text-success">A Importar:</strong> ${resumen.validos || 0} <span class="mx-2">|</span>
                 <strong class="text-secondary">Omitidos:</strong> ${resumen.omitidos || 0} <span class="mx-2">|</span>
                 <strong class="text-danger">Errores:</strong> ${resumen.errores || 0}
-            `;
+    `;
 
             // Mostrar botón Confirmar solo si hay válidos > 0
             if (resumen.validos > 0) {
                 dom.btnConfirmar.classList.remove('d-none');
                 dom.btnConfirmar.disabled = false;
                 dom.btnConfirmar.onclick = confirmar;
-                dom.btnConfirmar.innerHTML = `<i class="bi bi-cloud-upload me-2"></i>Confirmar Importación (${resumen.validos})`;
+                dom.btnConfirmar.innerHTML = `< i class="bi bi-cloud-upload me-2" ></i > Confirmar Importación(${resumen.validos})`;
             } else {
                 dom.btnConfirmar.classList.add('d-none');
             }
@@ -1699,7 +1736,7 @@
             // Reporte de errores
             if (resumen.errores > 0) {
                 dom.errorReportContainer.classList.remove('d-none');
-                dom.errorReportMsg.innerHTML = `<i class="bi bi-exclamation-triangle-fill me-2"></i>Atención: <strong>${resumen.errores}</strong> registros tienen errores y NO se procesarán.`;
+                dom.errorReportMsg.innerHTML = `< i class="bi bi-exclamation-triangle-fill me-2" ></i > Atención: <strong>${resumen.errores}</strong> registros tienen errores y NO se procesarán.`;
                 dom.btnDownloadErrors.classList.add('d-none');
             } else {
                 dom.errorReportContainer.classList.add('d-none');
@@ -1720,7 +1757,7 @@
                     badgeText = '<i class="bi bi-check-circle me-1"></i>VÁLIDO';
                 }
 
-                const badgeEstado = `<span class="badge ${badgeClass}">${badgeText}</span>`;
+                const badgeEstado = `< span class="badge ${badgeClass}" > ${badgeText}</span > `;
 
                 // Analisis de entidades nuevas
                 const analisisBadges = [];
@@ -1746,7 +1783,7 @@
                         analisisBadges.push('<span class="badge bg-primary ms-1"><i class="bi bi-pencil-square me-1"></i>Actualización Detectada</span>');
                         if (d.analisis.comunicado.cambios && d.analisis.comunicado.cambios.length > 0) {
                             d.analisis.comunicado.cambios.forEach(change => {
-                                analisisBadges.push(`<span class="badge bg-light text-dark border ms-1"><small>${change}</small></span>`);
+                                analisisBadges.push(`< span class="badge bg-light text-dark border ms-1" > <small>${change}</small></span > `);
                             });
                         }
                     } else if (d.analisis.comunicado?.status === 'OMITIDO') {
@@ -1765,47 +1802,70 @@
                 // Generar HTML de la fila expandida con las líneas
                 let expandedRowHtml = '';
                 if (hasLineas) {
-                    const lineasHtml = lineas.map((l, li) => `
-                        <tr class="table-light">
+                    // Helper para determinar estilo de fila según acción
+                    const getRowStyle = (linea) => {
+                        const accion = (linea.accion || '').toUpperCase();
+                        const esPreservado = linea._preservadoDeInformativo === true;
+
+                        if (esPreservado || accion === 'PRESERVADO') {
+                            return { badgeClass: 'bg-warning text-dark', rowClass: 'table-warning', label: 'PRESERVADO' };
+                        } else if (accion === 'CREAR') {
+                            return { badgeClass: 'bg-success', rowClass: 'table-success', label: 'CREAR' };
+                        } else if (accion === 'ACTUALIZAR') {
+                            return { badgeClass: 'bg-primary', rowClass: 'table-info', label: 'ACTUALIZAR' };
+                        } else if (accion === 'CANCELAR') {
+                            return { badgeClass: 'bg-danger', rowClass: 'table-danger text-decoration-line-through', label: 'CANCELAR' };
+                        } else {
+                            // MANTENER o sin acción
+                            return { badgeClass: 'bg-secondary', rowClass: 'table-light text-muted', label: 'MANTENER' };
+                        }
+                    };
+
+                    const lineasHtml = lineas.map((l, li) => {
+                        const style = getRowStyle(l);
+                        return `
+        < tr class="${style.rowClass}" >
                             <td class="ps-4 text-muted small">${li + 1}</td>
-                            <td class="small" colspan="2">${l.concepto || l.descripcion || 'Sin descripción'}</td>
+                            <td class="small"><span class="badge ${style.badgeClass}" style="font-size: 0.6rem;">${style.label}</span></td>
+                            <td class="small">${l.concepto || l.descripcion || 'Sin descripción'}</td>
                             <td class="small text-center">${l.categoria || '-'}</td>
                             <td class="small text-end font-monospace fw-semibold">$${parseFloat(l.importe || 0).toLocaleString('es-MX', { minimumFractionDigits: 2 })}</td>
                             <td colspan="3"></td>
-                        </tr>
-                    `).join('');
+                        </tr >
+        `}).join('');
 
                     expandedRowHtml = `
-                        <tr id="row-${i}-detail" class="d-none">
-                            <td colspan="9" class="p-0">
-                                <div class="bg-light border-top border-bottom">
-                                    <table class="table table-sm mb-0 ms-4" style="width: calc(100% - 2rem);">
-                                        <thead>
-                                            <tr class="text-muted" style="font-size: 0.75rem;">
-                                                <th style="width: 40px;">#</th>
-                                                <th colspan="2">Concepto / Ubicación</th>
-                                                <th class="text-center">Categoría</th>
-                                                <th class="text-end">Importe</th>
-                                                <th colspan="3"></th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            ${lineasHtml}
-                                            <tr class="fw-bold bg-white">
-                                                <td colspan="4" class="text-end">Total:</td>
-                                                <td class="text-end font-monospace text-primary">$${importePartidas.toLocaleString('es-MX', { minimumFractionDigits: 2 })}</td>
-                                                <td colspan="3"></td>
-                                            </tr>
-                                        </tbody>
-                                    </table>
-                                </div>
-                            </td>
-                        </tr>
-                    `;
+        < tr id = "row-${i}-detail" class="d-none" >
+            <td colspan="10" class="p-0">
+                <div class="bg-light border-top border-bottom">
+                    <table class="table table-sm mb-0 ms-4" style="width: calc(100% - 2rem);">
+                        <thead>
+                            <tr class="text-muted" style="font-size: 0.75rem;">
+                                <th style="width: 40px;">#</th>
+                                <th style="width: 80px;">Acción</th>
+                                <th>Concepto / Ubicación</th>
+                                <th class="text-center">Categoría</th>
+                                <th class="text-end">Importe</th>
+                                <th colspan="3"></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${lineasHtml}
+                            <tr class="fw-bold bg-white">
+                                <td colspan="4" class="text-end">Total:</td>
+                                <td class="text-end font-monospace text-primary">$${importePartidas.toLocaleString('es-MX', { minimumFractionDigits: 2 })}</td>
+                                <td colspan="3"></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </td>
+                        </tr >
+        `;
                 }
 
                 return `
-                    <tr id="row-${i}" class="${hasLineas ? 'cursor-pointer' : ''}" ${hasLineas ? `onclick="_toggleRowDetail(${i})"` : ''}>
+        < tr id = "row-${i}" class="${hasLineas ? 'cursor-pointer' : ''}" ${hasLineas ? `onclick="_toggleRowDetail(${i})"` : ''}>
                         <td class="text-center">
                             ${hasLineas ? `<i class="bi bi-chevron-right text-muted" id="row-${i}-chevron"></i>` : ''}
                         </td>
@@ -1845,9 +1905,9 @@
                                 </button>
                             </div>
                         </td>
-                    </tr>
-                    ${expandedRowHtml}
-                `;
+                    </tr >
+        ${expandedRowHtml}
+    `;
             }).join('');
 
             dom.previewBody.innerHTML = html;
@@ -2060,13 +2120,13 @@
              */
             function _renderSpinnerInicial(container) {
                 container.innerHTML = `
-                <section class="card shadow-sm">
-                    <div class="card-body text-center p-5">
-                        <div class="spinner-border text-primary" role="status"></div>
-                        <p class="mt-2">Cargando vista...</p>
-                    </div>
-                </section>
-            `;
+        < section class="card shadow-sm" >
+            <div class="card-body text-center p-5">
+                <div class="spinner-border text-primary" role="status"></div>
+                <p class="mt-2">Cargando vista...</p>
+            </div>
+                </section >
+        `;
             }
 
             /**
@@ -2440,7 +2500,7 @@
                 const existe = valoresUnicos.includes(valor.toLowerCase());
 
                 if (tipo === 'siniestro' || tipo === 'distrito') {
-                    console.log(`🔍 Verificando ${tipo}:`, {
+                    console.log(`🔍 Verificando ${tipo}: `, {
                         valor,
                         existe,
                         valoresUnicos: valoresUnicos.slice(0, 5),
@@ -2599,7 +2659,7 @@
 
                     if (response && response.debugLogs) {
                         console.log('--- LOGS DEL SERVIDOR (fetchComunicadoCatalogs) ---');
-                        response.debugLogs.forEach(log => console.log(`SERVER: ${log}`));
+                        response.debugLogs.forEach(log => console.log(`SERVER: ${log} `));
                         console.log('-------------------------------------------------');
                     }
 
@@ -2607,7 +2667,7 @@
                     if (response && (response.estados || response.distritosRiego)) {
                         state.catalogs = response;
                         console.log('Catálogos asignados al estado:', state.catalogs);
-                        console.log(`Estados cargados: ${state.catalogs.estados ? state.catalogs.estados.length : 0}`);
+                        console.log(`Estados cargados: ${state.catalogs.estados ? state.catalogs.estados.length : 0} `);
 
                         // Intentar poblar inmediatamente si el DOM está listo
                         _poblarSelectEstados();
@@ -2662,7 +2722,7 @@
             }
 
             function _poblarCombobox(tipo, catalogo, campoNombre) {
-                const dropdownList = document.getElementById(`dropdown-${tipo}-list`);
+                const dropdownList = document.getElementById(`dropdown - ${tipo} -list`);
                 if (!dropdownList || !catalogo) return;
 
                 dropdownList.innerHTML = '';
@@ -2671,11 +2731,11 @@
                     if (!valor) return; // Saltar si está vacío
 
                     const li = document.createElement('li');
-                    li.innerHTML = `<a class="dropdown-item" href="#" data-value="${escapeHtml(valor)}">${escapeHtml(valor)}</a>`;
+                    li.innerHTML = `< a class="dropdown-item" href = "#" data - value="${escapeHtml(valor)}" > ${escapeHtml(valor)}</a > `;
 
                     li.querySelector('a').addEventListener('click', (e) => {
                         e.preventDefault();
-                        const input = document.getElementById(`detalle-${tipo}`);
+                        const input = document.getElementById(`detalle - ${tipo} `);
                         input.value = valor;
 
                         // Trigger change para actualizar detalles de siniestro si aplica
@@ -2690,10 +2750,10 @@
             }
 
             function _setupComboboxFilter(tipo, catalogo, campoNombre) {
-                const input = document.getElementById(`detalle-${tipo}`);
-                const dropdownList = document.getElementById(`dropdown-${tipo}-list`);
+                const input = document.getElementById(`detalle - ${tipo} `);
+                const dropdownList = document.getElementById(`dropdown - ${tipo} -list`);
 
-                console.log(`🔧 _setupComboboxFilter para ${tipo}:`, { input: !!input, dropdownList: !!dropdownList });
+                console.log(`🔧 _setupComboboxFilter para ${tipo}: `, { input: !!input, dropdownList: !!dropdownList });
 
                 if (!input || !dropdownList) return;
 
@@ -2703,7 +2763,7 @@
                     return;
                 }
                 input.dataset.filterConfigured = 'true';
-                console.log(`✅ Configurando listener para ${tipo}`);
+                console.log(`✅ Configurando listener para ${tipo} `);
 
                 input.addEventListener('input', () => {
                     console.log(`📝 Input event en ${tipo}: "${input.value}"`);
@@ -2837,9 +2897,9 @@
                     // serverCall resolves with the 'data' object: { message, logs }
                     // If we get here, the call was successful
                     const logsHtml = (res && res.logs && res.logs.length > 0)
-                        ? `<br><div class="text-start small mt-2" style="max-height: 200px; overflow-y: auto;">
-                            <strong>Cambios realizados:</strong><ul class="mb-0 ps-3">${res.logs.map(l => `<li>${l}</li>`).join('')}</ul>
-                           </div>`
+                        ? `< br > <div class="text-start small mt-2" style="max-height: 200px; overflow-y: auto;">
+            <strong>Cambios realizados:</strong><ul class="mb-0 ps-3">${res.logs.map(l => `<li>${l}</li>`).join('')}</ul>
+        </div>`
                         : '<br>No se encontraron discrepancias.';
 
                     const swal = globalThis.Swal;
@@ -2847,7 +2907,7 @@
                         swal.fire({
                             icon: 'success',
                             title: 'Recálculo Completado',
-                            html: `${res?.message || 'Proceso completado'}${logsHtml}`,
+                            html: `${res?.message || 'Proceso completado'}${logsHtml} `,
                             width: '600px'
                         });
                     } else {
@@ -2970,14 +3030,14 @@
                 // Reset all icons
                 const headers = ['descripcion', 'fecha', 'estado', 'contratista', 'presupuesto', 'montoSupervision'];
                 headers.forEach(key => {
-                    const icon = document.getElementById(`sort-icon-${key}`);
+                    const icon = document.getElementById(`sort - icon - ${key} `);
                     if (icon) {
                         icon.className = 'bi bi-arrow-down-up small text-muted ms-1'; // Default neutral
                     }
                 });
 
                 // Set active icon
-                const activeIcon = document.getElementById(`sort-icon-${state.sort.column}`);
+                const activeIcon = document.getElementById(`sort - icon - ${state.sort.column} `);
                 if (activeIcon) {
                     if (state.sort.direction === 'asc') {
                         activeIcon.className = 'bi bi-arrow-up text-primary ms-1';
@@ -3056,7 +3116,7 @@
                         </button>
                     </td>
                 </tr>
-            `).join('');
+                `).join('');
 
                 if (dom.tbody) dom.tbody.innerHTML = html;
             }
@@ -3121,7 +3181,7 @@
                                 const dia = partes[0].padStart(2, '0');
                                 const mes = partes[1].padStart(2, '0');
                                 const anio = partes[2];
-                                return `${anio}-${mes}-${dia}`;
+                                return `${anio} -${mes} -${dia} `;
                             }
                         }
                         if (fecha.includes('T')) {
@@ -3314,7 +3374,7 @@
                     console.log('✅ Componente Comunicados listo');
                 } catch (error) {
                     console.error('❌ FALLO CRÍTICO EN LA CARGA de Comunicados:', error);
-                    container.innerHTML = `<div class="alert alert-danger">Error fatal al cargar: ${error.message}</div>`;
+                    container.innerHTML = `< div class="alert alert-danger" > Error fatal al cargar: ${error.message}</div >`;
                 }
             };
 

@@ -1012,6 +1012,21 @@
             tbody.innerHTML = '';
             const idx = state.editingPresupuestoIdx;
             const lines = state.data.presupuesto[idx].lineas;
+            const totalRevisiones = state.data.presupuesto.length;
+
+            // REGLA DE INTEGRIDAD: Si hay revisiones posteriores, no se puede modificar estructura
+            const esUltimaRevision = idx === totalRevisiones - 1;
+            const tieneRevisionesPosteriores = !esUltimaRevision;
+
+            // Mostrar/ocultar botón Agregar Línea según si es última revisión
+            const btnAgregarLinea = document.querySelector('[onclick="ComunicadoDetalle.addLineaPresupuesto()"]');
+            if (btnAgregarLinea) {
+                if (tieneRevisionesPosteriores) {
+                    btnAgregarLinea.classList.add('d-none');
+                } else {
+                    btnAgregarLinea.classList.remove('d-none');
+                }
+            }
 
             // Get previous revision lines for comparison
             const prevIdx = idx - 1;
@@ -1067,66 +1082,95 @@
 
                 // Find matching line in previous revision
                 const prevLine = findPrevLine(l, i);
-                const importeAnterior = prevLine ? (parseFloat(prevLine.importe) || 0) : 0;
+
+                // MEJORA: Para ORIGEN (idx=0), mostrar $0.00 como anterior para que se vea el incremento en verde
+                // Para actualizaciones, si la línea es nueva (no existía antes), también mostrar $0.00
+                const esOrigen = idx === 0;
+                const esLineaNueva = !prevLine && !esOrigen; // Nueva en esta revisión (no origen)
+
+                // Importe anterior: 0 para origen, 0 para líneas nuevas, valor real para existentes
+                const importeAnterior = esOrigen ? 0 : (prevLine ? (parseFloat(prevLine.importe) || 0) : 0);
                 const diferencia = importeActual - importeAnterior;
 
                 // Color coding for diferencia
                 let difClass = 'text-muted';
                 let difPrefix = '';
+                let difIcon = '';
                 if (diferencia > 0) {
                     difClass = 'text-success fw-bold';
                     difPrefix = '+';
+                    difIcon = '<i class="bi bi-arrow-up-short"></i>';
                 } else if (diferencia < 0) {
                     difClass = 'text-danger fw-bold';
+                    difIcon = '<i class="bi bi-arrow-down-short"></i>';
                 }
 
-                // Show N/A if this is origin (no previous revision) or no match found? 
-                // Context: We want to show 0.00 if previous revision exists but line didn't exist (new line).
-                // Logic: If prevIdx >= 0 (there IS a previous revision), but prevLine is null, it means Amount Prev = 0.
-                const hasPrevRevision = prevIdx >= 0;
+                // MEJORA: Estilo de fila según tipo
+                // - Verde suave para líneas nuevas (incluyendo todas las de origen)
+                // - Normal para líneas existentes sin cambios
+                // - Azul suave para líneas con cambios
+                let rowClass = '';
+                if (esOrigen || esLineaNueva) {
+                    rowClass = 'table-success'; // Verde suave para nuevas
+                } else if (diferencia !== 0) {
+                    rowClass = 'table-info'; // Azul suave para modificadas
+                }
+                tr.className = rowClass;
 
-                // Build Category Options
-                const currentCat = (l.categoria || '').trim(); // Keep original case for value
-                // Helper to check existence case-insensitive
+                // Build Category Options con badge
+                const currentCat = (l.categoria || '').trim();
                 const catExists = (val) => categoriasCatalog.some(c => String(c.id).toUpperCase() === String(val).toUpperCase());
 
                 let catOptions = `<option value="">Seleccione...</option>`;
-
-                // If current value is custom/not in catalog, add it as temporary option
                 if (currentCat && !catExists(currentCat)) {
                     catOptions += `<option value="${currentCat}" selected>${currentCat}</option>`;
                 }
-
                 categoriasCatalog.forEach(c => {
-                    // Check selection case-insensitive to be friendly, but verify logic
                     const isSelected = String(c.id).toUpperCase() === String(currentCat).toUpperCase();
                     catOptions += `<option value="${c.id}" ${isSelected ? 'selected' : ''}>${c.nombre}</option>`;
                 });
 
-                // Determinar si esta línea puede eliminarse:
-                // Puede eliminarse si NO existe en la revisión anterior (es nueva en esta actualización)
-                // prevLine ya fue calculado arriba - si es null, la línea es nueva
+                // Determinar si esta línea puede eliminarse
+                // REGLA: Si hay revisiones posteriores, NINGUNA línea puede eliminarse
+                // REGLA: Si es la última revisión, solo líneas nuevas (sin match previo) pueden eliminarse
                 const esLineaNuevaEnEstaRevision = !prevLine;
-                const puedeEliminar = esLineaNuevaEnEstaRevision;
+                const puedeEliminar = esUltimaRevision && esLineaNuevaEnEstaRevision;
+
+                // Badge de estado para indicar visualmente tipo de línea
+                let statusBadge = '';
+                if (esOrigen) {
+                    statusBadge = '<span class="badge bg-success bg-opacity-75 ms-1" style="font-size: 0.6rem;">NUEVA</span>';
+                } else if (esLineaNueva) {
+                    statusBadge = '<span class="badge bg-success ms-1" style="font-size: 0.6rem;">NUEVA</span>';
+                } else if (diferencia !== 0) {
+                    statusBadge = '<span class="badge bg-info ms-1" style="font-size: 0.6rem;">MODIF</span>';
+                }
 
                 tr.innerHTML = `
-                    <td><input type="text" class="form-control form-control-sm" value="${l.descripcion || ''}" placeholder="Descripción" onchange="ComunicadoDetalle.updateLineaPresupuesto(${i}, 'descripcion', this.value)"></td>
                     <td>
-                        <select class="form-select form-select-sm" onchange="ComunicadoDetalle.updateLineaPresupuesto(${i}, 'categoria', this.value)">
+                        <div class="d-flex align-items-center">
+                            <input type="text" class="form-control form-control-sm" value="${l.descripcion || ''}" placeholder="Ubicación / Concepto" onchange="ComunicadoDetalle.updateLineaPresupuesto(${i}, 'descripcion', this.value)">
+                            ${statusBadge}
+                        </div>
+                    </td>
+                    <td>
+                        <select class="form-select form-select-sm ${currentCat.includes('DAÑO') || currentCat.includes('FISICO') ? 'border-warning' : currentCat.includes('DESAZ') ? 'border-info' : ''}" onchange="ComunicadoDetalle.updateLineaPresupuesto(${i}, 'categoria', this.value)">
                             ${catOptions}
                         </select>
                     </td>
-                    <td class="text-end ${hasPrevRevision ? '' : 'text-muted'}">
-                        ${hasPrevRevision ? _formatCurrency(importeAnterior) : '<small class="text-muted">N/A</small>'}
+                    <td class="text-end font-monospace small ${esOrigen ? 'text-muted' : ''}">
+                        ${_formatCurrency(importeAnterior)}
                     </td>
-                    <td><input type="text" class="form-control form-control-sm text-end currency-input" value="${_formatCurrency(importeActual)}" onchange="ComunicadoDetalle.updateLineaPresupuesto(${i}, 'importe', this.value)"></td>
-                    <td class="text-end ${difClass}">
-                        ${hasPrevRevision ? difPrefix + _formatCurrency(Math.abs(diferencia)) : '<small class="text-muted">—</small>'}
+                    <td><input type="text" class="form-control form-control-sm text-end currency-input font-monospace" value="${_formatCurrency(importeActual)}" onchange="ComunicadoDetalle.updateLineaPresupuesto(${i}, 'importe', this.value)"></td>
+                    <td class="text-end ${difClass} font-monospace">
+                        <span class="d-flex align-items-center justify-content-end">
+                            ${difIcon}${difPrefix}${_formatCurrency(Math.abs(diferencia))}
+                        </span>
                     </td>
                     <td class="text-center">
                         ${puedeEliminar
-                        ? `<button class="btn btn-sm text-danger" onclick="ComunicadoDetalle.removeLineaPresupuesto(${i})" title="Eliminar línea"><i class="bi bi-trash"></i></button>`
-                        : `<span class="text-muted" title="Línea vinculada a actualizaciones anteriores - no se puede eliminar"><i class="bi bi-lock-fill"></i></span>`
+                        ? `<button class="btn btn-sm text-danger border-0" onclick="ComunicadoDetalle.removeLineaPresupuesto(${i})" title="Eliminar línea"><i class="bi bi-trash"></i></button>`
+                        : `<span class="text-muted" title="${tieneRevisionesPosteriores ? 'Revisión bloqueada - hay actualizaciones posteriores' : 'Línea vinculada a actualizaciones anteriores'}"><i class="bi bi-lock-fill"></i></span>`
                     }
                     </td>
                 `;
@@ -1136,12 +1180,31 @@
         }
 
         function addLineaPresupuesto() {
-            state.data.presupuesto[state.editingPresupuestoIdx].lineas.push({ descripcion: '', categoria: '', importe: 0 });
+            const idx = state.editingPresupuestoIdx;
+            const totalRevisiones = state.data.presupuesto.length;
+            const esUltimaRevision = idx === totalRevisiones - 1;
+
+            // REGLA DE INTEGRIDAD: Solo se pueden agregar líneas en la última revisión
+            if (!esUltimaRevision) {
+                _showAlert('Acción No Permitida', 'No se pueden agregar líneas a revisiones que ya tienen actualizaciones posteriores.', 'warning');
+                return;
+            }
+
+            state.data.presupuesto[idx].lineas.push({ descripcion: '', categoria: '', importe: 0 });
             _renderModalLines();
         }
 
         function removeLineaPresupuesto(lineIdx) {
             const idx = state.editingPresupuestoIdx;
+            const totalRevisiones = state.data.presupuesto.length;
+            const esUltimaRevision = idx === totalRevisiones - 1;
+
+            // REGLA DE INTEGRIDAD: Solo se pueden eliminar líneas en la última revisión
+            if (!esUltimaRevision) {
+                _showAlert('Acción No Permitida', 'No se pueden eliminar líneas de revisiones que ya tienen actualizaciones posteriores.', 'warning');
+                return;
+            }
+
             const linea = state.data.presupuesto[idx].lineas[lineIdx];
 
             // Verificar si existe en CUALQUIER revisión anterior (incluyendo origen)
@@ -1200,8 +1263,9 @@
                 ? (state.data.presupuesto[prevIdx].lineas || [])
                 : [];
 
-            // Calculate total anterior (sum of previous revision)
-            const totalAnterior = prevLines.reduce((sum, l) => sum + (parseFloat(l.importe) || 0), 0);
+            // MEJORA: Para ORIGEN (idx=0), el total anterior es 0 (no N/A)
+            const esOrigen = idx === 0;
+            const totalAnterior = esOrigen ? 0 : prevLines.reduce((sum, l) => sum + (parseFloat(l.importe) || 0), 0);
             const totalDiferencia = totalActual - totalAnterior;
 
             // Update totals in footer
@@ -1210,19 +1274,18 @@
             const elDif = document.getElementById('modal-total-diferencia');
             const elRevision = document.getElementById('modal-total-revision');
 
-            if (elAnterior) elAnterior.textContent = prevIdx >= 0 ? _formatCurrency(totalAnterior) : 'N/A';
+            // MEJORA: Siempre mostrar valor numérico (incluso para ORIGEN muestra $0.00)
+            if (elAnterior) {
+                elAnterior.textContent = _formatCurrency(totalAnterior);
+                elAnterior.className = 'text-end' + (esOrigen ? ' text-muted' : '');
+            }
             if (elActual) elActual.textContent = _formatCurrency(totalActual);
             if (elRevision) elRevision.textContent = _formatCurrency(totalActual);
 
             if (elDif) {
-                if (prevIdx >= 0) {
-                    const prefix = totalDiferencia > 0 ? '+' : '';
-                    elDif.textContent = prefix + _formatCurrency(totalDiferencia);
-                    elDif.className = 'text-end fw-bold ' + (totalDiferencia > 0 ? 'text-success' : totalDiferencia < 0 ? 'text-danger' : 'text-muted');
-                } else {
-                    elDif.textContent = '—';
-                    elDif.className = 'text-end text-muted';
-                }
+                const prefix = totalDiferencia > 0 ? '+' : '';
+                elDif.innerHTML = (totalDiferencia > 0 ? '<i class="bi bi-arrow-up-short"></i>' : totalDiferencia < 0 ? '<i class="bi bi-arrow-down-short"></i>' : '') + prefix + _formatCurrency(totalDiferencia);
+                elDif.className = 'text-end fw-bold font-monospace ' + (totalDiferencia > 0 ? 'text-success' : totalDiferencia < 0 ? 'text-danger' : 'text-muted');
             }
 
             // Actualizar modelo del padre y tabla principal

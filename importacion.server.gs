@@ -462,7 +462,25 @@ function _analizarDocumento(doc, cache, batchDocs = []) {
                     }
                 }
 
-                if (lineasPadre.length > 0 && doc.lineas) {
+                // =========================================================================
+                // FIX CRÍTICO: Caso Documento Informativo/Narrativo (L01A)
+                // Si la IA devuelve array vacío, PRESERVAR líneas del padre
+                // Esto evita "borrar" el contexto en el pipeline L01 → L01A → L01B
+                // =========================================================================
+                if (lineasPadre.length > 0 && (!doc.lineas || doc.lineas.length === 0)) {
+                    console.log(`[Import] ⚠️ ALERTA: Documento Informativo detectado. IA devolvió 0 líneas. Preservando ${lineasPadre.length} líneas del padre.`);
+
+                    // Clonar líneas del padre y forzar acción 'MANTENER'
+                    doc.lineas = lineasPadre.map(linea => ({
+                        ...linea,
+                        accion: 'MANTENER',
+                        _preservadoDeInformativo: true // Flag de diagnóstico
+                    }));
+
+                    console.log(`[Import] ✓ Líneas preservadas: ${doc.lineas.length} conceptos heredados de ${padreEnLote?.header?.comunicadoId || padreEnDB?.comunicado || 'padre'}`);
+                }
+
+                if (lineasPadre.length > 0 && doc.lineas && doc.lineas.length > 0) {
                     console.log(`[Import] Iniciando MERGE: Padre (${lineasPadre.length} líneas) vs IA (${doc.lineas.length} líneas)`);
 
                     const _norm = (s) => String(s || '').toUpperCase().trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, ' ');
@@ -757,6 +775,53 @@ function _analizarDocumento(doc, cache, batchDocs = []) {
         }
     }
 
+    // =========================================================================
+    // GENERAR ALERTAS PARA EL FRONTEND (Visual Feedback)
+    // =========================================================================
+    const alertas = [];
+
+    // Alerta 0: Documento sin líneas (Informativo/Narrativo) - CASO MÁS CRÍTICO
+    // Detecta cuando la IA no encontró tablas financieras en el documento
+    if (!doc.lineas || doc.lineas.length === 0) {
+        alertas.push({
+            tipo: 'warning',
+            icono: 'bi-file-text',
+            mensaje: `📄 Documento INFORMATIVO/NARRATIVO: No se detectaron tablas financieras. Este comunicado contiene solo texto descriptivo.`
+        });
+    }
+
+    // Alerta 1: Documento Informativo/Narrativo (líneas preservadas del padre)
+    if (doc.lineas && doc.lineas.some(l => l._preservadoDeInformativo === true)) {
+        const numPreservadas = doc.lineas.filter(l => l._preservadoDeInformativo).length;
+        alertas.push({
+            tipo: 'success',
+            icono: 'bi-shield-fill-check',
+            mensaje: `✅ Líneas PRESERVADAS: Se heredaron ${numPreservadas} partida(s) del comunicado anterior para mantener continuidad.`
+        });
+    }
+
+    // Alerta 2: Conceptos nuevos detectados
+    if (doc.lineas && doc.lineas.length > 0) {
+        const nuevos = doc.lineas.filter(l => l.accion === 'CREAR');
+        if (nuevos.length > 0) {
+            alertas.push({
+                tipo: 'info',
+                icono: 'bi-plus-circle-fill',
+                mensaje: `ℹ️ Se detectaron ${nuevos.length} concepto(s) nuevo(s) en este documento.`
+            });
+        }
+
+        // Alerta 3: Conceptos actualizados (importe cambió)
+        const actualizados = doc.lineas.filter(l => l.accion === 'ACTUALIZAR');
+        if (actualizados.length > 0) {
+            alertas.push({
+                tipo: 'primary',
+                icono: 'bi-pencil-square',
+                mensaje: `📝 Se actualizaron ${actualizados.length} concepto(s) con nuevos importes.`
+            });
+        }
+    }
+
     return {
         ref: h.refCta,
         comunicado: h.comunicadoId,
@@ -769,6 +834,7 @@ function _analizarDocumento(doc, cache, batchDocs = []) {
         esValido: esValido, // Keep valid so it counts as "processable" but omitted
         motivo: finalMotivo,
         analisis: analisis,
+        alertas: alertas, // NUEVO: Alertas para feedback visual
         rawPayload: { header: h, lineas: doc.lineas } // Data for single import
 
     }
@@ -2008,6 +2074,19 @@ function _procesarBatchInterno(loteAgrupado, cache) {
                 // 1. DETECCIÓN: ¿La IA dijo que esto sustituye todo?
                 const esSustitucionTotal = updateObj._tipoAccion === 'REEMPLAZO_TOTAL';
 
+                // =================================================================
+                // CASO NARRATIVO L01A: DETECCIÓN DE ARRAY VACÍO
+                // Si la IA devuelve lineas vacías y NO es origen, es INFORMATIVO
+                // Esto sucede cuando el PDF no tiene tablas financieras
+                // =================================================================
+                const esNarrativoVacio = !esOrigen && (!lineasDelPdf || lineasDelPdf.length === 0);
+
+                if (esNarrativoVacio) {
+                    // Forzar tipoAccion a INFORMATIVO para que el flujo normal lo procese
+                    updateObj._tipoAccion = 'INFORMATIVO';
+                    logBatch(`[NARRATIVO] ActID ${idActReal}: PDF sin líneas detectado (caso L01A). Tratando como INFORMATIVO.`);
+                }
+
                 logBatch(`[PROCESANDO] ActID ${idActReal}: SustituciónTotal=${esSustitucionTotal}`);
 
                 // 2. RECUPERAR EL PASADO (Snapshot anterior)
@@ -2030,7 +2109,7 @@ function _procesarBatchInterno(loteAgrupado, cache) {
                                 const desc = cache.descripcionLineas.find(d => String(d.id) === String(l.idLinea));
                                 return {
                                     concepto: desc ? desc.descripcion : 'S/D',
-                                    categoria: desc ? desc.categoria : l.categoria,
+                                    categoria: l.categoria, // FIX: categoria ahora solo está en presupuestoLineas
                                     importe: parseFloat(l.importe) || 0,
                                     idLinea: l.idLinea,
                                     idRegistroPrevio: l.id,
@@ -2135,31 +2214,67 @@ function _procesarBatchInterno(loteAgrupado, cache) {
                 // B) APLICAR LO NUEVO (PDF) - usando líneas deduplicadas
                 lineasPdfDedup.forEach(l => {
                     const key = _key(l.concepto, l.categoria);
-                    const importeNuevo = parseFloat(l.importe) || 0;
                     const catNum = (String(l.categoria).toUpperCase().includes('DESAZOLVE')) ? 2 : 1;
 
+                    // =================================================================
+                    // FIX CRÍTICO: MANEJO DE importe null vs 0
+                    // null = MANTENER (heredar del predecesor)
+                    // 0 = CANCELAR (borrado lógico)
+                    // número = ACTUALIZAR al nuevo valor
+                    // =================================================================
+                    const importeEsNull = l.importe === null || l.importe === undefined;
+                    const importeNuevo = importeEsNull ? null : (parseFloat(l.importe) || 0);
+
+                    // Detectar acción explícita de la IA
+                    const accionIA = String(l.accion || '').toUpperCase();
+
                     if (mapSnapshot.has(key)) {
-                        // YA EXISTÍA (o estaba marcada en $0)
+                        // YA EXISTÍA (línea del predecesor)
                         const existente = mapSnapshot.get(key);
 
-                        // Si el monto del PDF es diferente a lo que tenemos en el tablero
-                        if (Math.abs(existente.importe - importeNuevo) > 0.01) {
+                        // =================================================================
+                        // LÓGICA DE DECISIÓN BASADA EN ACCIÓN Y VALOR
+                        // =================================================================
+                        if (accionIA === 'MANTENER' || importeEsNull) {
+                            // Caso MANTENER: No hacemos nada, la línea mantiene su valor anterior
+                            logBatch(`[MANTENER] ${l.concepto.substring(0, 20)}: heredando $${existente.importe}`);
+                            // El _accion queda como MANTENER
+                        } else if (accionIA === 'CANCELAR' || importeNuevo === 0) {
+                            // Caso CANCELAR: Marcar para borrado lógico
+                            existente.importe = 0;
+                            existente._accion = 'ACTUALIZAR'; // Guardar el $0 explícitamente
+                            logBatch(`[CANCELAR] ${l.concepto.substring(0, 20)}: marcando a $0`);
+                        } else if (importeNuevo !== null && Math.abs(existente.importe - importeNuevo) > 0.01) {
+                            // Caso ACTUALIZAR: El monto cambió
                             existente.importe = importeNuevo;
-                            existente._accion = 'ACTUALIZAR'; // Confirmar que hay que guardar
+                            existente._accion = 'ACTUALIZAR';
                             // Si el PDF trae mejor nombre, lo usamos
                             if (l.concepto.length > existente.concepto.length) existente.concepto = l.concepto;
+                            logBatch(`[ACTUALIZAR] ${l.concepto.substring(0, 20)}: $${existente.importe} -> $${importeNuevo}`);
                         }
+                        // Si no cambió nada, queda como MANTENER
                     } else {
-                        // ES NUEVA
-                        mapSnapshot.set(key, {
-                            concepto: l.concepto,
-                            categoria: catNum,
-                            importe: importeNuevo,
-                            _accion: 'INSERTAR',
-                            esVigente: true
-                        });
+                        // =================================================================
+                        // CONCEPTO NUEVO (CASO L01B: Conceptos Adicionales)
+                        // =================================================================
+                        // FIX: Permitir importe = 0 (ej: DESAZOLVES sin costo inicial)
+                        // Solo ignorar si importe es null (error de extracción)
+                        if (!importeEsNull && importeNuevo >= 0) {
+                            mapSnapshot.set(key, {
+                                concepto: l.concepto,
+                                categoria: catNum,
+                                importe: importeNuevo,
+                                _accion: 'INSERTAR',
+                                esVigente: true
+                            });
+                            logBatch(`[CREAR] ${l.concepto.substring(0, 20)}: nuevo concepto $${importeNuevo}`);
+                        } else if (importeEsNull) {
+                            // Concepto nuevo con importe null: ignorar (probablemente error de extracción)
+                            logBatch(`[IGNORAR] ${l.concepto.substring(0, 20)}: concepto nuevo con importe null`);
+                        }
                     }
                 });
+
 
                 // Guardar foto completa en memoria para el siguiente archivo
                 const lineasFinales = Array.from(mapSnapshot.values());
@@ -2305,9 +2420,11 @@ function _procesarBatchInterno(loteAgrupado, cache) {
                     const usedIds = mapUsoPorCuenta.get(idCuentaContexto);
                     usedIds.forEach(idLinea => {
                         const desc = descripcionesMap.get(idLinea);
+                        // FIX: Obtener categoria de presupuestoLineas, no de descripcionLineas
+                        const pl = cache.presupuestoLineas.find(p => String(p.idLinea) === String(idLinea));
                         if (desc) {
                             const norm = _normalizarUbicacion(desc.descripcion);
-                            const catClean = String(desc.categoria).toUpperCase();
+                            const catClean = String(pl?.categoria || '1').toUpperCase();
                             const catKey = (catClean.includes('DESAZOLVE') || catClean === '2') ? '2' : '1';
                             const key = `${norm}|${catKey}`;
                             if (!localDiccionario.has(key)) {
@@ -2367,10 +2484,11 @@ function _procesarBatchInterno(loteAgrupado, cache) {
             });
 
             if (descripcionesNuevas.size > 0) {
+                // FIX: Ya NO guardamos categoría en descripcionLineas (solo en presupuestoLineas)
                 const batchDescripciones = Array.from(descripcionesNuevas.values())
-                    .map(d => ({ descripcion: String(d.descripcion).toUpperCase().trim(), categoria: d.categoria }));
+                    .map(d => ({ descripcion: String(d.descripcion).toUpperCase().trim() }));
 
-                logBatch(`[${contexto}] Creando ${batchDescripciones.length} nuevas entradas en DescripcionLineas...`);
+                logBatch(`[${contexto}] Creando ${batchDescripciones.length} nuevas entradas en DescripcionLineas (sin categoría)...`);
 
                 const resDesc = createBatch('descripcionLineas', batchDescripciones);
 
@@ -2386,11 +2504,10 @@ function _procesarBatchInterno(loteAgrupado, cache) {
                             batchPresupuestos[idx].idLinea = newId;
                         });
 
-                        // Actualizar cache
+                        // Actualizar cache (sin categoría - ahora solo está en presupuestoLineas)
                         cache.descripcionLineas.push({
                             id: newId,
-                            descripcion: info.descripcion,
-                            categoria: info.categoria
+                            descripcion: info.descripcion
                         });
                     });
                 }
@@ -3586,14 +3703,14 @@ function _syncLineasPresupuesto(idActualizacion, lineasNuevas, logFn) {
                 const catFinal = String(lineaNueva.categoria || 'DAÑO FISICO').toUpperCase();
                 const descripcionNorm = String(lineaNueva.concepto || 'Sin concepto').toUpperCase().trim();
 
-                // 1. Buscar si ya existe en descripcionLineas
+                // 1. Buscar si ya existe en descripcionLineas (solo por descripcion, sin categoria)
                 const descResponse = readAllRows('descripcionLineas');
                 let idLinea = null;
 
                 if (descResponse.success && descResponse.data) {
+                    // FIX: Buscar solo por descripcion normalizada (categoria ya no está en descripcionLineas)
                     const existing = descResponse.data.find(d =>
-                        _normalizarUbicacion(d.descripcion) === _normalizarUbicacion(descripcionNorm) &&
-                        String(d.categoria || '').toUpperCase().includes(catFinal.includes('DESAZOLVE') ? 'DESAZOLVE' : 'FISICO')
+                        _normalizarUbicacion(d.descripcion) === _normalizarUbicacion(descripcionNorm)
                     );
                     if (existing) {
                         idLinea = existing.id;
@@ -3601,11 +3718,10 @@ function _syncLineasPresupuesto(idActualizacion, lineasNuevas, logFn) {
                     }
                 }
 
-                // 2. Si no existe, crear nueva entrada en descripcionLineas
+                // 2. Si no existe, crear nueva entrada en descripcionLineas (sin categoria)
                 if (!idLinea) {
                     const newDescResult = createRow('descripcionLineas', {
-                        descripcion: descripcionNorm,
-                        categoria: catFinal
+                        descripcion: descripcionNorm
                     });
 
                     if (newDescResult.success && newDescResult.data && newDescResult.data.id) {

@@ -1499,6 +1499,8 @@ function deleteComunicado(id) {
 
         // 3. ELIMINAR ACTUALIZACIONES (Y SUS LÍNEAS DE PRESUPUESTO)
         const actualizacionesResp = readAllRows('actualizaciones');
+        let idsLineaEliminadas = []; // IDs de descripcionLineas que fueron referenciadas
+
         if (actualizacionesResp.success && actualizacionesResp.data) {
             const actualizaciones = actualizacionesResp.data.filter(a => String(a.idComunicado) === comunicadoId);
 
@@ -1509,10 +1511,35 @@ function deleteComunicado(id) {
 
                 actualizaciones.forEach(act => {
                     const lineasDeActualizacion = todasLineas.filter(l => String(l.idActualizacion) === String(act.id));
-                    lineasDeActualizacion.forEach(l => eliminarRegistro('presupuestoLineas', l.id));
+                    lineasDeActualizacion.forEach(l => {
+                        // Guardar idLinea para limpieza de descripcionLineas
+                        if (l.idLinea) idsLineaEliminadas.push(String(l.idLinea));
+                        eliminarRegistro('presupuestoLineas', l.id);
+                    });
 
                     // Eliminar la actualización misma
                     eliminarRegistro('actualizaciones', act.id);
+                });
+            }
+        }
+
+        // 3.5 ELIMINAR DESCRIPCIONLINEAS HUÉRFANAS
+        // Solo eliminar las descripciones que ya no están referenciadas por ninguna otra línea
+        if (idsLineaEliminadas.length > 0) {
+            const presupuestoRestante = readAllRows('presupuestoLineas');
+            const idsEnUso = new Set(
+                (presupuestoRestante.success && presupuestoRestante.data)
+                    ? presupuestoRestante.data.map(l => String(l.idLinea)).filter(Boolean)
+                    : []
+            );
+
+            // Filtrar solo las que ya no están en uso
+            const idsHuerfanas = [...new Set(idsLineaEliminadas)].filter(id => !idsEnUso.has(id));
+
+            if (idsHuerfanas.length > 0) {
+                console.log(`[${contexto}] Eliminando ${idsHuerfanas.length} descripcionLineas huérfanas...`);
+                idsHuerfanas.forEach(idLinea => {
+                    eliminarRegistro('descripcionLineas', idLinea);
                 });
             }
         }

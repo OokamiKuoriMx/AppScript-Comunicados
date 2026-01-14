@@ -6,7 +6,7 @@
  */
 
 // Configuración - TIER DE PAGO
-const GEMINI_MODEL = 'gemini-2.5-flash';  // Modelo estable para producción (con facturación)
+const GEMINI_MODEL = 'gemini-2.0-flash';  // Modelo estable para producción (con facturación)
 const MAX_RETRIES = 5;                     // Reintentos para errores de validación/parseo
 const MAX_RATE_LIMIT_RETRIES = 3;          // Reintentos para Rate Limit (menos necesarios con pago)
 const BASE_COOLDOWN_MS = 1000;             // 1 segundo entre archivos (tier de pago tiene límites altos)
@@ -223,6 +223,7 @@ function procesarPdfIA(payload, optFilename) {
         let intentos = 0;
         let lastError = null;
         let resultadoFinal = null;
+        let esOrigen = expectedLines.length === 0; // Declarar ANTES del while para uso en post-procesamiento
 
         while (intentos < MAX_RETRIES) {
             intentos++;
@@ -332,7 +333,7 @@ function procesarPdfIA(payload, optFilename) {
                 // - Si expectedLines.length === 0 → MODO ORIGEN (extracción total)
                 // - Si expectedLines.length > 0  → MODO ACTUALIZACIÓN (extracción diferencial)
                 // =========================================================================
-                const esOrigen = expectedLines.length === 0;
+                esOrigen = expectedLines.length === 0; // Reasignar (ya declarado antes del while)
                 console.log(`[${contexto}] MODO DE EXTRACCIÓN: ${esOrigen ? 'ORIGEN (Línea Base)' : 'ACTUALIZACIÓN (Diferencial)'} [${expectedLines.length} líneas previas]`);
 
                 const jsonResponse = _callGeminiWithPdf(base64Content, filename, lastError, catalogsContext, existingConcepts, registrosContextoUnificado, expectedLines, esOrigen, payload.comunicadoId);
@@ -362,13 +363,15 @@ function procesarPdfIA(payload, optFilename) {
         // POST-PROCESAMIENTO: Normalizar datos de la IA
         // =====================================================================
         // Convertir conceptos y categorías a mayúsculas para consistencia
+        // FIX: Para documentos ORIGEN, forzar accion:'CREAR' ya que no hay líneas previas
         if (resultadoFinal.lineas && Array.isArray(resultadoFinal.lineas)) {
             resultadoFinal.lineas = resultadoFinal.lineas.map(linea => ({
                 ...linea,
                 concepto: String(linea.concepto || '').toUpperCase().trim(),
-                categoria: String(linea.categoria || 'DAÑO FISICO').toUpperCase().trim()
+                categoria: String(linea.categoria || 'DAÑO FISICO').toUpperCase().trim(),
+                accion: esOrigen ? 'CREAR' : (linea.accion || 'MANTENER')
             }));
-            console.log(`[procesarPdfIA] Normalizadas ${resultadoFinal.lineas.length} líneas a MAYÚSCULAS`);
+            console.log(`[procesarPdfIA] Normalizadas ${resultadoFinal.lineas.length} líneas a MAYÚSCULAS${esOrigen ? ' (todas con accion:CREAR)' : ''}`);
         }
 
         // =====================================================================
@@ -1962,6 +1965,51 @@ Genera el JSON con estructura \`{header, lineas}\`. Cada línea debe tener \`acc
         | PDF pide documentación: "se solicita bitácora" | **null** |
         | PDF menciona ubicación pero sin monto nuevo | **null** |
         | PDF NO menciona la ubicación | **null** |
+
+    * **REGLA 7: CASO NARRATIVO (PDF SIN TABLAS DE DESGLOSE FINANCIERO)**
+        - **Detección:** El documento es SOLO TEXTO INFORMATIVO, no contiene ninguna tabla con desglose de precios, presupuesto ni montos financieros.
+        - **Frases Clave:** "será necesario contar con un dictamen", "se solicita presupuesto", "pendiente de cuantificación", "se remitirá estimación".
+        - **Acción Obligatoria:** Devuelve un array VACÍO de líneas: \`"lineas": []\`
+        - **NO INVENTES DATOS:** Si no hay tabla financiera, no hay líneas que extraer.
+        - **El Sistema Backend:** Detectará el array vacío y MANTENDRÁ automáticamente las líneas del comunicado anterior.
+        - **Ejemplo de Salida:**
+        \`\`\`json
+        {
+          "header": { "refCta": "...", "comunicadoId": "L01A", "tipoRegistro": "Actualización", "tipoAccion": "INFORMATIVO", "totalPdf": 0, "descripcion": "..." },
+          "lineas": []
+        }
+        \`\`\`
+
+    * **REGLA 8: CASO CONCEPTOS NUEVOS (ADICIONALES - L01B, L50B, etc.)**
+        - **Detección:** El documento contiene tablas con conceptos que NO EXISTEN en "PARTIDAS VIGENTES".
+        - **Ejemplos:** PDF trae "Compuertas radiales", "Chumaceras" pero el contexto tiene "Canal Principal", "Desazolves".
+        - **Acción Obligatoria:** Cada concepto nuevo debe tener \`"accion": "CREAR"\` y \`"id_bd": null\`.
+        - **NO FUSIONES:** No intentes hacer match forzado entre conceptos incompatibles.
+        - **Genera Ambos:** Si el PDF trae conceptos nuevos Y el contexto tiene conceptos existentes no mencionados:
+            1. Los conceptos nuevos del PDF: \`"accion": "CREAR"\`
+            2. Los conceptos del contexto no mencionados: \`"accion": "MANTENER", "importe": null\`
+        - **Resultado:** El sistema guardará AMBOS conjuntos (los nuevos + los anteriores heredados).
+        - **Ejemplo de Salida Mixta:**
+        \`\`\`json
+        {
+          "header": { "refCta": "...", "comunicadoId": "L01B", "tipoRegistro": "Actualización", "tipoAccion": "SUSTITUCION_PARCIAL", "totalPdf": 150000 },
+          "lineas": [
+            { "id_bd": null, "concepto": "Compuertas Radiales", "categoria": "DAÑO FISICO", "accion": "CREAR", "importe": 80000 },
+            { "id_bd": null, "concepto": "Chumaceras", "categoria": "DAÑO FISICO", "accion": "CREAR", "importe": 70000 },
+            { "id_bd": 105, "concepto": "Canal Principal", "categoria": "DAÑO FISICO", "accion": "MANTENER", "importe": null },
+            { "id_bd": 106, "concepto": "Desazolves Lateral Norte", "categoria": "DESAZOLVES", "accion": "MANTENER", "importe": null }
+          ]
+        }
+        \`\`\`
+
+    * **REGLA 9: RESUMEN DE ACCIONES (DECISIÓN RÁPIDA)**
+        | Situación | tipoAccion Header | Acción Líneas |
+        |-----------|-------------------|---------------|
+        | PDF sin tabla financiera (solo texto) | **INFORMATIVO** | \`"lineas": []\` (vacío) |
+        | PDF con conceptos 100% nuevos | **SUSTITUCION_PARCIAL** | CREAR para nuevos, MANTENER para existentes |
+        | PDF actualiza montos de conceptos existentes | **ACTUALIZACION** | ACTUALIZAR los que cambian |
+        | PDF cancela conceptos | **ACTUALIZACION** | CANCELAR con importe 0 |
+        | PDF mezcla todo (actualiza + crea + cancela) | **SUSTITUCION_PARCIAL** | Cada línea según corresponda |
     `;
     }
 

@@ -467,48 +467,66 @@
 
 <!-- Modal Desglose Presupuestal -->
 <div class="modal fade" id="modalPresupuestoDetalle" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog modal-xl">
-        <div class="modal-content">
-            <div class="modal-header bg-primary text-white">
-                <h5 class="modal-title"><i class="bi bi-list-check me-2"></i>Desglose Presupuestal</h5>
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content border-0 shadow-lg" style="border-radius: 1rem; overflow: hidden;">
+            <div class="modal-header text-white py-3" style="background: linear-gradient(135deg, #0d6efd, #0099ff);">
+                <h5 class="modal-title d-flex align-items-center gap-2">
+                    <i class="bi bi-list-check"></i>
+                    <span>Desglose Presupuestal</span>
+                </h5>
                 <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"
                     aria-label="Close"></button>
             </div>
-            <div class="modal-body p-4">
+            <div class="modal-body p-0">
                 <div class="table-responsive">
-                    <table class="table table-hover align-middle mb-3">
-                        <thead class="table-light">
+                    <table class="table table-hover align-middle mb-0">
+                        <thead class="bg-light sticky-top" style="box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
                             <tr>
-                                <th style="width: 35%; min-width: 250px;">Ubicación</th>
-                                <th style="width: 15%; min-width: 120px;">Categoría</th>
-                                <th class="text-end" style="width: 15%; min-width: 120px;">Importe Anterior</th>
-                                <th class="text-end" style="width: 15%; min-width: 120px;">Importe Actual</th>
-                                <th class="text-end" style="width: 12%; min-width: 100px;">Diferencia</th>
-                                <th class="text-center" style="width: 8%; min-width: 50px;">Acción</th>
+                                <th class="ps-3" style="width: 35%; min-width: 280px;">
+                                    <i class="bi bi-geo-alt text-primary me-1"></i>Ubicación / Concepto
+                                </th>
+                                <th style="width: 14%; min-width: 130px;">
+                                    <i class="bi bi-tag text-secondary me-1"></i>Categoría
+                                </th>
+                                <th class="text-end" style="width: 14%; min-width: 110px;">
+                                    <span class="text-muted">Anterior</span>
+                                </th>
+                                <th class="text-end" style="width: 14%; min-width: 120px;">
+                                    <span class="text-primary fw-bold">Actual</span>
+                                </th>
+                                <th class="text-end" style="width: 13%; min-width: 100px;">
+                                    <i class="bi bi-arrow-left-right text-info me-1"></i>Δ Cambio
+                                </th>
+                                <th class="text-center" style="width: 10%; min-width: 60px;"></th>
                             </tr>
                         </thead>
                         <tbody id="modal-presupuesto-lines-body"></tbody>
-                        <tfoot class="table-light fw-bold">
-                            <tr>
-                                <td colspan="2" class="text-end">Totales:</td>
-                                <td class="text-end" id="modal-total-anterior">$0.00</td>
-                                <td class="text-end text-primary" id="modal-total-actual">$0.00</td>
-                                <td class="text-end" id="modal-total-diferencia">$0.00</td>
+                        <tfoot class="bg-light border-top">
+                            <tr class="fw-bold">
+                                <td colspan="2" class="text-end pe-3">
+                                    <span class="text-muted">Totales:</span>
+                                </td>
+                                <td class="text-end font-monospace" id="modal-total-anterior">$0.00</td>
+                                <td class="text-end text-primary font-monospace fs-5" id="modal-total-actual">$0.00</td>
+                                <td class="text-end font-monospace" id="modal-total-diferencia">$0.00</td>
                                 <td></td>
                             </tr>
                         </tfoot>
                     </table>
                 </div>
-                <button class="btn btn-outline-primary btn-sm" onclick="ComunicadoDetalle.addLineaPresupuesto()">
-                    <i class="bi bi-plus-lg me-1"></i>Agregar Línea
-                </button>
-            </div>
-            <div class="modal-footer bg-light justify-content-between">
-                <div class="fs-5">
-                    <span class="text-muted">Total:</span>
-                    <span class="fw-bold text-primary" id="modal-total-revision">$0.00</span>
+                <div class="p-3 border-top bg-white">
+                    <button class="btn btn-outline-primary btn-sm rounded-pill"
+                        onclick="ComunicadoDetalle.addLineaPresupuesto()">
+                        <i class="bi bi-plus-lg me-1"></i>Agregar Línea
+                    </button>
                 </div>
-                <button type="button" class="btn btn-primary px-4" data-bs-dismiss="modal">
+            </div>
+            <div class="modal-footer py-3" style="background: linear-gradient(to right, #f8f9fa, #e9ecef);">
+                <div class="d-flex align-items-center gap-3">
+                    <span class="text-muted small">Total Revisión:</span>
+                    <span class="fw-bold text-primary fs-4 font-monospace" id="modal-total-revision">$0.00</span>
+                </div>
+                <button type="button" class="btn btn-primary px-4 rounded-pill shadow-sm" data-bs-dismiss="modal">
                     <i class="bi bi-check-lg me-1"></i>Aceptar
                 </button>
             </div>
