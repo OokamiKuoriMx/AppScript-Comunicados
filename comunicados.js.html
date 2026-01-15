@@ -111,12 +111,40 @@
             const selectedCountSpan = document.getElementById('queue-selected-count');
             const selectAllCheckbox = document.getElementById('select-all-files');
 
-            countSpan.innerText = fileQueue.length;
+            // Filter out imported items from visible queue (they're being animated out)
+            const activeQueue = fileQueue.filter(f => f.status !== 'imported');
+
+            countSpan.innerText = activeQueue.length;
 
             // Actualizar conteo de seleccionados
             const selectedCount = fileQueue.filter(f => f.selected && f.status === 'pending').length;
             const pendingCount = fileQueue.filter(f => f.status === 'pending').length;
             if (selectedCountSpan) selectedCountSpan.innerText = selectedCount;
+
+            // ========== STATUS SUMMARY COUNTER (Real-time) ==========
+            const statusSummary = document.getElementById('queue-status-summary');
+            const countAnalyzed = document.getElementById('count-analyzed');
+            const countPendingEl = document.getElementById('count-pending');
+            const countErrors = document.getElementById('count-errors');
+
+            if (statusSummary && countAnalyzed && countPendingEl && countErrors) {
+                const analyzedCount = fileQueue.filter(f => f.status === 'success' || f.status === 'imported').length;
+                const analyzingCount = fileQueue.filter(f => f.status === 'analyzing' || f.status === 'importing').length;
+                const errorCount = fileQueue.filter(f => f.status === 'error' || f.status === 'import-error').length;
+                const pendingCountTotal = fileQueue.filter(f => f.status === 'pending').length;
+
+                countAnalyzed.innerText = analyzedCount;
+                countPendingEl.innerText = pendingCountTotal + analyzingCount; // Include analyzing in pending
+                countErrors.innerText = errorCount;
+
+                // Show summary only when there's activity (not all pending)
+                if (analyzedCount > 0 || errorCount > 0 || analyzingCount > 0) {
+                    statusSummary.classList.remove('d-none');
+                } else {
+                    statusSummary.classList.add('d-none');
+                }
+            }
+            // ========== END STATUS SUMMARY COUNTER ==========
 
             // Actualizar estado del checkbox "Todos"
             if (selectAllCheckbox && pendingCount > 0) {
@@ -124,13 +152,16 @@
                 selectAllCheckbox.indeterminate = selectedCount > 0 && selectedCount < pendingCount;
             }
 
-            if (fileQueue.length === 0) {
-                // Show empty state, hide queue
+            if (activeQueue.length === 0) {
+                // Show empty state, hide queue (all files imported or queue empty)
                 emptyState.classList.remove('d-none');
                 queueState.classList.add('d-none');
                 if (actionBar) actionBar.classList.add('d-none');
                 dom.btnAnalizar.classList.add('d-none');
                 dom.btnAnalizarPdf.classList.add('d-none');
+                // Also hide status summary when empty
+                const statusSummary = document.getElementById('queue-status-summary');
+                if (statusSummary) statusSummary.classList.add('d-none');
                 return;
             }
 
@@ -191,10 +222,14 @@
 
             // Render Items: Unified Cards con datos extraídos
             fileQueue.forEach((item, index) => {
+                // Skip imported items (they're being animated out or already removed)
+                if (item.status === 'imported') return;
+
                 const div = document.createElement('div');
                 div.className = 'queue-card';
-                div.id = `queue-item-${index}`;
+                div.id = `queue-item-${item.id}`;  // Use unique item id instead of array index
                 div.dataset.index = index;
+                div.dataset.itemId = item.id;  // Store item id for reference
 
                 const iconClass = item.type === 'PDF' ? 'pdf' : 'excel';
                 const iconBi = item.type === 'PDF' ? 'bi-file-pdf-fill' : 'bi-file-earmark-spreadsheet-fill';
@@ -1305,10 +1340,8 @@
             let errorCount = 0;
 
             for (const item of toImport) {
-                const idx = fileQueue.indexOf(item);
-
-                // Mostrar spinner EN EL CARD del documento
-                _updateQueueItemStatus(idx, 'importing');
+                // Mostrar spinner EN EL CARD del documento (use item.id for stable reference)
+                _updateQueueItemStatus(item.id, 'importing');
 
                 try {
                     const payload = item.resultado.rawPayload;
@@ -1316,7 +1349,7 @@
                         console.error(`[Import] Sin rawPayload para ${item.name} `);
                         errorCount++;
                         item.importError = 'Sin datos de importación';
-                        _updateQueueItemStatus(idx, 'import-error', 'Sin datos');
+                        _updateQueueItemStatus(item.id, 'import-error', 'Sin datos');
                         continue;
                     }
 
@@ -1327,11 +1360,11 @@
                         successCount++;
                         item.imported = true;
                         item.status = 'imported';
-                        _updateQueueItemStatus(idx, 'imported');
+                        _updateQueueItemStatus(item.id, 'imported');
                     } else {
                         errorCount++;
                         item.importError = result?.message || 'Error desconocido';
-                        _updateQueueItemStatus(idx, 'import-error', item.importError);
+                        _updateQueueItemStatus(item.id, 'import-error', item.importError);
                     }
                 } catch (err) {
                     console.error(`[Import] Error: `, err);
@@ -1348,7 +1381,7 @@
                     f.status === 'success' && f.resultado?.esValido && f.selected && !f.imported
                 ).length;
                 if (validCount > 0) {
-                    dom.btnConfirmar.innerHTML = `< i class="bi bi-cloud-upload me-2" ></i > Importar ${validCount} Comunicado${validCount > 1 ? 's' : ''} `;
+                    dom.btnConfirmar.innerHTML = `<i class="bi bi-cloud-upload me-2"></i>Importar ${validCount} Comunicado${validCount > 1 ? 's' : ''}`;
                 } else {
                     dom.btnConfirmar.classList.add('d-none');
                 }
@@ -1382,9 +1415,12 @@
         };
 
         // Helper para actualizar status visual en la cola
-        const _updateQueueItemStatus = (index, status, message) => {
-            const card = document.getElementById(`queue-item-${index}`);
-            if (!card) return;
+        const _updateQueueItemStatus = (itemId, status, message) => {
+            const card = document.getElementById(`queue-item-${itemId}`);
+            if (!card) {
+                console.warn(`[_updateQueueItemStatus] Card not found for item: ${itemId}`);
+                return;
+            }
 
             // Buscar o crear el área de status de importación
             let importStatusEl = card.querySelector('.import-status-badge');
@@ -1400,11 +1436,11 @@
             if (importStatusEl) {
                 if (status === 'importing') {
                     importStatusEl.innerHTML = `
-        < span class="badge bg-primary" >
-            <span class="spinner-border spinner-border-sm me-1" style="width: 0.8rem; height: 0.8rem;"></span>
+                        <span class="badge bg-primary">
+                            <span class="spinner-border spinner-border-sm me-1" style="width: 0.8rem; height: 0.8rem;"></span>
                             Importando...
-                        </span >
-        `;
+                        </span>
+                    `;
                     card.style.opacity = '0.7';
                 } else if (status === 'imported') {
                     importStatusEl.innerHTML = '<span class="badge bg-success"><i class="bi bi-check-lg me-1"></i>Importado ✓</span>';
@@ -1435,22 +1471,30 @@
 
                     // Fase 3: Remover del DOM
                     setTimeout(() => {
-                        // Encontrar y eliminar del fileQueue por id
-                        const itemId = fileQueue[index]?.id;
-                        if (itemId) {
-                            const queueIndex = fileQueue.findIndex(f => f.id === itemId);
-                            if (queueIndex > -1) {
-                                fileQueue.splice(queueIndex, 1);
-                            }
+                        // Encontrar y eliminar del fileQueue por id (itemId is passed to function)
+                        const queueIndex = fileQueue.findIndex(f => f.id === itemId);
+                        if (queueIndex > -1) {
+                            fileQueue.splice(queueIndex, 1);
                         }
                         card.remove();
-                        // Actualizar contadores
+                        // Actualizar contadores (use activeQueue count)
+                        const activeCount = fileQueue.filter(f => f.status !== 'imported').length;
                         const countSpan = document.getElementById('queue-count');
-                        if (countSpan) countSpan.innerText = fileQueue.length;
+                        if (countSpan) countSpan.innerText = activeCount;
+
+                        // If all done, show empty state
+                        if (activeCount === 0) {
+                            const emptyState = document.getElementById('dropzone-empty-state');
+                            const queueState = document.getElementById('dropzone-queue-state');
+                            const statusSummary = document.getElementById('queue-status-summary');
+                            if (emptyState) emptyState.classList.remove('d-none');
+                            if (queueState) queueState.classList.add('d-none');
+                            if (statusSummary) statusSummary.classList.add('d-none');
+                        }
                     }, 1350);
 
                 } else if (status === 'import-error') {
-                    importStatusEl.innerHTML = `< span class="badge bg-danger" title = "${message}" > <i class="bi bi-x-lg me-1"></i>Error</span > `;
+                    importStatusEl.innerHTML = `<span class="badge bg-danger" title="${message}"><i class="bi bi-x-lg me-1"></i>Error</span>`;
                     card.style.opacity = '1';
                     card.classList.add('border-danger');
                 }

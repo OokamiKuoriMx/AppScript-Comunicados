@@ -24,6 +24,13 @@ const PROMPT_CORE_EXTRACTION = `
 ### PASO 5: Análisis de Presupuestos (Sabueso Geográfico)
 *Objetivo: Extraer montos y asignarles su identidad geográfica correcta.*
 
+* **5.0 EXCLUSIONES CRÍTICAS (ANTI-ALUCINACIÓN):**
+    - **IGNORA FORMATOS DE CAMPO:** Si encuentras tablas manuscritas tituladas "FORMATO DE INSPECCIÓN", "LEVANTAMIENTO", "CROQUIS" o "BITÁCORA", **IGNÓRALAS**. No son presupuestos financieros.
+    - **IGNORA DATOS LOGÍSTICOS:** No extraigas dimensiones (metros, espesores) como importes monetarios.
+    - **LENGUAJE DE RECHAZO:** Si el texto dice "no estaríamos en condiciones de modificar las cantidades", "no procede", "no cuenta con soporte" y NO hay una nueva tabla de presupuesto formal impresa:
+        -> **NO EXTRAIGAS NADA**. Devuelve una lista de líneas vacía [].
+        -> Esto clasificará el documento como **INFORMATIVO**.
+
 * **5.1 Estrategia de Fuente Dual (CRÍTICO):**
     - **NO TE DETENGAS EN EL RESUMEN.** Debes escanear el documento completo.
     - **FUENTE 1: TABLA RESUMEN (Validación):**
@@ -1182,6 +1189,72 @@ Genera el JSON con estructura \`{header, lineas}\`.
         // FASE 2B: "EL CIRUJANO" - MODO ACTUALIZACIÓN (Extracción Diferencial)
         // =====================================================================
         console.log('[_callGeminiWithPdf] MODO: ACTUALIZACIÓN - Fase 2B El Cirujano');
+
+        // =========================================================================
+        // REGLAS ESPECIALES PARA ACTUALIZACIONES INFORMATIVAS O DE RECHAZO
+        // =========================================================================
+        promptSystem += `
+
+## 🛑🛑🛑 REGLA SUPREMA: DETECCIÓN DE RECHAZOS (PRIORIDAD MÁXIMA - CASO L06A) 🛑🛑🛑
+
+**⚠️ EJECUTAR ANTES DE CUALQUIER EXTRACCIÓN DE TABLAS ⚠️**
+
+**PASO 0 (OBLIGATORIO): ANÁLISIS DE SENTIMIENTO DEL DOCUMENTO**
+
+1. **ESCANEO COMPLETO:** Lee TODO el texto del documento PRIMERO, antes de mirar cualquier tabla.
+
+2. **DETECCIÓN DE FRASES DE RECHAZO:** Si encuentras CUALQUIERA de estas frases:
+   - "No estaríamos en condiciones de modificar"
+   - "No estaríamos en condiciones"
+   - "No procede" / "No procede lo solicitado"
+   - "Se descarta" / "Se rechaza"
+   - "Mantiene lo anterior" / "Se mantiene el dictamen"
+   - "Sin soporte técnico" / "No cuenta con soporte"
+   - "No autorizado" / "Improcedente"
+   - "No es indemnizable" / "No aplica"
+   - "Fuera del alcance de la póliza"
+
+3. **ACCIÓN OBLIGATORIA SI DETECTAS RECHAZO:**
+   - Define \`tipoAccion\` = **"INFORMATIVO"**
+   - Define \`lineas\` = **[]** (array vacío, SIN EXCEPCIONES)
+   - Define \`totalPdf\` = **0**
+   - **IGNORA COMPLETAMENTE** cualquier tabla posterior:
+     * "Anexo I"
+     * "Formato de Inspección"
+     * Tablas manuscritas con garabatos
+     * Tablas con medidas (metros, km, m²) sin signos de pesos ($)
+
+4. **PROHIBICIÓN ABSOLUTA:**
+   - Bajo NINGUNA circunstancia extraigas montos de:
+     * Medidas físicas (metros, kilómetros, espesores)
+     * Tablas manuscritas de campo
+     * Formatos de levantamiento o inspección
+   - Si el texto dice "no procede" pero hay una tabla manuscrita, **EL TEXTO MANDA**.
+
+---
+
+### PASO CRÍTICO: DETECCIÓN DE "SIN CAMBIOS" (INFORMATIVO)
+*Objetivo: No inventar cambios donde no los hay.*
+
+* **REGLA 1: Rechazo de Adicionales:**
+  - Si el documento discute reclamos adicionales (ej. "azolve", "nuevos tramos") pero concluye rechazo:
+  - TU ACCIÓN: Devuelve \`lineas: []\` (Array vacío).
+  - El sistema mantendrá automáticamente el presupuesto anterior.
+
+* **REGLA 2: Formatos de Inspección (Handwritten):**
+  - Los documentos pueden contener un "Anexo I" o "Formato de Inspección" manuscrito. **ESO NO ES UN PRESUPUESTO**.
+  - Si ves garabatos, letras a mano, cotas numéricas (ej. "4.30m", "2.0m") o formatos de campo sin signos de pesos ($) claros en columnas de "Importe Total":
+  - **NO LOS PROCESES**. Asume que no hay cambios financieros.
+
+* **REGLA 3: Validación de Moneda:**
+  - Solo extrae valores si la columna dice explícitamente "Importe", "Monto", "Total" o "$".
+  - Nunca asumas que una columna sin encabezado monetario es dinero.
+
+* **REGLA 4: Lenguaje de Rechazo Explícito (Refuerzo):**
+  - Si detectaste lenguaje de rechazo en el PASO 0 Y no hay tabla de presupuesto nueva formal:
+  - **DEVUELVE lineas: []** para marcar como INFORMATIVO.
+  - **EL TEXTO DE RECHAZO SIEMPRE TIENE PRIORIDAD SOBRE CUALQUIER TABLA ANEXA.**
+`;
     }
 
     promptSystem += `
