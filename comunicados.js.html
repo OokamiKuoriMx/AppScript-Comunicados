@@ -1370,7 +1370,7 @@
                     console.error(`[Import] Error: `, err);
                     errorCount++;
                     item.importError = err.message;
-                    _updateQueueItemStatus(idx, 'import-error', err.message);
+                    _updateQueueItemStatus(item.id, 'import-error', err.message);
                 }
             }
 
@@ -1827,7 +1827,7 @@
                         analisisBadges.push('<span class="badge bg-primary ms-1"><i class="bi bi-pencil-square me-1"></i>Actualización Detectada</span>');
                         if (d.analisis.comunicado.cambios && d.analisis.comunicado.cambios.length > 0) {
                             d.analisis.comunicado.cambios.forEach(change => {
-                                analisisBadges.push(`< span class="badge bg-light text-dark border ms-1" > <small>${change}</small></span > `);
+                                analisisBadges.push(`<span class="badge bg-light text-dark border ms-1"><small>${change}</small></span>`);
                             });
                         }
                     } else if (d.analisis.comunicado?.status === 'OMITIDO') {
