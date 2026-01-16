@@ -2134,9 +2134,9 @@
                 isEditing: false,
                 filters: {
                     search: '',
-                    status: 'all',
+                    estado: 'all',
                     year: 'all',
-                    stateFilter: null // Nuevo filtro para el mapa
+                    stateFilter: null // Filtro adicional para el mapa
                 },
                 sort: {
                     column: 'fecha',
@@ -2309,7 +2309,7 @@
                 dom.statTotalSupervision = document.getElementById('stat-total-supervision');
 
                 dom.filterSearch = document.getElementById('filter-search');
-                dom.filterStatus = document.getElementById('filter-status');
+                dom.filterEstado = document.getElementById('filter-estado');
                 dom.filterYear = document.getElementById('filter-year');
                 dom.btnClearFilters = document.getElementById('btn-clear-filters');
 
@@ -2328,8 +2328,8 @@
                 if (dom.filterSearch) {
                     dom.filterSearch.addEventListener('input', (e) => _handleFilterChange('search', e.target.value));
                 }
-                if (dom.filterStatus) {
-                    dom.filterStatus.addEventListener('change', (e) => _handleFilterChange('status', e.target.value));
+                if (dom.filterEstado) {
+                    dom.filterEstado.addEventListener('change', (e) => _handleFilterChange('estado', e.target.value));
                 }
                 if (dom.filterYear) {
                     dom.filterYear.addEventListener('change', (e) => _handleFilterChange('year', e.target.value));
@@ -2338,10 +2338,10 @@
                     dom.btnClearFilters.addEventListener('click', () => {
                         // Reset inputs
                         dom.filterSearch.value = '';
-                        dom.filterStatus.value = 'all';
+                        if (dom.filterEstado) dom.filterEstado.value = 'all';
                         dom.filterYear.value = 'all';
                         // Reset state
-                        state.filters = { search: '', status: 'all', year: 'all', stateFilter: null };
+                        state.filters = { search: '', estado: 'all', year: 'all', stateFilter: null };
                         _renderTable();
                     });
                 }
@@ -2859,13 +2859,12 @@
                     });
                 }
 
-                // 2. Filtro Estado (Status)
-                if (state.filters.status !== 'all') {
+                // 2. Filtro Estado (Geográfico)
+                if (state.filters.estado !== 'all') {
                     data = data.filter(item => {
-                        const tieneSiniestro = item.siniestro && item.siniestro.trim() !== '';
-                        if (state.filters.status === 'con_siniestro') return tieneSiniestro;
-                        if (state.filters.status === 'sin_siniestro') return !tieneSiniestro;
-                        return true;
+                        const itemEstado = (item.estado || '').toUpperCase().trim();
+                        const filterEstado = state.filters.estado.toUpperCase().trim();
+                        return itemEstado === filterEstado;
                     });
                 }
 
@@ -3039,6 +3038,7 @@
 
                     const comunicados = await serverCall('readAllComunicados');
                     state.comunicados = comunicados || [];
+                    _poblarFilterEstados(); // Populate filter dropdown with unique states
                     _calculateStats(state.comunicados); // Actualizar Dashboard
                     if (state.viewMode === 'map') _drawMap(); // Redraw if map active
                     _renderTable(); // Render tabla (filtrada)
@@ -3050,6 +3050,35 @@
                     state.loading = false;
                     if (dom.loader) dom.loader.classList.add('d-none');
                 }
+            }
+
+            /**
+             * Pobla el dropdown de filtro por estado con estados únicos de los comunicados
+             */
+            function _poblarFilterEstados() {
+                const select = dom.filterEstado;
+                if (!select) {
+                    console.warn('Select filter-estado NO encontrado en el DOM');
+                    return;
+                }
+
+                // Extraer estados únicos de los comunicados cargados
+                const estadosUnicos = [...new Set(
+                    state.comunicados
+                        .map(c => (c.estado || '').trim())
+                        .filter(e => e) // Filtrar vacíos
+                )].sort();
+
+                console.log(`Poblando filtro de estados con ${estadosUnicos.length} estados únicos:`, estadosUnicos);
+
+                // Mantener la opción "Todos los Estados" y agregar los estados únicos
+                select.innerHTML = '<option value="all">Todos los Estados</option>';
+                estadosUnicos.forEach(est => {
+                    const option = document.createElement('option');
+                    option.value = est;
+                    option.textContent = est;
+                    select.appendChild(option);
+                });
             }
 
             /**

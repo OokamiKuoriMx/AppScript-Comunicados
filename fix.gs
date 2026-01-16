@@ -342,3 +342,64 @@ function limpiarDescripcionesHuerfanas() {
     console.log('---------------------------------------------------');
     console.log('[FIN] Proceso completado.');
 }
+
+/**
+ * ===================================================================
+ * SCRIPT DE SETUP: Crear Hojas para módulo de Estimaciones
+ * ===================================================================
+ * 
+ * Este script crea las hojas necesarias para el módulo de Estimaciones
+ * si no existen en el Spreadsheet.
+ * 
+ * INSTRUCCIONES:
+ * 1. Ejecutar desde el editor de Apps Script: Ejecutar > crearHojasEstimaciones
+ * 2. Verificar que se crearon las 4 hojas en el Spreadsheet
+ * ===================================================================
+ */
+function crearHojasEstimaciones() {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+
+    const hojas = [
+        {
+            nombre: 'Estimaciones',
+            headers: ['id', 'idComunicado', 'tipo', 'numero', 'montoAutorizado',
+                'fechaCorte', 'periodoInicio', 'periodoFin', 'estatusInterno']
+        },
+        {
+            nombre: 'FacturasEstimaciones',
+            headers: ['id', 'idEstimacion', 'folioFactura', 'uuid', 'monto',
+                'estatusSAT', 'archivoXml', 'archivoPdf']
+        },
+        {
+            nombre: 'BitacoraEstimaciones',
+            headers: ['id', 'idEstimacion', 'fecha', 'observacion', 'usuario']
+        },
+        {
+            nombre: 'BitacoraFacturas',
+            headers: ['id', 'idFactura', 'fecha', 'tipoEvento', 'observacion', 'usuario']
+        }
+    ];
+
+    console.log('=== INICIO: Creación de hojas para Estimaciones ===');
+
+    hojas.forEach(hoja => {
+        let sheet = ss.getSheetByName(hoja.nombre);
+        if (!sheet) {
+            sheet = ss.insertSheet(hoja.nombre);
+            sheet.getRange(1, 1, 1, hoja.headers.length).setValues([hoja.headers]);
+            // Formato de encabezado
+            sheet.getRange(1, 1, 1, hoja.headers.length)
+                .setBackground('#4285f4')
+                .setFontColor('#ffffff')
+                .setFontWeight('bold');
+            // Congelar fila de encabezado
+            sheet.setFrozenRows(1);
+            console.log(`✓ Hoja "${hoja.nombre}" creada con ${hoja.headers.length} columnas.`);
+        } else {
+            console.log(`○ Hoja "${hoja.nombre}" ya existe, se omite.`);
+        }
+    });
+
+    console.log('=== FIN: Proceso terminado ===');
+}
+

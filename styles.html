@@ -418,4 +418,182 @@
     .cursor-pointer {
         cursor: pointer;
     }
+
+    /* ====================================================================
+       MATRIX UPDATES TABLE - Professional Sober Design
+       ==================================================================== */
+    .matrix-container {
+        position: relative;
+        max-height: 75vh;
+        overflow: auto;
+        border: 1px solid #dee2e6;
+        border-radius: 0.5rem;
+        background: #fff;
+    }
+
+    .matrix-table {
+        border-collapse: separate;
+        border-spacing: 0;
+        font-size: 0.85rem;
+    }
+
+    .matrix-table th,
+    .matrix-table td {
+        padding: 0.6rem 0.75rem;
+        border-bottom: 1px solid #e9ecef;
+        border-right: 1px solid #e9ecef;
+        white-space: nowrap;
+    }
+
+    /* Sticky first column (concepts) */
+    .matrix-table th.sticky-col,
+    .matrix-table td.sticky-col {
+        position: sticky;
+        left: 0;
+        z-index: 2;
+        background: #f8f9fa;
+        min-width: 200px;
+        max-width: 280px;
+        white-space: normal;
+        box-shadow: 2px 0 4px rgba(0, 0, 0, 0.04);
+    }
+
+    /* Sticky header row */
+    .matrix-table thead th {
+        position: sticky;
+        top: 0;
+        z-index: 3;
+        background: linear-gradient(180deg, #f1f5f9 0%, #e2e8f0 100%);
+        font-weight: 600;
+        color: #334155;
+        text-transform: uppercase;
+        font-size: 0.72rem;
+        letter-spacing: 0.5px;
+        border-bottom: 2px solid #cbd5e1;
+    }
+
+    /* Corner cell (sticky both ways) */
+    .matrix-table thead th.sticky-col {
+        z-index: 4;
+        background: linear-gradient(135deg, #e2e8f0 0%, #cbd5e1 100%);
+    }
+
+    /* Data cells styling */
+    .matrix-table tbody td {
+        background: #fff;
+        text-align: right;
+        font-family: 'SF Mono', 'Fira Code', monospace;
+        font-size: 0.82rem;
+    }
+
+    .matrix-table tbody td.sticky-col {
+        text-align: left;
+        font-family: inherit;
+        font-weight: 500;
+        color: #1e293b;
+    }
+
+    /* Form controls inside matrix */
+    .matrix-table .form-control,
+    .matrix-table .form-select {
+        background-color: #fff;
+    }
+
+    .matrix-table .form-control:disabled,
+    .matrix-table .form-select:disabled,
+    .matrix-table .form-control[readonly] {
+        background-color: #f1f5f9;
+        color: #64748b;
+    }
+
+    /* Row alternating */
+    .matrix-table tbody tr:nth-child(even) td {
+        background: #fafbfc;
+    }
+
+    .matrix-table tbody tr:nth-child(even) td.sticky-col {
+        background: #f3f4f6;
+    }
+
+    /* Row hover */
+    .matrix-table tbody tr:hover td {
+        background: rgba(59, 130, 246, 0.06);
+    }
+
+    .matrix-table tbody tr:hover td.sticky-col {
+        background: rgba(59, 130, 246, 0.08);
+    }
+
+    /* Footer totals */
+    .matrix-table tfoot td {
+        position: sticky;
+        bottom: 0;
+        z-index: 2;
+        background: linear-gradient(0deg, #f1f5f9 0%, #e2e8f0 100%);
+        font-weight: 700;
+        border-top: 2px solid #cbd5e1;
+        color: #1e293b;
+    }
+
+    .matrix-table tfoot td.sticky-col {
+        z-index: 4;
+    }
+
+    /* Delta indicators */
+    .delta-up {
+        color: #059669;
+        font-size: 0.82rem;
+        font-weight: 700;
+        font-family: 'SF Mono', 'Fira Code', monospace;
+    }
+
+    .delta-down {
+        color: #dc2626;
+        font-size: 0.82rem;
+        font-weight: 700;
+        font-family: 'SF Mono', 'Fira Code', monospace;
+    }
+
+    .delta-neutral {
+        color: #94a3b8;
+        font-size: 0.82rem;
+    }
+
+    /* Vigente column highlight */
+    .matrix-table .col-vigente {
+        background: #eff6ff !important;
+        border-left: 2px solid #0d6efd;
+    }
+
+    .matrix-table thead th.col-vigente {
+        background: linear-gradient(180deg, #dbeafe 0%, #bfdbfe 100%);
+        color: #1e40af;
+    }
+
+    .matrix-table tfoot td.col-vigente {
+        background: linear-gradient(0deg, #dbeafe 0%, #bfdbfe 100%);
+        color: #1e40af;
+    }
+
+    /* Category badge in matrix */
+    .cat-badge {
+        display: inline-block;
+        padding: 0.15rem 0.4rem;
+        border-radius: 0.25rem;
+        font-size: 0.65rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        background: #e2e8f0;
+        color: #475569;
+    }
+
+    .cat-badge.cat-df {
+        background: #fef3c7;
+        color: #92400e;
+    }
+
+    .cat-badge.cat-dz {
+        background: #dbeafe;
+        color: #1e40af;
+    }
 </style>

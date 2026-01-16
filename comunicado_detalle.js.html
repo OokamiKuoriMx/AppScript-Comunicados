@@ -369,6 +369,7 @@
             _renderEquipo();
             _renderFinanciero();
             _renderTickets();
+            _renderMatrixActualizaciones();
 
             // Mostrar contenido principal
             const content = document.getElementById('detalle-content');
@@ -596,6 +597,144 @@
         function _addTicket() {
             state.data.tickets.push({ numero: '', fecha: new Date().toISOString(), asunto: '', estado: 'Abierto' });
             _renderTickets();
+        }
+
+        // --- MATRIX ACTUALIZACIONES ---
+        function _renderMatrixActualizaciones() {
+            const headerEl = document.getElementById('matrix-header');
+            const bodyEl = document.getElementById('matrix-body');
+            const footerEl = document.getElementById('matrix-footer');
+            const emptyEl = document.getElementById('matrix-empty');
+            const wrapperEl = document.getElementById('matrix-wrapper');
+            const countConceptos = document.getElementById('matrix-count-conceptos');
+            const countUpdates = document.getElementById('matrix-count-updates');
+
+            if (!headerEl || !bodyEl) return;
+
+            const actualizaciones = state.data.presupuesto || [];
+
+            // Handle empty state
+            if (actualizaciones.length === 0 || actualizaciones.every(a => !a.lineas || a.lineas.length === 0)) {
+                if (wrapperEl) wrapperEl.classList.add('d-none');
+                if (emptyEl) emptyEl.classList.remove('d-none');
+                if (countConceptos) countConceptos.textContent = '0 conceptos';
+                if (countUpdates) countUpdates.textContent = '0 actualizaciones';
+                return;
+            }
+
+            if (wrapperEl) wrapperEl.classList.remove('d-none');
+            if (emptyEl) emptyEl.classList.add('d-none');
+
+            // 1. Collect all unique concepts across all updates
+            const conceptosMap = new Map();
+            actualizaciones.forEach((act, actIdx) => {
+                (act.lineas || []).forEach(linea => {
+                    const key = (linea.descripcion || '').toUpperCase().trim();
+                    if (key && !conceptosMap.has(key)) {
+                        conceptosMap.set(key, {
+                            descripcion: linea.descripcion || '',
+                            categoria: linea.categoria || '',
+                            firstSeen: actIdx
+                        });
+                    }
+                });
+            });
+
+            // 2. Build matrix: [conceptKey] -> { meta, importes: [importe per update] }
+            const matrix = {};
+            conceptosMap.forEach((meta, key) => {
+                matrix[key] = { meta, importes: [] };
+                actualizaciones.forEach((act, idx) => {
+                    const linea = (act.lineas || []).find(l =>
+                        (l.descripcion || '').toUpperCase().trim() === key
+                    );
+                    matrix[key].importes[idx] = linea ? (parseFloat(linea.importe) || 0) : null;
+                });
+            });
+
+            const conceptKeys = Object.keys(matrix);
+            const numActualizaciones = actualizaciones.length;
+
+            // Update counters
+            if (countConceptos) countConceptos.textContent = `${conceptKeys.length} concepto${conceptKeys.length !== 1 ? 's' : ''}`;
+            if (countUpdates) countUpdates.textContent = `${numActualizaciones} actualizaci${numActualizaciones !== 1 ? 'ones' : 'ón'}`;
+
+            // 3. Build header row
+            let headerHtml = '<tr>';
+            headerHtml += '<th class="sticky-col">Ubicación / Concepto</th>';
+            headerHtml += '<th>Cat.</th>';
+            actualizaciones.forEach((act, idx) => {
+                const nombre = idx === 0 ? 'Origen' : (act.revision || `Rev ${String.fromCharCode(65 + idx - 1)}`);
+                const fecha = _formatDateISO(act.fecha);
+                const isLast = idx === numActualizaciones - 1;
+                headerHtml += `<th class="text-center ${isLast ? 'col-vigente' : ''}">${nombre}${fecha ? `<br><span style="font-weight:400;text-transform:none;font-size:0.68rem;color:#64748b;">${fecha}</span>` : ''}</th>`;
+            });
+            headerHtml += '</tr>';
+            headerEl.innerHTML = headerHtml;
+
+            // 4. Build body rows
+            let bodyHtml = '';
+            conceptKeys.forEach(key => {
+                const data = matrix[key];
+                const cat = data.meta.categoria || '';
+                const catClass = cat.includes('DAÑO') || cat.includes('FISICO') ? 'cat-df' : cat.includes('DESAZ') ? 'cat-dz' : '';
+
+                bodyHtml += '<tr>';
+                bodyHtml += `<td class="sticky-col">${_escapeHtml(data.meta.descripcion)}</td>`;
+                bodyHtml += `<td><span class="cat-badge ${catClass}">${cat || '—'}</span></td>`;
+
+                data.importes.forEach((importe, idx) => {
+                    const isLast = idx === numActualizaciones - 1;
+                    const prev = idx > 0 ? data.importes[idx - 1] : null;
+                    const hasPrev = prev !== null;
+                    let delta = null;
+                    let deltaHtml = '';
+
+                    if (importe !== null && hasPrev) {
+                        delta = importe - prev;
+                        if (delta > 0) {
+                            deltaHtml = `<div class="delta-up">+${_formatCurrency(delta)}</div>`;
+                        } else if (delta < 0) {
+                            deltaHtml = `<div class="delta-down">${_formatCurrency(delta)}</div>`;
+                        }
+                    } else if (importe !== null && idx === 0) {
+                        // Origin - show as new
+                        deltaHtml = `<div class="delta-up">+${_formatCurrency(importe)}</div>`;
+                    } else if (importe !== null && !hasPrev) {
+                        // New concept in this revision
+                        deltaHtml = `<div class="delta-up">NUEVO</div>`;
+                    }
+
+                    const cellValue = importe !== null ? _formatCurrency(importe) : '<span class="text-muted">—</span>';
+                    bodyHtml += `<td class="${isLast ? 'col-vigente' : ''}">${cellValue}${deltaHtml}</td>`;
+                });
+                bodyHtml += '</tr>';
+            });
+            bodyEl.innerHTML = bodyHtml;
+
+            // 5. Build footer with totals
+            let footerHtml = '<tr>';
+            footerHtml += '<td class="sticky-col text-end" colspan="2"><strong>Totales</strong></td>';
+            actualizaciones.forEach((act, idx) => {
+                const isLast = idx === numActualizaciones - 1;
+                const total = conceptKeys.reduce((sum, key) => sum + (matrix[key].importes[idx] || 0), 0);
+                const prevTotal = idx > 0 ? conceptKeys.reduce((sum, key) => sum + (matrix[key].importes[idx - 1] || 0), 0) : 0;
+                const deltaTotal = total - prevTotal;
+                let deltaHtml = '';
+                if (idx > 0 && deltaTotal !== 0) {
+                    deltaHtml = deltaTotal > 0
+                        ? `<div class="delta-up">+${_formatCurrency(deltaTotal)}</div>`
+                        : `<div class="delta-down">${_formatCurrency(deltaTotal)}</div>`;
+                }
+                footerHtml += `<td class="${isLast ? 'col-vigente' : ''}">${_formatCurrency(total)}${deltaHtml}</td>`;
+            });
+            footerHtml += '</tr>';
+            footerEl.innerHTML = footerHtml;
+        }
+
+        function _escapeHtml(str) {
+            if (!str) return '';
+            return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
         }
 
         // --- PUBLIC HELPERS (Exports) ---
@@ -1092,30 +1231,23 @@
                 const importeAnterior = esOrigen ? 0 : (prevLine ? (parseFloat(prevLine.importe) || 0) : 0);
                 const diferencia = importeActual - importeAnterior;
 
-                // Color coding for diferencia
-                let difClass = 'text-muted';
+                // Color coding for diferencia - using matrix delta classes
+                let difClass = 'delta-neutral';
                 let difPrefix = '';
-                let difIcon = '';
+                let difHtml = '';
                 if (diferencia > 0) {
-                    difClass = 'text-success fw-bold';
+                    difClass = 'delta-up';
                     difPrefix = '+';
-                    difIcon = '<i class="bi bi-arrow-up-short"></i>';
+                    difHtml = `<div class="delta-up">${difPrefix}${_formatCurrency(diferencia)}</div>`;
                 } else if (diferencia < 0) {
-                    difClass = 'text-danger fw-bold';
-                    difIcon = '<i class="bi bi-arrow-down-short"></i>';
+                    difClass = 'delta-down';
+                    difHtml = `<div class="delta-down">${_formatCurrency(diferencia)}</div>`;
+                } else {
+                    difHtml = `<span class="text-muted">—</span>`;
                 }
 
-                // MEJORA: Estilo de fila según tipo
-                // - Verde suave para líneas nuevas (incluyendo todas las de origen)
-                // - Normal para líneas existentes sin cambios
-                // - Azul suave para líneas con cambios
-                let rowClass = '';
-                if (esOrigen || esLineaNueva) {
-                    rowClass = 'table-success'; // Verde suave para nuevas
-                } else if (diferencia !== 0) {
-                    rowClass = 'table-info'; // Azul suave para modificadas
-                }
-                tr.className = rowClass;
+                // Row class - subtle styling without Bootstrap colored backgrounds
+                tr.className = '';
 
                 // Build Category Options con badge
                 const currentCat = (l.categoria || '').trim();
@@ -1139,38 +1271,53 @@
                 // Badge de estado para indicar visualmente tipo de línea
                 let statusBadge = '';
                 if (esOrigen) {
-                    statusBadge = '<span class="badge bg-success bg-opacity-75 ms-1" style="font-size: 0.6rem;">NUEVA</span>';
+                    statusBadge = '<span class="cat-badge" style="background:#dcfce7;color:#166534;">NUEVA</span>';
                 } else if (esLineaNueva) {
-                    statusBadge = '<span class="badge bg-success ms-1" style="font-size: 0.6rem;">NUEVA</span>';
+                    statusBadge = '<span class="cat-badge" style="background:#dcfce7;color:#166534;">NUEVA</span>';
                 } else if (diferencia !== 0) {
-                    statusBadge = '<span class="badge bg-info ms-1" style="font-size: 0.6rem;">MODIF</span>';
+                    statusBadge = '<span class="cat-badge" style="background:#dbeafe;color:#1e40af;">MODIF</span>';
                 }
 
+                // ======= LOCKING LOGIC =======
+                // Reglas:
+                // - Descripción: Solo editable en ORIGEN o líneas nuevas de la última revisión
+                // - Categoría: NUNCA editable en actualizaciones (solo ORIGEN)
+                // - Importe: Editable en ORIGEN, o en la ÚLTIMA revisión (cualquier línea)
+
+                const puedeEditarDescripcion = esOrigen || (esUltimaRevision && esLineaNuevaEnEstaRevision);
+                const puedeEditarCategoria = esOrigen; // Solo en ORIGEN
+                const puedeEditarImporte = esOrigen || esUltimaRevision;
+
+                // Generar atributos disabled/readonly
+                const descReadonly = puedeEditarDescripcion ? '' : 'readonly';
+                const catDisabled = puedeEditarCategoria ? '' : 'disabled';
+                const impReadonly = puedeEditarImporte ? '' : 'readonly';
+
                 tr.innerHTML = `
-                    <td>
-                        <div class="d-flex align-items-center">
-                            <input type="text" class="form-control form-control-sm" value="${l.descripcion || ''}" placeholder="Ubicación / Concepto" onchange="ComunicadoDetalle.updateLineaPresupuesto(${i}, 'descripcion', this.value)">
+                    <td class="sticky-col">
+                        <div class="d-flex align-items-center gap-2">
+                            <input type="text" class="form-control form-control-sm border-0" value="${l.descripcion || ''}" placeholder="Ubicación / Concepto" ${descReadonly} onchange="ComunicadoDetalle.updateLineaPresupuesto(${i}, 'descripcion', this.value)">
                             ${statusBadge}
                         </div>
                     </td>
                     <td>
-                        <select class="form-select form-select-sm ${currentCat.includes('DAÑO') || currentCat.includes('FISICO') ? 'border-warning' : currentCat.includes('DESAZ') ? 'border-info' : ''}" onchange="ComunicadoDetalle.updateLineaPresupuesto(${i}, 'categoria', this.value)">
+                        <select class="form-select form-select-sm border-0" style="min-width:100px;" ${catDisabled} onchange="ComunicadoDetalle.updateLineaPresupuesto(${i}, 'categoria', this.value)">
                             ${catOptions}
                         </select>
                     </td>
-                    <td class="text-end font-monospace small ${esOrigen ? 'text-muted' : ''}">
+                    <td class="text-end ${esOrigen ? 'text-muted' : ''}">
                         ${_formatCurrency(importeAnterior)}
                     </td>
-                    <td><input type="text" class="form-control form-control-sm text-end currency-input font-monospace" value="${_formatCurrency(importeActual)}" onchange="ComunicadoDetalle.updateLineaPresupuesto(${i}, 'importe', this.value)"></td>
-                    <td class="text-end ${difClass} font-monospace">
-                        <span class="d-flex align-items-center justify-content-end">
-                            ${difIcon}${difPrefix}${_formatCurrency(Math.abs(diferencia))}
-                        </span>
+                    <td class="col-vigente">
+                        <input type="text" class="form-control form-control-sm text-end currency-input border-0 fw-bold" value="${_formatCurrency(importeActual)}" ${impReadonly} onchange="ComunicadoDetalle.updateLineaPresupuesto(${i}, 'importe', this.value)">
+                    </td>
+                    <td class="text-end fw-bold">
+                        ${difHtml}
                     </td>
                     <td class="text-center">
                         ${puedeEliminar
-                        ? `<button class="btn btn-sm text-danger border-0" onclick="ComunicadoDetalle.removeLineaPresupuesto(${i})" title="Eliminar línea"><i class="bi bi-trash"></i></button>`
-                        : `<span class="text-muted" title="${tieneRevisionesPosteriores ? 'Revisión bloqueada - hay actualizaciones posteriores' : 'Línea vinculada a actualizaciones anteriores'}"><i class="bi bi-lock-fill"></i></span>`
+                        ? `<button class="btn btn-sm text-danger border-0 p-0" onclick="ComunicadoDetalle.removeLineaPresupuesto(${i})" title="Eliminar línea"><i class="bi bi-trash"></i></button>`
+                        : `<span class="text-muted" title="${tieneRevisionesPosteriores ? 'Revisión bloqueada' : 'Línea vinculada'}"><i class="bi bi-lock-fill"></i></span>`
                     }
                     </td>
                 `;
@@ -1283,9 +1430,15 @@
             if (elRevision) elRevision.textContent = _formatCurrency(totalActual);
 
             if (elDif) {
-                const prefix = totalDiferencia > 0 ? '+' : '';
-                elDif.innerHTML = (totalDiferencia > 0 ? '<i class="bi bi-arrow-up-short"></i>' : totalDiferencia < 0 ? '<i class="bi bi-arrow-down-short"></i>' : '') + prefix + _formatCurrency(totalDiferencia);
-                elDif.className = 'text-end fw-bold font-monospace ' + (totalDiferencia > 0 ? 'text-success' : totalDiferencia < 0 ? 'text-danger' : 'text-muted');
+                let difHtml = '';
+                if (totalDiferencia > 0) {
+                    difHtml = `<div class="delta-up">+${_formatCurrency(totalDiferencia)}</div>`;
+                } else if (totalDiferencia < 0) {
+                    difHtml = `<div class="delta-down">${_formatCurrency(totalDiferencia)}</div>`;
+                } else {
+                    difHtml = `<span class="text-muted">—</span>`;
+                }
+                elDif.innerHTML = difHtml;
             }
 
             // Actualizar modelo del padre y tabla principal

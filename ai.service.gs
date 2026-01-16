@@ -379,6 +379,40 @@ function procesarPdfIA(payload, optFilename) {
                 accion: esOrigen ? 'CREAR' : (linea.accion || 'MANTENER')
             }));
             console.log(`[procesarPdfIA] Normalizadas ${resultadoFinal.lineas.length} líneas a MAYÚSCULAS${esOrigen ? ' (todas con accion:CREAR)' : ''}`);
+
+            // =====================================================================
+            // FIX: CORRECCIÓN DE ACCIÓN BASADA EN COMPARACIÓN DE IMPORTES
+            // Si la IA dice MANTENER pero el importe cambió, forzar ACTUALIZAR
+            // =====================================================================
+            if (!esOrigen && expectedLines.length > 0) {
+                const expectedMap = new Map();
+                expectedLines.forEach(e => {
+                    const key = `${String(e.concepto).toUpperCase().trim()}|${String(e.categoria).toUpperCase().trim()}`;
+                    expectedMap.set(key, e);
+                });
+
+                let correccionesAplicadas = 0;
+                resultadoFinal.lineas = resultadoFinal.lineas.map(linea => {
+                    if (linea.accion === 'MANTENER' && linea.importe !== null && linea.importe !== undefined) {
+                        const key = `${linea.concepto}|${linea.categoria}`;
+                        const previo = expectedMap.get(key);
+                        if (previo) {
+                            const importePrevio = parseFloat(previo.importe_previo) || 0;
+                            const importeNuevo = parseFloat(linea.importe) || 0;
+                            if (Math.abs(importePrevio - importeNuevo) > 0.01) {
+                                console.log(`[procesarPdfIA] FIX Acción: ${linea.concepto.substring(0, 30)}... MANTENER → ACTUALIZAR ($${importePrevio.toFixed(2)} → $${importeNuevo.toFixed(2)})`);
+                                correccionesAplicadas++;
+                                return { ...linea, accion: 'ACTUALIZAR' };
+                            }
+                        }
+                    }
+                    return linea;
+                });
+
+                if (correccionesAplicadas > 0) {
+                    console.log(`[procesarPdfIA] ✓ Corregidas ${correccionesAplicadas} acciones de MANTENER → ACTUALIZAR`);
+                }
+            }
         }
 
         // =====================================================================

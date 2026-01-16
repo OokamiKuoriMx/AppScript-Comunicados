@@ -7,39 +7,46 @@
         </div>
     </div>
 
-    <!-- Cards Container -->
-    <div class="row g-4 justify-content-center">
+    <!-- Cards Container - Fila 1: Comunicados -->
+    <div class="row g-4 justify-content-center mb-4">
 
-        <!-- Opción 1: Comunicados -->
-        <div class="col-md-5 col-lg-4">
-            <div class="card h-100 border-0 shadow-lg hover-card card-import-option"
+        <!-- Opción 1: Importación con IA (PDFs) -->
+        <div class="col-md-6 col-lg-4">
+            <div class="card h-100 border-0 shadow-lg hover-card card-import-option position-relative"
                 onclick="Importaciones.abrirComunicados()">
+                <!-- Badge AI -->
+                <div class="position-absolute top-0 end-0 m-3">
+                    <span class="badge bg-warning text-dark shadow-sm px-3 py-2 rounded-pill">
+                        <i class="bi bi-stars me-1"></i>Con IA
+                    </span>
+                </div>
                 <div class="card-body text-center p-5">
-                    <div class="icon-circle mb-4 bg-primary bg-opacity-10 text-primary">
-                        <i class="bi bi-file-earmark-text-fill display-4"></i>
+                    <div class="icon-circle mb-4"
+                        style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+                        <i class="bi bi-file-earmark-pdf-fill display-4 text-white"></i>
                     </div>
-                    <h4 class="fw-bold mb-3">Comunicados</h4>
+                    <h4 class="fw-bold mb-3">Comunicados PDF</h4>
                     <p class="text-muted mb-4">
-                        Importe masivamente comunicados, siniestros y referencias desde archivos Excel o CSV.
+                        Importe comunicados desde <strong>archivos PDF</strong> con extracción inteligente mediante IA.
                     </p>
-                    <button class="btn btn-outline-primary rounded-pill px-4">
-                        <i class="bi bi-upload me-2"></i>Iniciar Carga
+                    <button class="btn btn-primary rounded-pill px-4 shadow-sm">
+                        <i class="bi bi-robot me-2"></i>Abrir Importador IA
                     </button>
                 </div>
             </div>
         </div>
 
-        <!-- Opción 2: Facturas -->
-        <div class="col-md-5 col-lg-4">
+        <!-- Opción 2: Facturas de Comunicados -->
+        <div class="col-md-6 col-lg-4">
             <div class="card h-100 border-0 shadow-lg hover-card card-import-option"
                 onclick="Importaciones.abrirFacturas()">
                 <div class="card-body text-center p-5">
                     <div class="icon-circle mb-4 bg-success bg-opacity-10 text-success">
                         <i class="bi bi-receipt display-4"></i>
                     </div>
-                    <h4 class="fw-bold mb-3">Facturas</h4>
+                    <h4 class="fw-bold mb-3">Facturas Comunicados</h4>
                     <p class="text-muted mb-4">
-                        Cargue facturas y asócielas automáticamente a comunicados existentes mediante UUID.
+                        Cargue facturas y asócielas a comunicados mediante UUID del SAT.
                     </p>
                     <button class="btn btn-outline-success rounded-pill px-4">
                         <i class="bi bi-upload me-2"></i>Iniciar Carga
@@ -49,6 +56,95 @@
         </div>
 
     </div>
+
+    <!-- Cards Container - Fila 2: Estimaciones -->
+    <div class="row g-4 justify-content-center">
+
+        <!-- Opción 3: Estimaciones -->
+        <div class="col-md-6 col-lg-4">
+            <div class="card h-100 border-0 shadow-lg hover-card card-import-option">
+                <div class="card-body text-center p-5">
+                    <div class="icon-circle mb-4 bg-info bg-opacity-10 text-info">
+                        <i class="bi bi-clipboard-check display-4"></i>
+                    </div>
+                    <h4 class="fw-bold mb-3">Estimaciones</h4>
+                    <p class="text-muted mb-4">
+                        Importe estimaciones, anticipos y finiquitos desde archivos Control_Documentación.
+                    </p>
+                    <div class="d-flex gap-2 justify-content-center flex-wrap">
+                        <button class="btn btn-outline-info rounded-pill px-3"
+                            onclick="event.stopPropagation(); Importaciones.abrirEstimaciones()">
+                            <i class="bi bi-upload me-1"></i>Iniciar Carga
+                        </button>
+                        <button class="btn btn-outline-secondary rounded-pill px-3"
+                            onclick="event.stopPropagation(); Importaciones.descargarPlantilla('estimaciones')"
+                            title="Descargar plantilla">
+                            <i class="bi bi-download me-1"></i>Plantilla
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Opción 4: Facturas de Estimaciones -->
+        <div class="col-md-6 col-lg-4">
+            <div class="card h-100 border-0 shadow-lg hover-card card-import-option">
+                <div class="card-body text-center p-5">
+                    <div class="icon-circle mb-4 bg-warning bg-opacity-10 text-warning">
+                        <i class="bi bi-receipt-cutoff display-4"></i>
+                    </div>
+                    <h4 class="fw-bold mb-3">Facturas Estimaciones</h4>
+                    <p class="text-muted mb-4">
+                        Vincule facturas a estimaciones existentes usando el UUID de cada estimación.
+                    </p>
+                    <div class="d-flex gap-2 justify-content-center flex-wrap">
+                        <button class="btn btn-outline-warning rounded-pill px-3"
+                            onclick="event.stopPropagation(); Importaciones.abrirFacturasEstimaciones()">
+                            <i class="bi bi-upload me-1"></i>Iniciar Carga
+                        </button>
+                        <button class="btn btn-outline-secondary rounded-pill px-3"
+                            onclick="event.stopPropagation(); Importaciones.descargarPlantilla('facturas')"
+                            title="Descargar plantilla">
+                            <i class="bi bi-download me-1"></i>Plantilla
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Cards Container - Fila 3: Contratistas -->
+    <div class="row g-4 justify-content-center mt-2">
+
+        <!-- Opción 5: Relación de Contratistas -->
+        <div class="col-md-6 col-lg-4">
+            <div class="card h-100 border-0 shadow-lg hover-card card-import-option">
+                <div class="card-body text-center p-5">
+                    <div class="icon-circle mb-4 bg-primary bg-opacity-10 text-primary">
+                        <i class="bi bi-building display-4"></i>
+                    </div>
+                    <h4 class="fw-bold mb-3">Relación Contratistas</h4>
+                    <p class="text-muted mb-4">
+                        Vincule empresas contratistas a comunicados origen de forma masiva.
+                    </p>
+                    <div class="d-flex gap-2 justify-content-center flex-wrap">
+                        <button class="btn btn-outline-primary rounded-pill px-3"
+                            onclick="event.stopPropagation(); Importaciones.abrirContratistas()">
+                            <i class="bi bi-upload me-1"></i>Iniciar Carga
+                        </button>
+                        <button class="btn btn-outline-secondary rounded-pill px-3"
+                            onclick="event.stopPropagation(); Importaciones.descargarPlantilla('contratistas')"
+                            title="Descargar plantilla">
+                            <i class="bi bi-download me-1"></i>Plantilla
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
 </div>
 
 <!-- Modal específico para Facturas (El de Comunicados reutiliza el existente global) -->

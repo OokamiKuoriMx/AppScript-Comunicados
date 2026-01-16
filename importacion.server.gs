@@ -1906,7 +1906,39 @@ function _procesarBatchInterno(loteAgrupado, cache) {
                 if (yaExiste) {
                     logBatch(`[${contexto}] FASE 3: Ya existe revisión '${tipoRevision}' para ComID ${idComunicado}`);
 
-                    // NUEVO: Sincronizar líneas de la actualización existente
+                    // =============================
+                    // FIX: ACTUALIZAR MONTO EN TABLA ACTUALIZACIONES
+                    // =============================
+                    const actExistenteOrden = actsPrevias.sort((a, b) =>
+                        Number(b.consecutivo) - Number(a.consecutivo)
+                    )[0];
+                    
+                    if (actExistenteOrden && actExistenteOrden.id && doc.header.totalPdf !== undefined) {
+                        const montoNuevo = parseFloat(doc.header.totalPdf) || 0;
+                        const montoExistente = parseFloat(actExistenteOrden.monto) || 0;
+                        
+                        if (Math.abs(montoNuevo - montoExistente) > 0.01) {
+                            logBatch(`[${contexto}] FASE 3: Actualizando monto de ActID ${actExistenteOrden.id}: $${montoExistente} -> $${montoNuevo}`);
+                            try {
+                                const resUpdMonto = updateRow('actualizaciones', actExistenteOrden.id, {
+                                    monto: montoNuevo,
+                                    montoSupervisión: montoNuevo * 0.05
+                                });
+                                if (resUpdMonto.success) {
+                                    counts.updatedMonto = (counts.updatedMonto || 0) + 1;
+                                    // Actualizar cache local
+                                    actExistenteOrden.monto = montoNuevo;
+                                    actExistenteOrden.montoSupervisión = montoNuevo * 0.05;
+                                } else {
+                                    logBatch(`[${contexto}] ERROR actualizando monto: ${resUpdMonto.message}`);
+                                }
+                            } catch (e) {
+                                logBatch(`[${contexto}] EXCEPCION actualizando monto: ${e.message}`);
+                            }
+                        }
+                    }
+
+                    // Sincronizar líneas de la actualización existente
                     if (doc.lineas && doc.lineas.length > 0) {
                         // Buscar la actualización existente más reciente para sincronizar líneas
                         const actExistente = actsPrevias.sort((a, b) =>
@@ -2747,7 +2779,10 @@ function _loadCatalogsCache() {
         ajustadores: readAllRows('ajustadores').data || [],
         distritosRiego: readAllRows('distritosRiego').data || [], // Cargar Distritos
         actualizaciones: readAllRows('actualizaciones').data || [],
-        descripcionLineas: readAllRows('descripcionLineas').data || []
+        descripcionLineas: readAllRows('descripcionLineas').data || [],
+        // +++ MÓDULO ESTIMACIONES +++
+        estimaciones: readAllRows('estimaciones').data || [],
+        facturasEstimaciones: readAllRows('facturasEstimaciones').data || []
     };
 }
 

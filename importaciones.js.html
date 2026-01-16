@@ -3,14 +3,14 @@
      * MÓDULO DE GESTIÓN DE IMPORTACIONES
      */
     console.log('📦 Importaciones.js cargado');
-    window.Importaciones = (() => {
+    globalThis.Importaciones = (() => {
         'use strict';
 
         async function init(container) {
             console.log('Módulo Importaciones Inicializado');
             await _mount(container);
             // Inicializar el sub-modulo de facturas después de inyectar el HTML
-            if (window.ImportacionFacturas) {
+            if (globalThis.ImportacionFacturas) {
                 ImportacionFacturas.init();
             }
         }
@@ -52,7 +52,7 @@
 
             // Siempre cargar la plantilla real en mount
             await _mount(container);
-            if (window.ImportacionFacturas) {
+            if (globalThis.ImportacionFacturas) {
                 ImportacionFacturas.init();
             }
         };
@@ -107,11 +107,151 @@
         };
 
         const abrirFacturas = () => {
-            if (window.ImportacionFacturas) {
+            if (globalThis.ImportacionFacturas) {
                 ImportacionFacturas.openModal();
             } else {
                 console.error('El módulo ImportacionFacturas no está cargado.');
             }
+        };
+
+        /**
+         * Descarga una plantilla CSV para importación
+         * @param {string} tipo - 'estimaciones', 'facturas' o 'contratistas'
+         */
+        const descargarPlantilla = async (tipo) => {
+            try {
+                let result;
+                if (tipo === 'estimaciones') {
+                    result = await serverCall('generarPlantillaEstimaciones');
+                } else if (tipo === 'facturas') {
+                    result = await serverCall('generarPlantillaFacturasEstimaciones');
+                } else if (tipo === 'contratistas') {
+                    result = await serverCall('generarPlantillaContratistas');
+                } else {
+                    throw new Error('Tipo de plantilla no válido');
+                }
+
+                // Unificar acceso a propiedades (pueden estar en result o result.data)
+                const content = result.content || result.data?.content;
+                const filename = result.filename || result.data?.filename || `plantilla_${tipo}.csv`;
+                const mimeType = result.mimeType || result.data?.mimeType || 'text/csv';
+
+                if (content) {
+                    // Decodificar base64 y crear blob
+                    const byteCharacters = atob(content);
+                    const byteNumbers = new Array(byteCharacters.length);
+                    for (let i = 0; i < byteCharacters.length; i++) {
+                        byteNumbers[i] = byteCharacters.charCodeAt(i);
+                    }
+                    const byteArray = new Uint8Array(byteNumbers);
+                    const blob = new Blob([byteArray], { type: mimeType });
+
+                    // Crear enlace de descarga
+                    const link = document.createElement('a');
+                    link.href = URL.createObjectURL(blob);
+                    link.download = filename;
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                    URL.revokeObjectURL(link.href);
+
+                    console.log(`✅ Plantilla ${tipo} descargada correctamente`);
+                } else {
+                    throw new Error('Respuesta vacía del servidor');
+                }
+            } catch (error) {
+                console.error('Error al descargar plantilla:', error);
+                alert('Error al descargar la plantilla: ' + error.message);
+            }
+        };
+
+        /**
+         * Abre el selector de archivos para importar Estimaciones
+         */
+        const abrirEstimaciones = () => {
+            _procesarArchivoCSV('estimaciones', 'importarEstimacionesDesdeCSV');
+        };
+
+        /**
+         * Abre el selector de archivos para importar Facturas de Estimaciones
+         */
+        const abrirFacturasEstimaciones = () => {
+            _procesarArchivoCSV('facturas de estimaciones', 'importarFacturasEstimacionesDesdeCSV');
+        };
+
+        /**
+         * Abre el selector de archivos para importar Relación de Contratistas
+         */
+        const abrirContratistas = () => {
+            _procesarArchivoCSV('relación de contratistas', 'importarRelacionContratistas');
+        };
+
+        /**
+         * Procesa un archivo CSV y lo envía al servidor
+         * @param {string} tipo - Descripción del tipo de importación
+         * @param {string} funcionServidor - Nombre de la función en el servidor
+         */
+        const _procesarArchivoCSV = (tipo, funcionServidor) => {
+            // Crear input temporal
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.csv,.txt,.xlsx,.xls';
+
+            input.onchange = async (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                // Mostrar loader
+                const swal = globalThis.Swal;
+                if (swal) {
+                    swal.fire({
+                        title: `Procesando ${tipo}...`,
+                        text: 'Por favor espere mientras se importan los datos.',
+                        allowOutsideClick: false,
+                        didOpen: () => swal.showLoading()
+                    });
+                }
+
+                try {
+                    // Leer archivo como texto
+                    const reader = new FileReader();
+                    reader.onload = async (evt) => {
+                        const content = evt.target.result;
+
+                        try {
+                            const result = await serverCall(funcionServidor, content);
+
+                            if (swal) {
+                                swal.fire({
+                                    icon: 'success',
+                                    title: 'Importación Completada',
+                                    html: result.message || `Se procesaron los datos de ${tipo} correctamente.`,
+                                    confirmButtonText: 'Aceptar'
+                                });
+                            } else {
+                                alert(result.message || 'Importación completada');
+                            }
+                        } catch (err) {
+                            if (swal) {
+                                swal.fire({
+                                    icon: 'error',
+                                    title: 'Error',
+                                    text: err.message
+                                });
+                            } else {
+                                alert('Error: ' + err.message);
+                            }
+                        }
+                    };
+                    reader.readAsText(file);
+                } catch (error) {
+                    console.error('Error procesando archivo:', error);
+                    if (swal) swal.close();
+                    alert('Error al procesar el archivo: ' + error.message);
+                }
+            };
+
+            input.click();
         };
 
         return {
@@ -119,7 +259,11 @@
             render,
             mount,
             abrirComunicados,
-            abrirFacturas
+            abrirFacturas,
+            abrirEstimaciones,
+            abrirFacturasEstimaciones,
+            abrirContratistas,
+            descargarPlantilla
         };
     })();
 
@@ -127,7 +271,7 @@
      * SUB-MÓDULO: IMPORTACIÓN DE FACTURAS
      * Lógica idéntica a Importacion pero adaptada para Facturas
      */
-    window.ImportacionFacturas = (() => {
+    globalThis.ImportacionFacturas = (() => {
         'use strict';
 
         // Cache del DOM

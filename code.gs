@@ -244,6 +244,60 @@ const TABLE_DEFINITIONS = {
         },
         requiredFields: ['folio', 'monto'],
         uniqueFields: ['uuid']
+    },
+
+    // === MÓDULO DE ESTIMACIONES ===
+
+    estimaciones: {
+        sheetName: 'Estimaciones',
+        primaryField: 'id',
+        headers: {
+            id: ['id', 'ID'],
+            idComunicado: ['idComunicado', 'Comunicado', 'ID Comunicado'],
+            entidad: ['entidad', 'Entidad'],  // CONSTRUCTORA, SUPERVISION
+            tipo: ['tipo', 'Tipo'],
+            numero: ['numero', 'Número', 'No.'],
+            montoAutorizado: ['montoAutorizado', 'Monto', 'Importe'],
+            fechaCorte: ['fechaCorte', 'Fecha Corte', 'Fecha'],
+            periodoInicio: ['periodoInicio', 'Periodo Inicio', 'Inicio'],
+            periodoFin: ['periodoFin', 'Periodo Fin', 'Fin'],
+            estatusInterno: ['estatusInterno', 'Estatus', 'Estado']
+        },
+        requiredFields: ['idComunicado', 'entidad', 'tipo'],
+        uniqueFields: []
+    },
+
+    facturasEstimaciones: {
+        sheetName: 'FacturasEstimaciones',
+        primaryField: 'id',
+        headers: {
+            id: ['id', 'ID'],
+            idEstimacion: ['idEstimacion', 'Estimación', 'ID Estimación'],
+            folioFactura: ['folioFactura', 'Folio', 'Factura'],
+            uuid: ['uuid', 'UUID', 'Folio Fiscal'],
+            monto: ['monto', 'Monto', 'Importe'],
+            estatusSAT: ['estatusSAT', 'Estatus SAT', 'Estado'],
+            archivoXml: ['archivoXml', 'XML', 'Archivo XML'],
+            archivoPdf: ['archivoPdf', 'PDF', 'Archivo PDF']
+        },
+        requiredFields: ['idEstimacion', 'folioFactura'],
+        uniqueFields: ['uuid']
+    },
+
+    bitacoraEstimaciones: {
+        sheetName: 'BitacoraEstimaciones',
+        primaryField: 'id',
+        headers: ['id', 'idEstimacion', 'fecha', 'observacion', 'usuario'],
+        requiredFields: ['idEstimacion'],
+        uniqueFields: []
+    },
+
+    bitacoraFacturas: {
+        sheetName: 'BitacoraFacturas',
+        primaryField: 'id',
+        headers: ['id', 'idFactura', 'fecha', 'tipoEvento', 'observacion', 'usuario'],
+        requiredFields: ['idFactura'],
+        uniqueFields: []
     }
 };
 
@@ -314,6 +368,10 @@ function flushDatabase() {
 
     // Tablas a limpiar (en orden para respetar FK)
     const tablasALimpiar = [
+        'bitacoraFacturas',       // Depende de facturasEstimaciones
+        'bitacoraEstimaciones',   // Depende de estimaciones
+        'facturasEstimaciones',   // Depende de estimaciones
+        'estimaciones',           // Depende de comunicados
         'presupuestoLineas',  // Depende de actualizaciones
         'actualizaciones',    // Depende de comunicados
         'datosGenerales',     // Depende de comunicados
