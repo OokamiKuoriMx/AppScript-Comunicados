@@ -1666,5 +1666,3 @@ function recalcularImportesVigentes(idComunicado) {
     }
 }
 
-
-

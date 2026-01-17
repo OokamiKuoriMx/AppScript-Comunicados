@@ -3233,16 +3233,16 @@
              * Muestra todos los conceptos como filas y las revisiones (Origen, L27A, L27B...) como columnas
              * @param {number} idComunicado - ID del comunicado
              */
+            // Estado del modal de historial
             let historialModalInstance = null;
             let historialComunicadoId = null;
+            let historialCargando = false;
 
             async function abrirHistorialPresupuesto(idComunicado) {
                 if (!idComunicado) return;
-                historialComunicadoId = idComunicado;
 
-                // Obtener referencia del comunicado desde el state
-                const com = state.comunicados.find(c => String(c.id) === String(idComunicado));
-                const titulo = com ? com.descripcion : `Comunicado ID: ${idComunicado}`;
+                // Asegurar que el ID sea un string
+                const idStr = idComunicado;
 
                 // Referencias DOM del modal
                 const modal = document.getElementById('modalHistorialPresupuestos');
@@ -3250,6 +3250,7 @@
                 const content = document.getElementById('historial-content');
                 const emptyState = document.getElementById('historial-empty');
                 const btnGestion = document.getElementById('btnVerGestionCompleta');
+                const btnCerrar = modal ? modal.querySelector('.btn-close') : null;
                 const badgeConceptos = document.getElementById('badge-conceptos');
                 const badgeActualizaciones = document.getElementById('badge-actualizaciones');
                 const headerRow = document.getElementById('matriz-header');
@@ -3261,29 +3262,61 @@
                     return;
                 }
 
-                // Crear instancia si no existe
+                // Crear instancia si no existe (sin backdrop estático por defecto)
                 if (!historialModalInstance && typeof bootstrap !== 'undefined') {
-                    historialModalInstance = new bootstrap.Modal(modal);
+                    historialModalInstance = new bootstrap.Modal(modal, {
+                        backdrop: 'static',  // No se cierra al hacer clic fuera
+                        keyboard: false      // No se cierra con Escape mientras carga
+                    });
 
                     // Listener para botón de gestión completa
                     if (btnGestion) {
                         btnGestion.addEventListener('click', () => {
-                            if (historialModalInstance) historialModalInstance.hide();
-                            verDetalle(historialComunicadoId);
+                            if (!historialCargando && historialModalInstance) {
+                                historialModalInstance.hide();
+                                verDetalle(historialComunicadoId);
+                            }
                         });
                     }
                 }
 
-                // Mostrar loader
-                if (loader) loader.classList.remove('d-none');
-                if (content) content.classList.add('d-none');
+                // Reiniciar estado del modal para nueva carga
+                historialComunicadoId = idStr;
+                historialCargando = true;
 
+                // Bloquear botón de cerrar mientras carga
+                if (btnCerrar) btnCerrar.disabled = true;
+                if (btnGestion) btnGestion.disabled = true;
+
+                // Reiniciar contenido - mostrar loader, ocultar contenido
+                if (loader) {
+                    loader.classList.remove('d-none');
+                    loader.innerHTML = `
+                        <div class="spinner-border text-primary" role="status">
+                            <span class="visually-hidden">Cargando...</span>
+                        </div>
+                        <p class="mt-3 text-muted">Cargando matriz de presupuestos...</p>
+                    `;
+                }
+                if (content) content.classList.add('d-none');
+                if (emptyState) emptyState.classList.add('d-none');
+                if (headerRow) headerRow.innerHTML = '';
+                if (tbody) tbody.innerHTML = '';
+                if (totalsRow) totalsRow.innerHTML = '';
+                if (badgeConceptos) badgeConceptos.textContent = '';
+                if (badgeActualizaciones) badgeActualizaciones.textContent = '';
+
+                // Obtener referencia del comunicado desde el state
+                const com = state.comunicados.find(c => String(c.id) === String(idComunicado));
+                const titulo = com ? com.descripcion : `Comunicado ID: ${idComunicado}`;
+
+                // Mostrar modal (si ya está abierto, el contenido se reinició arriba)
                 historialModalInstance.show();
 
                 try {
                     // Consultar directamente la BD por ID de comunicado
-                    console.log('[Matriz] Llamando getMatrizPresupuesto con idComunicado:', idComunicado);
-                    const data = await serverCall('getMatrizPresupuesto', idComunicado);
+                    console.log('[Matriz] Llamando obtenerMatrizPresupuestoDirecta con idComunicado:', idStr);
+                    const data = await serverCall('obtenerMatrizPresupuestoDirecta', idStr);
 
                     console.log('[Matriz] Datos recibidos:', data);
 
@@ -3475,6 +3508,13 @@
                             <p class="mt-2">${error.message}</p>
                         </div>
                     `;
+                } finally {
+                    // Desbloquear modal - permitir cierre
+                    historialCargando = false;
+                    const btnCerrar = document.querySelector('#modalHistorialPresupuestos .btn-close');
+                    const btnGestion = document.getElementById('btnVerGestionCompleta');
+                    if (btnCerrar) btnCerrar.disabled = false;
+                    if (btnGestion) btnGestion.disabled = false;
                 }
             }
 

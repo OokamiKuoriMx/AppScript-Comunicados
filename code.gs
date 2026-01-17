@@ -460,35 +460,63 @@ function flushDatabase() {
  * @returns {Object} { success, data: { comunicado, actualizaciones: [{revision, fecha, lineas}] } }
  */
 function getMatrizPresupuesto(idComunicado) {
+    // VERSIÓN ULTRA-DEFENSIVA PARA DIAGNÓSTICO
     const contexto = 'getMatrizPresupuesto';
-    console.log(`[${contexto}] Iniciando para idComunicado: ${idComunicado}`);
+
+    // Si la función falla antes del try-catch, retornar algo básico
+    if (!idComunicado) {
+        return { success: false, message: 'ID de comunicado requerido' };
+    }
 
     try {
-        if (!idComunicado) {
-            return { success: false, message: 'ID de comunicado requerido' };
+        console.log(`[${contexto}] INICIO - idComunicado: ${idComunicado}`);
+
+        // PASO 1: Verificar función buscarPorId
+        if (typeof buscarPorId !== 'function') {
+            return { success: false, message: 'ERROR: buscarPorId no está definida' };
+        }
+        console.log(`[${contexto}] PASO 1 OK - buscarPorId existe`);
+
+        // PASO 2: Buscar comunicado
+        let comunicadoResult;
+        try {
+            comunicadoResult = buscarPorId('comunicados', idComunicado);
+        } catch (e) {
+            return { success: false, message: `ERROR en buscarPorId: ${e.message}` };
         }
 
-        // 1. Obtener comunicado básico
-        const comunicadoResult = buscarPorId('comunicados', idComunicado);
-        if (!comunicadoResult.success || !comunicadoResult.data) {
-            console.log(`[${contexto}] Comunicado no encontrado: ${idComunicado}`);
-            return { success: false, message: 'Comunicado no encontrado' };
+        if (!comunicadoResult || !comunicadoResult.success) {
+            return { success: false, message: `Comunicado no encontrado: ${comunicadoResult?.message || 'sin mensaje'}` };
         }
+        console.log(`[${contexto}] PASO 2 OK - Comunicado encontrado`);
+
         const comunicado = comunicadoResult.data;
-        console.log(`[${contexto}] Comunicado encontrado: ${comunicado.comunicado || comunicado.id}`);
 
-        // 2. Obtener TODAS las actualizaciones de la BD
-        const actualizacionesResult = readAllRows('actualizaciones');
-        if (!actualizacionesResult.success) {
+        // PASO 3: Verificar función readAllRows
+        if (typeof readAllRows !== 'function') {
+            return { success: false, message: 'ERROR: readAllRows no está definida' };
+        }
+        console.log(`[${contexto}] PASO 3 OK - readAllRows existe`);
+
+        // PASO 4: Leer actualizaciones
+        let actualizacionesResult;
+        try {
+            actualizacionesResult = readAllRows('actualizaciones');
+        } catch (e) {
+            return { success: false, message: `ERROR en readAllRows actualizaciones: ${e.message}` };
+        }
+
+        if (!actualizacionesResult || !actualizacionesResult.success) {
             return { success: false, message: 'Error al leer actualizaciones' };
         }
+        console.log(`[${contexto}] PASO 4 OK - Actualizaciones leídas: ${actualizacionesResult.data?.length || 0}`);
 
-        // Filtrar por idComunicado y ordenar
+        // PASO 5: Filtrar actualizaciones
         const actualizaciones = (actualizacionesResult.data || [])
             .filter(a => String(a.idComunicado) === String(idComunicado))
             .sort((a, b) => Number(a.consecutivo || 0) - Number(b.consecutivo || 0));
 
-        console.log(`[${contexto}] Actualizaciones encontradas: ${actualizaciones.length}`);
+        console.log(`[${contexto}] PASO 5 OK - Actualizaciones filtradas: ${actualizaciones.length}`);
 
         if (actualizaciones.length === 0) {
             return {
@@ -500,35 +528,41 @@ function getMatrizPresupuesto(idComunicado) {
             };
         }
 
-        // 3. Obtener TODAS las líneas de presupuesto
-        const lineasResult = readAllRows('presupuestoLineas');
-        const todasLineas = (lineasResult.success && lineasResult.data) ? lineasResult.data : [];
-        console.log(`[${contexto}] Total líneas en BD: ${todasLineas.length}`);
+        // PASO 6: Leer líneas de presupuesto
+        let lineasResult;
+        try {
+            lineasResult = readAllRows('presupuestoLineas');
+        } catch (e) {
+            return { success: false, message: `ERROR en readAllRows presupuestoLineas: ${e.message}` };
+        }
+        const todasLineas = (lineasResult?.success && lineasResult?.data) ? lineasResult.data : [];
+        console.log(`[${contexto}] PASO 6 OK - Total líneas: ${todasLineas.length}`);
 
-        // 4. Obtener catálogo de descripciones
-        const descripcionesResult = readAllRows('descripcionLineas');
-        const descripciones = (descripcionesResult.success && descripcionesResult.data) ? descripcionesResult.data : [];
+        // PASO 7: Leer descripciones
+        let descripcionesResult;
+        try {
+            descripcionesResult = readAllRows('descripcionLineas');
+        } catch (e) {
+            return { success: false, message: `ERROR en readAllRows descripcionLineas: ${e.message}` };
+        }
+        const descripciones = (descripcionesResult?.success && descripcionesResult?.data) ? descripcionesResult.data : [];
+        console.log(`[${contexto}] PASO 7 OK - Total descripciones: ${descripciones.length}`);
 
-        // Crear mapa id -> descripcion
+        // PASO 8: Crear mapa de descripciones
         const mapDescripciones = new Map();
         descripciones.forEach(d => {
             mapDescripciones.set(String(d.id), d);
         });
+        console.log(`[${contexto}] PASO 8 OK - Mapa creado`);
 
-        // 5. Construir actualizaciones con líneas enriquecidas
+        // PASO 9: Construir resultado
         const actualizacionesConLineas = actualizaciones.map(act => {
-            // Filtrar líneas de esta actualización
             const lineasDeActualizacion = todasLineas.filter(l =>
                 String(l.idActualizacion) === String(act.id)
             );
 
-            console.log(`[${contexto}] Act ${act.id} (${act.revision || 'Origen'}): ${lineasDeActualizacion.length} líneas`);
-
-            // Enriquecer líneas con descripción
             const lineasEnriquecidas = lineasDeActualizacion.map(linea => {
                 const descObj = mapDescripciones.get(String(linea.idLinea));
-
-                // Normalizar categoría
                 let categoria = linea.categoria || (descObj ? descObj.categoria : '') || '';
                 if (String(categoria) === '1') categoria = 'DAÑO FISICO';
                 if (String(categoria) === '2') categoria = 'DESAZOLVES';
@@ -550,9 +584,10 @@ function getMatrizPresupuesto(idComunicado) {
             };
         });
 
-        console.log(`[${contexto}] Matriz completada`);
+        console.log(`[${contexto}] PASO 9 OK - Matriz construida`);
 
-        return {
+        // PASO 10: Retornar resultado
+        const resultado = {
             success: true,
             data: {
                 comunicado: { id: comunicado.id, descripcion: comunicado.comunicado },
@@ -560,8 +595,178 @@ function getMatrizPresupuesto(idComunicado) {
             }
         };
 
+        console.log(`[${contexto}] PASO 10 OK - Retornando resultado exitoso`);
+        return resultado;
+
+    } catch (error) {
+        console.error(`[${contexto}] EXCEPCIÓN GENERAL:`, error);
+        return {
+            success: false,
+            message: `Excepción: ${error.message || 'Error desconocido'}`,
+            stack: error.stack || ''
+        };
+    }
+}
+
+/**
+ * === OBTENER MATRIZ DE PRESUPUESTO (VERSIÓN DIRECTA) ===
+ * Función alternativa que hace consultas directas a las hojas
+ * sin depender de buscarPorId o readAllRows
+ * @param {string} idComunicado - ID del comunicado como string
+ * @returns {Object} { success, data: { comunicado, actualizaciones } }
+ */
+function obtenerMatrizPresupuestoDirecta(idComunicado) {
+    const contexto = 'obtenerMatrizPresupuestoDirecta';
+    console.log(`[${contexto}] Iniciando para ID: ${idComunicado}`);
+
+    try {
+        if (!idComunicado) {
+            return { success: false, message: 'ID de comunicado requerido' };
+        }
+
+        const ss = SpreadsheetApp.getActiveSpreadsheet();
+        const idBuscado = String(idComunicado).trim();
+
+        // 1. LEER COMUNICADO DIRECTO
+        const sheetComunicados = ss.getSheetByName('Comunicados');
+        if (!sheetComunicados) {
+            return { success: false, message: 'Hoja Comunicados no encontrada' };
+        }
+
+        const datosComunicados = sheetComunicados.getDataRange().getValues();
+        const headersCom = datosComunicados[0];
+        const idxIdCom = headersCom.indexOf('id');
+        const idxComunicadoNombre = headersCom.indexOf('comunicado');
+
+        let comunicadoEncontrado = null;
+        for (let i = 1; i < datosComunicados.length; i++) {
+            if (String(datosComunicados[i][idxIdCom]).trim() === idBuscado) {
+                comunicadoEncontrado = {
+                    id: datosComunicados[i][idxIdCom],
+                    comunicado: datosComunicados[i][idxComunicadoNombre] || ''
+                };
+                break;
+            }
+        }
+
+        if (!comunicadoEncontrado) {
+            console.log(`[${contexto}] Comunicado no encontrado: ${idBuscado}`);
+            return { success: false, message: `Comunicado ${idBuscado} no encontrado` };
+        }
+        console.log(`[${contexto}] Comunicado encontrado: ${comunicadoEncontrado.comunicado}`);
+
+        // 2. LEER ACTUALIZACIONES DIRECTO
+        const sheetActualizaciones = ss.getSheetByName('Actualizaciones');
+        if (!sheetActualizaciones) {
+            return { success: true, data: { comunicado: comunicadoEncontrado, actualizaciones: [] } };
+        }
+
+        const datosActualizaciones = sheetActualizaciones.getDataRange().getValues();
+        const headersAct = datosActualizaciones[0];
+        const idxIdAct = headersAct.indexOf('id');
+        const idxIdComAct = headersAct.indexOf('idComunicado');
+        const idxConsecutivo = headersAct.indexOf('consecutivo');
+        const idxEsOrigen = headersAct.indexOf('esOrigen');
+        const idxRevision = headersAct.indexOf('revision');
+        const idxFecha = headersAct.indexOf('fecha');
+
+        const actualizaciones = [];
+        for (let i = 1; i < datosActualizaciones.length; i++) {
+            const row = datosActualizaciones[i];
+            if (String(row[idxIdComAct]).trim() === idBuscado) {
+                actualizaciones.push({
+                    id: row[idxIdAct],
+                    consecutivo: row[idxConsecutivo] || 0,
+                    esOrigen: row[idxEsOrigen] == 1,
+                    revision: row[idxRevision] || '',
+                    fecha: row[idxFecha] || ''
+                });
+            }
+        }
+
+        actualizaciones.sort((a, b) => Number(a.consecutivo) - Number(b.consecutivo));
+        console.log(`[${contexto}] Actualizaciones encontradas: ${actualizaciones.length}`);
+
+        if (actualizaciones.length === 0) {
+            return { success: true, data: { comunicado: comunicadoEncontrado, actualizaciones: [] } };
+        }
+
+        // 3. LEER LÍNEAS DE PRESUPUESTO DIRECTO
+        const sheetLineas = ss.getSheetByName('PresupuestoLineas');
+        const todasLineas = [];
+        if (sheetLineas) {
+            const datosLineas = sheetLineas.getDataRange().getValues();
+            const headersLin = datosLineas[0];
+            const idxIdActLin = headersLin.indexOf('idActualizacion');
+            const idxIdLinea = headersLin.indexOf('idLinea');
+            const idxCategoria = headersLin.indexOf('categoria');
+            const idxImporte = headersLin.indexOf('importe');
+            const idxConsecLin = headersLin.indexOf('consecutivo');
+
+            for (let i = 1; i < datosLineas.length; i++) {
+                todasLineas.push({
+                    idActualizacion: datosLineas[i][idxIdActLin],
+                    idLinea: datosLineas[i][idxIdLinea],
+                    categoria: datosLineas[i][idxCategoria] || '',
+                    importe: datosLineas[i][idxImporte] || 0,
+                    consecutivo: datosLineas[i][idxConsecLin] || 0
+                });
+            }
+        }
+        console.log(`[${contexto}] Total líneas en BD: ${todasLineas.length}`);
+
+        // 4. LEER DESCRIPCIONES DIRECTO
+        const sheetDesc = ss.getSheetByName('DescripcionLineas');
+        const mapDescripciones = new Map();
+        if (sheetDesc) {
+            const datosDesc = sheetDesc.getDataRange().getValues();
+            const headersDesc = datosDesc[0];
+            const idxIdDesc = headersDesc.indexOf('id');
+            const idxDescripcion = headersDesc.indexOf('descripcion');
+            const idxCatDesc = headersDesc.indexOf('categoria');
+
+            for (let i = 1; i < datosDesc.length; i++) {
+                mapDescripciones.set(String(datosDesc[i][idxIdDesc]), {
+                    descripcion: datosDesc[i][idxDescripcion] || '',
+                    categoria: datosDesc[i][idxCatDesc] || ''
+                });
+            }
+        }
+        console.log(`[${contexto}] Total descripciones: ${mapDescripciones.size}`);
+
+        // 5. CONSTRUIR RESULTADO
+        const actualizacionesConLineas = actualizaciones.map(act => {
+            const lineasDeAct = todasLineas.filter(l => String(l.idActualizacion) === String(act.id));
+
+            const lineasEnriquecidas = lineasDeAct.map(linea => {
+                const descObj = mapDescripciones.get(String(linea.idLinea));
+                let cat = linea.categoria || (descObj ? descObj.categoria : '') || '';
+                if (String(cat) === '1') cat = 'DAÑO FISICO';
+                if (String(cat) === '2') cat = 'DESAZOLVES';
+
+                return {
+                    descripcion: descObj ? descObj.descripcion : 'Sin descripción',
+                    categoria: cat,
+                    importe: parseFloat(linea.importe) || 0,
+                    consecutivo: linea.consecutivo
+                };
+            }).sort((a, b) => (Number(a.consecutivo) || 999) - (Number(b.consecutivo) || 999));
+
+            return {
+                id: act.id,
+                revision: act.esOrigen ? 'Origen' : (act.revision || ''),
+                fecha: act.fecha,
+                esOrigen: act.esOrigen,
+                lineas: lineasEnriquecidas
+            };
+        });
+
+        console.log(`[${contexto}] Matriz completada`);
+        return { success: true, data: { comunicado: comunicadoEncontrado, actualizaciones: actualizacionesConLineas } };
+
     } catch (error) {
         console.error(`[${contexto}] Error:`, error);
         return { success: false, message: `Error: ${error.message}` };
     }
 }
+

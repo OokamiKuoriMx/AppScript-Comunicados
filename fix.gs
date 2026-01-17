@@ -403,3 +403,177 @@ function crearHojasEstimaciones() {
     console.log('=== FIN: Proceso terminado ===');
 }
 
+/**
+ * ===================================================================
+ * TEST: Diagnóstico de getMatrizPresupuesto
+ * ===================================================================
+ * Ejecutar desde el editor de Apps Script para ver logs detallados.
+ * Verifica que la función devuelve datos correctamente.
+ * ===================================================================
+ */
+function testGetMatrizPresupuesto() {
+    const ID_PRUEBA = 202; // <--- Cambia este ID si quieres probar otro comunicado
+
+    console.log('='.repeat(60));
+    console.log('TEST: getMatrizPresupuesto');
+    console.log('='.repeat(60));
+    console.log(`ID a probar: ${ID_PRUEBA}`);
+    console.log('');
+
+    try {
+        // 1. Verificar que la función existe
+        if (typeof getMatrizPresupuesto !== 'function') {
+            console.error('❌ ERROR: La función getMatrizPresupuesto NO está definida');
+            return;
+        }
+        console.log('✓ Función getMatrizPresupuesto existe');
+
+        // 2. Llamar a la función
+        console.log('');
+        console.log('[EJECUTANDO] getMatrizPresupuesto...');
+        const resultado = getMatrizPresupuesto(ID_PRUEBA);
+
+        // 3. Verificar resultado
+        console.log('');
+        console.log('[RESULTADO]');
+        console.log('  - Tipo:', typeof resultado);
+        console.log('  - Es null:', resultado === null);
+        console.log('  - Es undefined:', resultado === undefined);
+
+        if (!resultado) {
+            console.error('❌ ERROR: La función devolvió null/undefined');
+            console.log('');
+            console.log('[DIAGNÓSTICO] Verificando datos base...');
+
+            // Verificar comunicado
+            const comRes = buscarPorId('comunicados', ID_PRUEBA);
+            console.log('  - buscarPorId comunicados:', comRes.success ? '✓ Encontrado' : `❌ ${comRes.message}`);
+
+            // Verificar actualizaciones
+            const actRes = readAllRows('actualizaciones');
+            if (actRes.success) {
+                const actFiltradas = actRes.data.filter(a => String(a.idComunicado) === String(ID_PRUEBA));
+                console.log(`  - Actualizaciones para ID ${ID_PRUEBA}: ${actFiltradas.length}`);
+            }
+
+            // Verificar presupuestoLineas
+            const linRes = readAllRows('presupuestoLineas');
+            console.log('  - presupuestoLineas total:', linRes.success ? `${linRes.data.length} registros` : `❌ ${linRes.message}`);
+
+            // Verificar descripcionLineas
+            const descRes = readAllRows('descripcionLineas');
+            console.log('  - descripcionLineas total:', descRes.success ? `${descRes.data.length} registros` : `❌ ${descRes.message}`);
+
+            return;
+        }
+
+        console.log('  - success:', resultado.success);
+        console.log('  - message:', resultado.message || '(sin mensaje)');
+
+        if (resultado.data) {
+            console.log('  - data.comunicado:', JSON.stringify(resultado.data.comunicado || null));
+            console.log('  - data.actualizaciones:', Array.isArray(resultado.data.actualizaciones) ? `${resultado.data.actualizaciones.length} items` : 'NO es array');
+
+            if (resultado.data.actualizaciones && resultado.data.actualizaciones.length > 0) {
+                console.log('');
+                console.log('[DETALLE] Primera actualización:');
+                const primera = resultado.data.actualizaciones[0];
+                console.log('  - id:', primera.id);
+                console.log('  - revision:', primera.revision);
+                console.log('  - fecha:', primera.fecha);
+                console.log('  - esOrigen:', primera.esOrigen);
+                console.log('  - lineas:', Array.isArray(primera.lineas) ? `${primera.lineas.length} líneas` : 'NO es array');
+
+                if (primera.lineas && primera.lineas.length > 0) {
+                    console.log('');
+                    console.log('[DETALLE] Primera línea:');
+                    const primeraLinea = primera.lineas[0];
+                    console.log('  - descripcion:', primeraLinea.descripcion);
+                    console.log('  - categoria:', primeraLinea.categoria);
+                    console.log('  - importe:', primeraLinea.importe);
+                }
+            }
+        } else {
+            console.log('  - data: null/undefined');
+        }
+
+        console.log('');
+        console.log('='.repeat(60));
+        console.log(resultado.success ? '✓ TEST PASÓ' : '❌ TEST FALLÓ');
+        console.log('='.repeat(60));
+
+        // Mostrar JSON completo para referencia
+        console.log('');
+        console.log('[JSON COMPLETO]');
+        console.log(JSON.stringify(resultado, null, 2));
+
+    } catch (error) {
+        console.error('');
+        console.error('❌ EXCEPCIÓN NO CAPTURADA:');
+        console.error('  - message:', error.message);
+        console.error('  - stack:', error.stack);
+    }
+}
+
+/**
+ * FUNCIÓN DE PRUEBA ULTRA-SIMPLE
+ * Llama desde el frontend: serverCall('testFuncionSimple', '202')
+ * Esto verifica si el sistema de funciones del servidor funciona
+ */
+function testFuncionSimple(idComunicado) {
+    console.log('[TEST] Función llamada con:', idComunicado);
+    return {
+        success: true,
+        data: {
+            mensaje: 'La función funciona correctamente',
+            idRecibido: idComunicado,
+            timestamp: new Date().toISOString()
+        }
+    };
+}
+
+/**
+ * FUNCIÓN DE PRUEBA QUE LEE DIRECTAMENTE LA HOJA
+ * Llama desde el frontend: serverCall('testLecturaDirecta', '202')
+ */
+function testLecturaDirecta(idComunicado) {
+    console.log('[TEST] testLecturaDirecta con ID:', idComunicado);
+
+    try {
+        const ss = SpreadsheetApp.getActiveSpreadsheet();
+        console.log('[TEST] Spreadsheet obtenido:', ss.getName());
+
+        const sheet = ss.getSheetByName('Comunicados');
+        if (!sheet) {
+            return { success: false, message: 'Hoja Comunicados no encontrada' };
+        }
+        console.log('[TEST] Hoja Comunicados encontrada');
+
+        const data = sheet.getDataRange().getValues();
+        console.log('[TEST] Rows:', data.length);
+
+        // Buscar el comunicado
+        const headers = data[0];
+        const idxId = headers.indexOf('id');
+
+        for (let i = 1; i < data.length; i++) {
+            if (String(data[i][idxId]).trim() === String(idComunicado).trim()) {
+                return {
+                    success: true,
+                    data: {
+                        encontrado: true,
+                        fila: i + 1,
+                        headers: headers,
+                        valores: data[i]
+                    }
+                };
+            }
+        }
+
+        return { success: true, data: { encontrado: false, totalRows: data.length } };
+
+    } catch (e) {
+        console.error('[TEST] Error:', e);
+        return { success: false, message: e.message };
+    }
+}
