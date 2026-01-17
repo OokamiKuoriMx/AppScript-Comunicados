@@ -505,9 +505,9 @@ function readAllComunicados() {
             datosGenerales: { response: readAllRows('datosGenerales'), essential: true },
             estados: { response: readAllRows('estados'), essential: false },
             distritosRiego: { response: readAllRows('distritosRiego'), essential: false },
-            siniestros: { response: readAllRows('siniestros'), essential: false }, // Added for Quick View
+            siniestros: { response: readAllRows('siniestros'), essential: false },
             actualizaciones: { response: readAllRows('actualizaciones'), essential: false },
-            equipo: { response: readAllRows('equipo'), essential: false }
+            empresas: { response: readAllRows('empresas'), essential: false } // Para obtener contratista
         };
 
         const datosListas = {};
@@ -542,11 +542,6 @@ function readAllComunicados() {
             acc[item.idComunicado].push(item);
             return acc;
         }, {});
-        const equipoPorComunicado = (datosListas.equipo || []).reduce((acc, item) => {
-            if (!acc[item.idComunicado]) acc[item.idComunicado] = [];
-            acc[item.idComunicado].push(item);
-            return acc;
-        }, {});
 
         // Helper para mapear IDs simples
         const cuentasPorId = mapeoPorCampo(datosListas.cuentas || [], 'id');
@@ -554,6 +549,7 @@ function readAllComunicados() {
         const estadosPorId = mapeoPorCampo(datosListas.estados || [], 'id');
         const distritosPorId = mapeoPorCampo(datosListas.distritosRiego || [], 'id');
         const siniestrosPorId = mapeoPorCampo(datosListas.siniestros || [], 'id');
+        const empresasPorId = mapeoPorCampo(datosListas.empresas || [], 'id'); // Mapa de empresas para contratista
 
         const todosComunicados = (datosListas.comunicados || []).map(comunicado => {
             const datoGeneral = obtenerDesdeMapa(datosGeneralesPorComunicadoId, comunicado.id) || {};
@@ -581,12 +577,9 @@ function readAllComunicados() {
                 presupuestoVigente = base;
             }
 
-            // 2. Obtener Contratista(s)
-            const equipo = equipoPorComunicado[comunicado.id] || [];
-            const contratistas = equipo
-                .filter(e => e.tipo === 'contratista' && e.nombre)
-                .map(e => e.nombre)
-                .join(', ');
+            // 2. Obtener Contratista desde DatosGenerales.idEmpresa -> Empresas.razonSocial
+            const empresa = obtenerDesdeMapa(empresasPorId, datoGeneral.idEmpresa);
+            const nombreContratista = empresa ? (empresa.razonSocial || '') : '';
 
             return {
                 id: parseNumeric(comunicado.id) ?? String(comunicado.id || '').trim(),
@@ -598,14 +591,15 @@ function readAllComunicados() {
                 status: comunicado.status ?? '',
                 descripcion: String(datoGeneral.descripcion || ''),
                 fecha: formatDateValue(datoGeneral.fecha),
-                idEstado: parseNumeric(datoGeneral.idEstado), // Required for modal select
+                idEstado: parseNumeric(datoGeneral.idEstado),
                 estado: String(estado.estado || estado.nombre || ''),
-                distrito: String(distrito.distritoRiego || distrito.nombre || ''), // Required for modal input
-                siniestro: String(siniestro.siniestro || siniestro.nombre || ''), // Required for modal input
-                fenomeno: String(siniestro.fenomeno || ''), // Required for modal
-                fondo: String(siniestro.fondo || ''), // Required for modal
-                fi: String(siniestro.fi || ''), // Required for modal
-                contratista: contratistas || 'Sin Asignar',
+                distrito: String(distrito.distritoRiego || distrito.nombre || ''),
+                siniestro: String(siniestro.siniestro || siniestro.nombre || ''),
+                fenomeno: String(siniestro.fenomeno || ''),
+                fondo: String(siniestro.fondo || ''),
+                fi: String(siniestro.fi || ''),
+                idEmpresa: parseNumeric(datoGeneral.idEmpresa),
+                contratista: nombreContratista || 'Sin Asignar',
                 presupuesto: presupuestoVigente,
                 montoSupervision: supervision || 0
             };
@@ -775,7 +769,7 @@ function enriquecerComunicado(comunicado) {
 
                             return {
                                 ...l,
-                                descripcion: descObj ? descObj.descripcion : (l.descripcion || ''), // Populate Description
+                                descripcion: l.descripcion || (descObj ? descObj.descripcion : ''), // Priorizar descripcion existente
                                 categoria: catFinal // Populate Normalized Category
                             };
                         })

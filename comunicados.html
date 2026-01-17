@@ -459,5 +459,131 @@
     </div>
 </div>
 
+<!-- MODAL MATRIZ DE ACTUALIZACIONES (Doble clic en monto Obra) -->
+<div class="modal fade" id="modalHistorialPresupuestos" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-fullscreen-lg-down modal-dialog-centered modal-dialog-scrollable"
+        style="max-width: 95vw;">
+        <div class="modal-content border-0 shadow-lg" style="border-radius: 1rem; overflow: hidden;">
+
+            <!-- Header -->
+            <div class="modal-header bg-white border-bottom py-3">
+                <div>
+                    <h5 class="modal-title fw-bold text-dark mb-0">Matriz de Actualizaciones</h5>
+                    <small class="text-muted" id="historial-comunicado-titulo">Vista consolidada de todos los cambios
+                        por ubicación/concepto</small>
+                </div>
+                <div class="d-flex align-items-center gap-2 me-3">
+                    <span class="badge bg-secondary rounded-pill" id="badge-conceptos">0 conceptos</span>
+                    <span class="badge bg-primary rounded-pill" id="badge-actualizaciones">0 actualizaciones</span>
+                </div>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+
+            <!-- Loader -->
+            <div id="historial-loader" class="modal-body text-center py-5">
+                <div class="spinner-border text-primary" style="width: 3rem; height: 3rem;" role="status"></div>
+                <p class="mt-3 text-muted">Cargando matriz de presupuestos...</p>
+            </div>
+
+            <!-- Content: Matriz -->
+            <div id="historial-content" class="modal-body p-0 d-none">
+                <div class="table-responsive" style="max-height: 70vh; overflow: auto;">
+                    <table class="table table-sm table-hover align-middle mb-0" id="matriz-table">
+                        <thead class="bg-light sticky-top" style="z-index: 10;">
+                            <tr id="matriz-header">
+                                <!-- Columnas dinámicas (Concepto, Cat, Origen, L27A, L27B, etc.) -->
+                            </tr>
+                        </thead>
+                        <tbody id="matriz-tbody">
+                            <!-- Filas dinámicas (conceptos) -->
+                        </tbody>
+                        <tfoot class="bg-light fw-bold border-top border-2">
+                            <tr id="matriz-totals">
+                                <!-- Totales dinámicos -->
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+
+                <!-- Empty State -->
+                <div id="historial-empty" class="text-center py-5 d-none">
+                    <i class="bi bi-inbox fs-1 text-muted opacity-50"></i>
+                    <p class="mt-2 text-muted">Sin presupuestos registrados</p>
+                </div>
+            </div>
+
+            <!-- Footer -->
+            <div class="modal-footer border-top bg-light">
+                <button type="button" class="btn btn-outline-secondary rounded-pill px-4" data-bs-dismiss="modal">
+                    <i class="bi bi-x-lg me-1"></i>Cerrar
+                </button>
+                <button type="button" class="btn btn-primary rounded-pill px-4" id="btnVerGestionCompleta">
+                    <i class="bi bi-gear me-1"></i>Gestión Completa
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    /* Estilos para la matriz */
+    #matriz-table th,
+    #matriz-table td {
+        white-space: nowrap;
+        vertical-align: middle;
+    }
+
+    #matriz-table .col-concepto {
+        position: sticky;
+        left: 0;
+        background: white;
+        z-index: 5;
+        min-width: 280px;
+        max-width: 400px;
+        white-space: normal;
+        border-right: 2px solid #dee2e6;
+    }
+
+    #matriz-table thead .col-concepto {
+        background: #f8f9fa;
+    }
+
+    #matriz-table .col-cat {
+        width: 100px;
+        text-align: center;
+    }
+
+    #matriz-table .col-revision {
+        min-width: 140px;
+        text-align: right;
+    }
+
+    #matriz-table .variacion {
+        display: block;
+        font-size: 0.75rem;
+    }
+
+    #matriz-table .variacion.positiva {
+        color: #198754;
+    }
+
+    #matriz-table .variacion.negativa {
+        color: #dc3545;
+    }
+
+    #matriz-table .variacion.neutral {
+        color: #6c757d;
+    }
+
+    #matriz-table tfoot .col-concepto {
+        background: #f8f9fa;
+    }
+
+    .badge-cat {
+        font-size: 0.65rem;
+        padding: 0.25em 0.5em;
+    }
+</style>
+
 <!-- MODAL DE IMPORTACIÓN INTELIGENTE -->
 <?!= include('importacion_modal') ?>

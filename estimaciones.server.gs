@@ -661,11 +661,13 @@ function _normalizarRazonSocial(nombre) {
 
 /**
  * Busca o crea un contratista (empresa) en el catálogo
+ * Usa un caché opcional para evitar duplicados en importaciones masivas
  * 
  * @param {string} razonSocial - Razón social del contratista
+ * @param {Array} cacheEmpresas - Opcional: Array de empresas en caché (se actualiza si se crea una nueva)
  * @returns {Object} { success, id, created, data }
  */
-function _buscarOCrearContratista(razonSocial) {
+function _buscarOCrearContratista(razonSocial, cacheEmpresas) {
     const contexto = '_buscarOCrearContratista';
     const normalizado = _normalizarRazonSocial(razonSocial);
 
@@ -674,13 +676,15 @@ function _buscarOCrearContratista(razonSocial) {
     }
 
     try {
-        // Buscar si ya existe
-        const empresas = readAllRows('empresas').data || [];
+        // Usar el caché proporcionado o leer de la BD
+        const empresas = cacheEmpresas || readAllRows('empresas').data || [];
+
         const existente = empresas.find(e =>
             _normalizarRazonSocial(e.razonSocial) === normalizado
         );
 
         if (existente) {
+            console.log(`[${contexto}] Empresa existente: '${normalizado}' -> ID: ${existente.id}`);
             return {
                 success: true,
                 created: false,
@@ -689,8 +693,14 @@ function _buscarOCrearContratista(razonSocial) {
             };
         }
 
-        // No existe, crear nuevo registro
-        const nuevoId = Utilities.getUuid();
+        // No existe, crear nuevo registro con ID autonumérico
+        // Calcular el siguiente ID (máximo + 1)
+        const maxId = empresas.reduce((max, e) => {
+            const id = parseInt(e.id, 10);
+            return isNaN(id) ? max : Math.max(max, id);
+        }, 0);
+        const nuevoId = maxId + 1;
+
         const nuevoRegistro = {
             id: nuevoId,
             razonSocial: normalizado
@@ -699,7 +709,13 @@ function _buscarOCrearContratista(razonSocial) {
         const resultado = createRow('empresas', nuevoRegistro);
 
         if (resultado.success) {
-            console.log(`[${contexto}] Creado contratista: ${normalizado} -> ID: ${nuevoId}`);
+            console.log(`[${contexto}] NUEVA empresa creada: '${normalizado}' -> ID: ${nuevoId}`);
+
+            // Si se proporcionó un caché, agregar la nueva empresa para evitar duplicados
+            if (cacheEmpresas) {
+                cacheEmpresas.push(nuevoRegistro);
+            }
+
             return {
                 success: true,
                 created: true,
@@ -753,26 +769,67 @@ function importarRelacionContratistas(fileContent) {
         if (idxComunicado === -1) throw new Error('Falta columna COMUNICADOID o SUFIJO');
         if (idxContratista === -1) throw new Error('Falta columna NOMBRECONTRATISTA o EMPRESA');
 
-        // Cargar datos necesarios
-        const cache = _loadCatalogsCache();
+        // ═══════════════════════════════════════════════════════════════
+        // CONSTRUCCIÓN DEL MAPA DE COMUNICADOS VÁLIDOS DESDE LA BD
+        // Estructura: Cuentas.referencia + "-" + Comunicados.comunicado (sufijo)
+        // Ejemplo: "GL098774" + "-" + "L12" = "GL098774-L12"
+        // ═══════════════════════════════════════════════════════════════
+        const cuentas = readAllRows('cuentas').data || [];
+        const comunicados = readAllRows('comunicados').data || [];
         const datosGenerales = readAllRows('datosGenerales').data || [];
+
+        // Crear mapa de id -> referencia (ej: "1" -> "GL098774")
+        const mapaReferencias = {};
+        cuentas.forEach(c => {
+            mapaReferencias[String(c.id)] = String(c.referencia || '').trim().toUpperCase();
+        });
+
+        // Crear mapa inverso: referencia -> id (ej: "GL098774" -> "1")
+        const mapaReferenciaToId = {};
+        cuentas.forEach(c => {
+            const ref = String(c.referencia || '').trim().toUpperCase();
+            if (ref) mapaReferenciaToId[ref] = String(c.id);
+        });
+
+        // Crear mapa de comunicados válidos: { "GL098774-L12": comunicadoObj }
+        // La clave se construye: referencia (de Cuentas via idReferencia) + "-" + comunicado (sufijo)
+        const mapaComunicadosValidos = {};
+        comunicados.forEach(com => {
+            const idRef = String(com.idReferencia || '').trim();
+            const referencia = mapaReferencias[idRef]; // Obtener "GL098774" desde id "1"
+            const sufijo = String(com.comunicado || '').trim().toUpperCase(); // Ya es solo el sufijo "L12"
+
+            if (referencia && sufijo) {
+                // Construir clave completa: "GL098774-L12"
+                const claveCompleta = `${referencia}-${sufijo}`;
+                mapaComunicadosValidos[claveCompleta] = com;
+            }
+        });
+
+        console.log(`[${contexto}] Mapa de comunicados válidos construido: ${Object.keys(mapaComunicadosValidos).length} entradas`);
 
         const resultados = {
             procesados: 0,
             contratistasCreados: 0,
             contratistasExistentes: 0,
             comunicadosActualizados: 0,
+            sinCoincidencia: 0,
             errores: []
         };
+
+        // Caché de empresas para evitar duplicados en importación masiva
+        const cacheEmpresas = readAllRows('empresas').data || [];
 
         dataRows.forEach((row, idx) => {
             const ref = String(row[idxRef] || '').trim();
             const sufijo = String(row[idxComunicado] || '').trim();
             const nombreContratista = String(row[idxContratista] || '').trim();
 
-            // Validar fila
+            // ═══════════════════════════════════════════════════════════════
+            // PASO 1: Validar que los campos no estén vacíos
+            // ═══════════════════════════════════════════════════════════════
             if (!ref || !sufijo) {
-                resultados.errores.push(`Fila ${idx + 2}: Referencia o ComunicadoId vacío`);
+                resultados.errores.push(`Fila ${idx + 2}: referencia o comunicadoId vacío`);
                 return;
             }
 
@@ -781,27 +838,33 @@ function importarRelacionContratistas(fileContent) {
                 return;
             }
 
-            // Construir clave del comunicado (ej: GL098774-L01)
-            const comunicadoClave = `${ref}-${sufijo}`;
-
-            // Buscar el comunicado
-            const comunicado = cache.comunicados.find(c =>
-                String(c.comunicado).trim().toUpperCase() === comunicadoClave.toUpperCase()
-            );
+            // ═══════════════════════════════════════════════════════════════
+            // PASO 2: Buscar en el mapa de comunicados válidos de la BD
+            //         La clave es "REFERENCIA-SUFIJO" (ej: "AM005955-L01")
+            // ═══════════════════════════════════════════════════════════════
+            const comunicadoClave = `${ref}-${sufijo}`.toUpperCase();
+            const comunicado = mapaComunicadosValidos[comunicadoClave];
 
             if (!comunicado) {
-                resultados.errores.push(`Fila ${idx + 2}: Comunicado '${comunicadoClave}' no encontrado`);
+                // No existe en BD, saltar sin error (solo contar)
+                resultados.sinCoincidencia++;
                 return;
             }
 
-            // Verificar que el comunicado NO tenga idSustituido (es ORIGEN)
+            // ═══════════════════════════════════════════════════════════════
+            // PASO 3: Verificar que sea comunicado ORIGEN (sin idSustituido)
+            // ═══════════════════════════════════════════════════════════════
             if (comunicado.idSustituido && String(comunicado.idSustituido).trim() !== '') {
-                resultados.errores.push(`Fila ${idx + 2}: '${comunicadoClave}' no es ORIGEN (tiene sustituido)`);
+                resultados.errores.push(`Fila ${idx + 2}: '${comunicadoClave}' no es ORIGEN`);
                 return;
             }
 
-            // Buscar o crear el contratista
-            const contratista = _buscarOCrearContratista(nombreContratista);
+            // ═══════════════════════════════════════════════════════════════
+            // PASO 4: Verificar si la empresa ya existe (por razón social)
+            //         Si existe: solo usar el ID existente
+            //         Si no existe: crear nueva empresa normalizada en mayúsculas
+            // ═══════════════════════════════════════════════════════════════
+            const contratista = _buscarOCrearContratista(nombreContratista, cacheEmpresas);
 
             if (!contratista.success) {
                 resultados.errores.push(`Fila ${idx + 2}: Error con contratista - ${contratista.message}`);
@@ -810,11 +873,16 @@ function importarRelacionContratistas(fileContent) {
 
             if (contratista.created) {
                 resultados.contratistasCreados++;
+                console.log(`[${contexto}] NUEVA empresa creada: '${_normalizarRazonSocial(nombreContratista)}' -> ID: ${contratista.id}`);
             } else {
                 resultados.contratistasExistentes++;
+                console.log(`[${contexto}] Empresa EXISTENTE encontrada: '${contratista.data.razonSocial}' -> ID: ${contratista.id}`);
             }
 
-            // Buscar el datosGenerales del comunicado
+            // ═══════════════════════════════════════════════════════════════
+            // PASO 5: Asociar el comunicado a la empresa
+            //         Actualizar idEmpresa en datosGenerales del comunicado
+            // ═══════════════════════════════════════════════════════════════
             const dg = datosGenerales.find(d =>
                 String(d.idComunicado) === String(comunicado.id)
             );
@@ -831,7 +899,7 @@ function importarRelacionContratistas(fileContent) {
 
             if (updateResult.success) {
                 resultados.comunicadosActualizados++;
-                console.log(`[${contexto}] Actualizado ${comunicadoClave} -> Empresa: ${contratista.id}`);
+                console.log(`[${contexto}] Comunicado '${comunicadoClave}' asociado a empresa ID: ${contratista.id}`);
             } else {
                 resultados.errores.push(`Fila ${idx + 2}: Error actualizando DG - ${updateResult.message}`);
                 return;
@@ -844,6 +912,7 @@ function importarRelacionContratistas(fileContent) {
         let mensaje = `Procesadas ${resultados.procesados} relaciones. `;
         mensaje += `Contratistas: ${resultados.contratistasCreados} nuevos, ${resultados.contratistasExistentes} existentes. `;
         mensaje += `Comunicados actualizados: ${resultados.comunicadosActualizados}.`;
+        mensaje += ` Sin coincidencia en BD: ${resultados.sinCoincidencia}.`;
 
         if (resultados.errores.length > 0) {
             mensaje += ` ${resultados.errores.length} errores.`;
@@ -863,37 +932,112 @@ function importarRelacionContratistas(fileContent) {
 
 /**
  * Genera una plantilla CSV para importar relación de contratistas
+ * Exporta automáticamente los comunicados ORIGEN que NO tienen empresa asignada (idEmpresa null/vacío)
+ * 
+ * Estructura de BD:
+ * - Cuentas: id -> referencia (ej: 1 -> "GL098774")
+ * - Comunicados: id, idReferencia, comunicado (solo sufijo: "L12", "L30")
+ * - DatosGenerales: idComunicado, idEmpresa (null = sin empresa)
+ * 
  * @returns {Object} Resultado con el contenido CSV en base64
  */
 function generarPlantillaContratistas() {
+    const contexto = 'generarPlantillaContratistas';
+
     const headers = [
         'referenciaAjustador',  // Referencia del ajustador (ej: GL098774)
-        'comunicadoId',         // Sufijo del comunicado ORIGEN (ej: L01)
-        'nombreContratista'     // Razón Social de la empresa
+        'comunicadoId',         // Sufijo del comunicado ORIGEN (ej: L12, L30)
+        'nombreContratista'     // Razón Social de la empresa (vacío para llenar)
     ];
 
-    // Ejemplo de datos
-    const ejemplos = [
-        ['GL098774', 'L01', 'CONSTRUCTORA ABC S.A. DE C.V.'],
-        ['GL098774', 'L02', 'SERVICIOS HIDRAULICOS DEL NORTE S.A.'],
-        ['GL098775', 'L01', 'CONSTRUCCIONES Y PROYECTOS XYZ S.A. DE C.V.'],
-        ['GL098776', 'L01A', 'CONSTRUCTORA ABC S.A. DE C.V.']  // Misma empresa, diferente comunicado
-    ];
+    try {
+        // ═══════════════════════════════════════════════════════════════
+        // CARGAR DATOS DE BD
+        // ═══════════════════════════════════════════════════════════════
+        const cuentas = readAllRows('cuentas').data || [];
+        const comunicados = readAllRows('comunicados').data || [];
+        const datosGenerales = readAllRows('datosGenerales').data || [];
 
-    // Construir CSV
-    let csv = headers.join(',') + '\n';
-    ejemplos.forEach(row => {
-        csv += row.join(',') + '\n';
-    });
+        console.log(`[${contexto}] Cuentas: ${cuentas.length}, Comunicados: ${comunicados.length}, DatosGenerales: ${datosGenerales.length}`);
 
-    const base64 = Utilities.base64Encode(csv, Utilities.Charset.UTF_8);
+        // Crear mapa de id -> referencia (ej: "1" -> "GL098774")
+        const mapaReferencias = {};
+        cuentas.forEach(c => {
+            mapaReferencias[String(c.id)] = String(c.referencia || '').trim().toUpperCase();
+        });
 
-    return {
-        success: true,
-        data: {
-            content: base64,
-            filename: 'plantilla_contratistas.csv',
-            mimeType: 'text/csv'
+        // ═══════════════════════════════════════════════════════════════
+        // FILTRAR COMUNICADOS ORIGEN SIN EMPRESA ASIGNADA
+        // ═══════════════════════════════════════════════════════════════
+        const filasDatos = [];
+
+        comunicados.forEach(com => {
+            // Solo comunicados ORIGEN (sin idSustituido)
+            if (com.idSustituido && String(com.idSustituido).trim() !== '') {
+                return; // Saltar sustituciones
+            }
+
+            // Buscar datosGenerales del comunicado por idComunicado
+            const dg = datosGenerales.find(d =>
+                String(d.idComunicado) === String(com.id)
+            );
+
+            if (!dg) {
+                console.log(`[${contexto}] Comunicado ID ${com.id} sin DatosGenerales, saltando.`);
+                return;
+            }
+
+            // Verificar si NO tiene empresa asignada (idEmpresa vacío o null)
+            const tieneEmpresa = dg.idEmpresa && String(dg.idEmpresa).trim() !== '';
+            if (tieneEmpresa) {
+                return; // Ya tiene empresa, saltar
+            }
+
+            // Obtener la referencia del ajustador desde Cuentas
+            const idRef = String(com.idReferencia || '').trim();
+            const referencia = mapaReferencias[idRef] || '';
+
+            // El campo comunicado YA ES el sufijo (L12, L30, L03A)
+            const sufijo = String(com.comunicado || '').trim();
+
+            if (referencia && sufijo) {
+                filasDatos.push([referencia, sufijo, '']); // nombreContratista vacío para llenar
+                console.log(`[${contexto}] Agregado: ${referencia}-${sufijo} (DG id: ${dg.id}, idEmpresa vacío)`);
+            }
+        });
+
+        console.log(`[${contexto}] Total encontrados sin empresa: ${filasDatos.length}`);
+
+        // ═══════════════════════════════════════════════════════════════
+        // CONSTRUIR CSV
+        // ═══════════════════════════════════════════════════════════════
+        let csv = headers.join(',') + '\n';
+
+        if (filasDatos.length === 0) {
+            csv += '# Todos los comunicados ORIGEN ya tienen empresa asignada\n';
+            csv += '# Ejemplo de formato:\n';
+            csv += 'GL098774,L12,CONSTRUCTORA ABC S.A. DE C.V.\n';
+        } else {
+            filasDatos.forEach(row => {
+                csv += row.join(',') + '\n';
+            });
         }
-    };
+
+        const base64 = Utilities.base64Encode(csv, Utilities.Charset.UTF_8);
+
+        return {
+            success: true,
+            message: `Plantilla generada con ${filasDatos.length} comunicados sin empresa asignada`,
+            data: {
+                content: base64,
+                filename: 'plantilla_contratistas.csv',
+                mimeType: 'text/csv',
+                totalSinEmpresa: filasDatos.length
+            }
+        };
+
+    } catch (e) {
+        console.error(`[${contexto}] Error:`, e);
+        return { success: false, message: e.message };
+    }
 }

@@ -451,3 +451,117 @@ function flushDatabase() {
         };
     }
 }
+
+/**
+ * === OBTENER MATRIZ DE PRESUPUESTO ===
+ * Función para el modal de matriz de actualizaciones
+ * Consulta directa a BD por ID de comunicado
+ * @param {number|string} idComunicado - ID del comunicado
+ * @returns {Object} { success, data: { comunicado, actualizaciones: [{revision, fecha, lineas}] } }
+ */
+function getMatrizPresupuesto(idComunicado) {
+    const contexto = 'getMatrizPresupuesto';
+    console.log(`[${contexto}] Iniciando para idComunicado: ${idComunicado}`);
+
+    try {
+        if (!idComunicado) {
+            return { success: false, message: 'ID de comunicado requerido' };
+        }
+
+        // 1. Obtener comunicado básico
+        const comunicadoResult = buscarPorId('comunicados', idComunicado);
+        if (!comunicadoResult.success || !comunicadoResult.data) {
+            console.log(`[${contexto}] Comunicado no encontrado: ${idComunicado}`);
+            return { success: false, message: 'Comunicado no encontrado' };
+        }
+        const comunicado = comunicadoResult.data;
+        console.log(`[${contexto}] Comunicado encontrado: ${comunicado.comunicado || comunicado.id}`);
+
+        // 2. Obtener TODAS las actualizaciones de la BD
+        const actualizacionesResult = readAllRows('actualizaciones');
+        if (!actualizacionesResult.success) {
+            return { success: false, message: 'Error al leer actualizaciones' };
+        }
+
+        // Filtrar por idComunicado y ordenar
+        const actualizaciones = (actualizacionesResult.data || [])
+            .filter(a => String(a.idComunicado) === String(idComunicado))
+            .sort((a, b) => Number(a.consecutivo || 0) - Number(b.consecutivo || 0));
+
+        console.log(`[${contexto}] Actualizaciones encontradas: ${actualizaciones.length}`);
+
+        if (actualizaciones.length === 0) {
+            return {
+                success: true,
+                data: {
+                    comunicado: { id: comunicado.id, descripcion: comunicado.comunicado },
+                    actualizaciones: []
+                }
+            };
+        }
+
+        // 3. Obtener TODAS las líneas de presupuesto
+        const lineasResult = readAllRows('presupuestoLineas');
+        const todasLineas = (lineasResult.success && lineasResult.data) ? lineasResult.data : [];
+        console.log(`[${contexto}] Total líneas en BD: ${todasLineas.length}`);
+
+        // 4. Obtener catálogo de descripciones
+        const descripcionesResult = readAllRows('descripcionLineas');
+        const descripciones = (descripcionesResult.success && descripcionesResult.data) ? descripcionesResult.data : [];
+
+        // Crear mapa id -> descripcion
+        const mapDescripciones = new Map();
+        descripciones.forEach(d => {
+            mapDescripciones.set(String(d.id), d);
+        });
+
+        // 5. Construir actualizaciones con líneas enriquecidas
+        const actualizacionesConLineas = actualizaciones.map(act => {
+            // Filtrar líneas de esta actualización
+            const lineasDeActualizacion = todasLineas.filter(l =>
+                String(l.idActualizacion) === String(act.id)
+            );
+
+            console.log(`[${contexto}] Act ${act.id} (${act.revision || 'Origen'}): ${lineasDeActualizacion.length} líneas`);
+
+            // Enriquecer líneas con descripción
+            const lineasEnriquecidas = lineasDeActualizacion.map(linea => {
+                const descObj = mapDescripciones.get(String(linea.idLinea));
+
+                // Normalizar categoría
+                let categoria = linea.categoria || (descObj ? descObj.categoria : '') || '';
+                if (String(categoria) === '1') categoria = 'DAÑO FISICO';
+                if (String(categoria) === '2') categoria = 'DESAZOLVES';
+
+                return {
+                    descripcion: descObj ? descObj.descripcion : 'Sin descripción',
+                    categoria: categoria,
+                    importe: parseFloat(linea.importe) || 0,
+                    consecutivo: linea.consecutivo
+                };
+            }).sort((a, b) => (Number(a.consecutivo) || 999) - (Number(b.consecutivo) || 999));
+
+            return {
+                id: act.id,
+                revision: act.esOrigen == 1 ? 'Origen' : (act.revision || ''),
+                fecha: act.fecha || '',
+                esOrigen: act.esOrigen == 1,
+                lineas: lineasEnriquecidas
+            };
+        });
+
+        console.log(`[${contexto}] Matriz completada`);
+
+        return {
+            success: true,
+            data: {
+                comunicado: { id: comunicado.id, descripcion: comunicado.comunicado },
+                actualizaciones: actualizacionesConLineas
+            }
+        };
+
+    } catch (error) {
+        console.error(`[${contexto}] Error:`, error);
+        return { success: false, message: `Error: ${error.message}` };
+    }
+}

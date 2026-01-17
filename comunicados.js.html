@@ -3175,7 +3175,12 @@
                     <td class="text-nowrap small">${escapeHtml(com.fecha || '')}</td>
                     <td class="small">${escapeHtml(com.estado || '')}</td>
                     <td class="small text-truncate" style="max-width: 200px;" title="${escapeHtml(com.contratista || '')}">${escapeHtml(com.contratista || '')}</td>
-                    <td class="small font-monospace text-end text-primary fw-bold" title="Monto de Obra">${_formatCurrency(com.presupuesto)}</td>
+                    <td class="small font-monospace text-end text-primary fw-bold cursor-pointer" 
+                        title="Doble clic para ver historial" 
+                        style="cursor: pointer;"
+                        ondblclick="Comunicados.abrirHistorialPresupuesto(${com.id || ''})">
+                        ${_formatCurrency(com.presupuesto)}
+                    </td>
                     <td class="small font-monospace text-end text-muted">${_formatCurrency(com.montoSupervision)}</td>
                     <td class="text-end pe-4">
                         <button class="btn btn-sm btn-outline-primary me-1" onclick="Comunicados.abrirModal(${com.id || ''})" title="Edición rápida">
@@ -3222,6 +3227,257 @@
                     console.error('Instancia del modal no inicializada');
                 }
             }
+
+            /**
+             * Abre el modal de Matriz de Actualizaciones al hacer doble clic en el monto de obra
+             * Muestra todos los conceptos como filas y las revisiones (Origen, L27A, L27B...) como columnas
+             * @param {number} idComunicado - ID del comunicado
+             */
+            let historialModalInstance = null;
+            let historialComunicadoId = null;
+
+            async function abrirHistorialPresupuesto(idComunicado) {
+                if (!idComunicado) return;
+                historialComunicadoId = idComunicado;
+
+                // Obtener referencia del comunicado desde el state
+                const com = state.comunicados.find(c => String(c.id) === String(idComunicado));
+                const titulo = com ? com.descripcion : `Comunicado ID: ${idComunicado}`;
+
+                // Referencias DOM del modal
+                const modal = document.getElementById('modalHistorialPresupuestos');
+                const loader = document.getElementById('historial-loader');
+                const content = document.getElementById('historial-content');
+                const emptyState = document.getElementById('historial-empty');
+                const btnGestion = document.getElementById('btnVerGestionCompleta');
+                const badgeConceptos = document.getElementById('badge-conceptos');
+                const badgeActualizaciones = document.getElementById('badge-actualizaciones');
+                const headerRow = document.getElementById('matriz-header');
+                const tbody = document.getElementById('matriz-tbody');
+                const totalsRow = document.getElementById('matriz-totals');
+
+                if (!modal) {
+                    console.error('Modal de historial no encontrado');
+                    return;
+                }
+
+                // Crear instancia si no existe
+                if (!historialModalInstance && typeof bootstrap !== 'undefined') {
+                    historialModalInstance = new bootstrap.Modal(modal);
+
+                    // Listener para botón de gestión completa
+                    if (btnGestion) {
+                        btnGestion.addEventListener('click', () => {
+                            if (historialModalInstance) historialModalInstance.hide();
+                            verDetalle(historialComunicadoId);
+                        });
+                    }
+                }
+
+                // Mostrar loader
+                if (loader) loader.classList.remove('d-none');
+                if (content) content.classList.add('d-none');
+
+                historialModalInstance.show();
+
+                try {
+                    // Consultar directamente la BD por ID de comunicado
+                    console.log('[Matriz] Llamando getMatrizPresupuesto con idComunicado:', idComunicado);
+                    const data = await serverCall('getMatrizPresupuesto', idComunicado);
+
+                    console.log('[Matriz] Datos recibidos:', data);
+
+                    if (!data) {
+                        throw new Error('No se encontraron datos del comunicado');
+                    }
+
+                    // Los datos vienen en data.actualizaciones
+                    const revisiones = data.actualizaciones || [];
+
+                    console.log('[Matriz] Revisiones encontradas:', revisiones.length);
+                    if (revisiones.length > 0) {
+                        console.log('[Matriz] Primera revisión:', revisiones[0]);
+                        console.log('[Matriz] Líneas de primera revisión:', revisiones[0]?.lineas?.length || 0);
+                        if (revisiones[0]?.lineas?.length > 0) {
+                            console.log('[Matriz] Primera línea:', revisiones[0].lineas[0]);
+                        }
+                    }
+
+                    // Si no hay revisiones o todas las revisiones no tienen líneas, mostrar estado vacío
+                    if (revisiones.length === 0 || revisiones.every(r => !r.lineas || r.lineas.length === 0)) {
+                        if (emptyState) emptyState.classList.remove('d-none');
+                        if (loader) loader.classList.add('d-none');
+                        if (content) content.classList.remove('d-none');
+                        return;
+                    }
+                    if (emptyState) emptyState.classList.add('d-none');
+
+                    // ============================================
+                    // CONSTRUIR MATRIZ PIVOTEADA
+                    // ============================================
+
+                    // 1. Recolectar todos los conceptos únicos (por descripción)
+                    const conceptosMap = new Map();
+                    revisiones.forEach((rev, revIdx) => {
+                        console.log(`[Matriz] Revisión ${revIdx}: ${rev.revision || 'Sin nombre'}, lineas: ${(rev.lineas || []).length}`);
+
+                        // DEBUG: Ver estructura de la primera línea
+                        if (rev.lineas && rev.lineas.length > 0) {
+                            console.log(`[Matriz] Estructura de primera línea:`, JSON.stringify(rev.lineas[0], null, 2));
+                        }
+
+                        (rev.lineas || []).forEach((linea, lineaIdx) => {
+                            const key = (linea.descripcion || '').toUpperCase().trim();
+                            if (!key) {
+                                console.log(`[Matriz] Línea ${lineaIdx} sin descripcion:`, linea);
+                                return;
+                            }
+
+                            if (!conceptosMap.has(key)) {
+                                conceptosMap.set(key, {
+                                    descripcion: linea.descripcion || '',
+                                    categoria: linea.categoria || '',
+                                    montos: new Array(revisiones.length).fill(null)
+                                });
+                            }
+                            const concepto = conceptosMap.get(key);
+
+                            // DEBUG: Ver el valor de importe
+                            const valorImporte = parseFloat(linea.importe) || 0;
+                            console.log(`[Matriz] Rev ${revIdx} - "${key.substring(0, 30)}..." importe=${linea.importe} -> ${valorImporte}`);
+
+                            concepto.montos[revIdx] = valorImporte;
+                            // Actualizar categoría si viene más completa
+                            if (linea.categoria && !concepto.categoria) {
+                                concepto.categoria = linea.categoria;
+                            }
+                        });
+                    });
+
+                    const conceptos = Array.from(conceptosMap.values());
+
+                    // 2. Actualizar badges
+                    if (badgeConceptos) badgeConceptos.textContent = `${conceptos.length} conceptos`;
+                    if (badgeActualizaciones) badgeActualizaciones.textContent = `${revisiones.length} actualizaciones`;
+
+                    // 3. Construir Header (columnas)
+                    let headerHtml = `
+                        <th class="col-concepto ps-3 small text-uppercase text-secondary">Ubicación / Concepto</th>
+                        <th class="col-cat small text-uppercase text-secondary">Cat.</th>
+                    `;
+                    revisiones.forEach((rev, idx) => {
+                        const revName = rev.revision || (rev.esOrigen ? 'Origen' : `Rev ${idx + 1}`);
+                        const fecha = rev.fecha || '';
+                        headerHtml += `
+                            <th class="col-revision small text-uppercase text-secondary pe-3">
+                                <div class="fw-bold ${idx === revisiones.length - 1 ? 'text-primary' : ''}">${escapeHtml(revName)}</div>
+                                <div class="text-muted" style="font-size: 0.7rem;">${escapeHtml(fecha)}</div>
+                            </th>
+                        `;
+                    });
+                    if (headerRow) headerRow.innerHTML = headerHtml;
+
+                    // 4. Construir Filas (conceptos)
+                    let bodyHtml = '';
+                    conceptos.forEach(concepto => {
+                        // Badge de categoría
+                        let catBadge = '';
+                        const cat = (concepto.categoria || '').toUpperCase();
+                        if (cat.includes('DAÑO') || cat.includes('FISICO')) {
+                            catBadge = '<span class="badge badge-cat bg-danger bg-opacity-75">DAÑO FÍSICO</span>';
+                        } else if (cat.includes('DESAZOLVE')) {
+                            catBadge = '<span class="badge badge-cat bg-info text-dark">DESAZOLVES</span>';
+                        } else if (cat) {
+                            catBadge = `<span class="badge badge-cat bg-secondary">${escapeHtml(cat)}</span>`;
+                        }
+
+                        bodyHtml += `<tr>`;
+                        bodyHtml += `<td class="col-concepto ps-3 small">${escapeHtml(concepto.descripcion)}</td>`;
+                        bodyHtml += `<td class="col-cat">${catBadge}</td>`;
+
+                        // Montos por revisión
+                        concepto.montos.forEach((monto, idx) => {
+                            // Calcular variación
+                            let variacionHtml = '';
+                            if (idx > 0) {
+                                const prevMonto = concepto.montos[idx - 1];
+                                if (monto !== null && prevMonto !== null) {
+                                    const diff = monto - prevMonto;
+                                    if (diff !== 0) {
+                                        const sign = diff > 0 ? '+' : '';
+                                        const cls = diff > 0 ? 'positiva' : 'negativa';
+                                        variacionHtml = `<span class="variacion ${cls}">${sign}${_formatCurrency(diff)}</span>`;
+                                    }
+                                } else if (monto !== null && prevMonto === null) {
+                                    // Nuevo concepto en esta revisión
+                                    variacionHtml = `<span class="variacion positiva">+${_formatCurrency(monto)}</span>`;
+                                }
+                            } else if (monto !== null) {
+                                // Primera revisión (Origen)
+                                variacionHtml = `<span class="variacion positiva">+${_formatCurrency(monto)}</span>`;
+                            }
+
+                            const montoStr = monto !== null ? _formatCurrency(monto) : '$0.00';
+                            const montoClass = monto === null ? 'text-muted' : '';
+
+                            bodyHtml += `
+                                <td class="col-revision pe-3 font-monospace small ${montoClass}">
+                                    <span>${montoStr}</span>
+                                    ${variacionHtml}
+                                </td>
+                            `;
+                        });
+
+                        bodyHtml += `</tr>`;
+                    });
+                    if (tbody) tbody.innerHTML = bodyHtml;
+
+                    // 5. Construir Fila de Totales
+                    const totales = revisiones.map((_, revIdx) => {
+                        return conceptos.reduce((sum, c) => sum + (c.montos[revIdx] || 0), 0);
+                    });
+
+                    let totalsHtml = `
+                        <td class="col-concepto ps-3 text-end">Totales</td>
+                        <td class="col-cat"></td>
+                    `;
+                    totales.forEach((total, idx) => {
+                        // Variación del total
+                        let variacionHtml = '';
+                        if (idx > 0) {
+                            const diff = total - totales[idx - 1];
+                            if (diff !== 0) {
+                                const sign = diff > 0 ? '+' : '';
+                                const cls = diff > 0 ? 'positiva' : 'negativa';
+                                variacionHtml = `<span class="variacion ${cls}">${sign}${_formatCurrency(diff)}</span>`;
+                            }
+                        }
+
+                        const isLast = idx === totales.length - 1;
+                        totalsHtml += `
+                            <td class="col-revision pe-3 font-monospace ${isLast ? 'text-success fs-6' : ''}">
+                                <span>${_formatCurrency(total)}</span>
+                                ${variacionHtml}
+                            </td>
+                        `;
+                    });
+                    if (totalsRow) totalsRow.innerHTML = totalsHtml;
+
+                    // Mostrar contenido
+                    if (loader) loader.classList.add('d-none');
+                    if (content) content.classList.remove('d-none');
+
+                } catch (error) {
+                    console.error('Error cargando matriz de presupuestos:', error);
+                    if (loader) loader.innerHTML = `
+                        <div class="text-danger">
+                            <i class="bi bi-exclamation-triangle fs-1"></i>
+                            <p class="mt-2">${error.message}</p>
+                        </div>
+                    `;
+                }
+            }
+
 
             /**
              * Formatea moneda
@@ -3458,6 +3714,7 @@
                 init,
                 mount,
                 abrirModal,
+                abrirHistorialPresupuesto,
                 verDetalle,
                 confirmarEliminar,
                 recargar: _loadComunicados,
