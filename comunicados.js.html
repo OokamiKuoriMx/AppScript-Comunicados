@@ -380,9 +380,16 @@
                             if (status === 'OMITIDO') {
                                 return `<span class="badge bg-secondary"><i class="bi bi-slash-circle me-1"></i>OMITIDO - ${res.motivo || 'Ya existe'}</span>`;
                             } else if (status === 'REEMPLAZAR') {
-                                const cambiosTexto = res.motivo?.replace('Actualización disponible: ', '') || 'Cambios detectados';
+                                // Obtener lista de cambios detectados
+                                const cambios = res.analisis?.comunicado?.cambios || [];
+                                const cambiosHtml = cambios.length > 0 
+                                    ? `<div class="changes-list mt-2 small border-start border-info ps-2 ms-1">
+                                        ${cambios.map(c => `<div class="text-muted py-1"><i class="bi bi-arrow-right-short text-info"></i>${c}</div>`).join('')}
+                                       </div>`
+                                    : '';
                                 return `<span class="badge bg-info text-dark"><i class="bi bi-arrow-repeat me-1"></i>Actualización disponible</span>
-                                            <span class="text-muted small ms-2"><i class="bi bi-pencil-square me-1"></i>${cambiosTexto}</span>`;
+                                        <span class="badge bg-warning text-dark ms-1">${cambios.length} cambio${cambios.length !== 1 ? 's' : ''}</span>
+                                        ${cambiosHtml}`;
                             } else if (!res.esValido) {
                                 return `<span class="badge bg-danger"><i class="bi bi-x-circle me-1"></i>${res.motivo || 'Inválido'}</span>`;
                             } else if (status === 'NUEVO' || status === 'ACTUALIZACION' || status === 'ACTUALIZACION_BD' || status === 'ACTUALIZACION_LOTE') {
@@ -3314,18 +3321,18 @@
                 historialModalInstance.show();
 
                 try {
-                    // Consultar directamente la BD por ID de comunicado
-                    console.log('[Matriz] Llamando obtenerMatrizPresupuestoDirecta con idComunicado:', idStr);
-                    const data = await serverCall('obtenerMatrizPresupuestoDirecta', idStr);
+                    // Usar getComunicadoCompleto que ya funciona correctamente
+                    console.log('[Matriz] Llamando getComunicadoCompleto con idComunicado:', idStr);
+                    const comunicadoCompleto = await serverCall('getComunicadoCompleto', idStr);
 
-                    console.log('[Matriz] Datos recibidos:', data);
+                    console.log('[Matriz] Datos recibidos:', comunicadoCompleto);
 
-                    if (!data) {
+                    if (!comunicadoCompleto) {
                         throw new Error('No se encontraron datos del comunicado');
                     }
 
-                    // Los datos vienen en data.actualizaciones
-                    const revisiones = data.actualizaciones || [];
+                    // Los datos vienen en comunicadoCompleto.presupuesto (array de actualizaciones)
+                    const revisiones = comunicadoCompleto.presupuesto || [];
 
                     console.log('[Matriz] Revisiones encontradas:', revisiones.length);
                     if (revisiones.length > 0) {
@@ -3349,7 +3356,7 @@
                     // CONSTRUIR MATRIZ PIVOTEADA
                     // ============================================
 
-                    // 1. Recolectar todos los conceptos únicos (por descripción)
+                    // 1. Recolectar todos los conceptos únicos (por descripción + categoría)
                     const conceptosMap = new Map();
                     revisiones.forEach((rev, revIdx) => {
                         console.log(`[Matriz] Revisión ${revIdx}: ${rev.revision || 'Sin nombre'}, lineas: ${(rev.lineas || []).length}`);
@@ -3360,11 +3367,15 @@
                         }
 
                         (rev.lineas || []).forEach((linea, lineaIdx) => {
-                            const key = (linea.descripcion || '').toUpperCase().trim();
-                            if (!key) {
+                            const desc = (linea.descripcion || '').toUpperCase().trim();
+                            if (!desc) {
                                 console.log(`[Matriz] Línea ${lineaIdx} sin descripcion:`, linea);
                                 return;
                             }
+
+                            // Usar descripción + categoría como clave para evitar sobrescribir
+                            const cat = (linea.categoria || '').toUpperCase().trim();
+                            const key = `${desc}|||${cat}`;
 
                             if (!conceptosMap.has(key)) {
                                 conceptosMap.set(key, {
@@ -3375,15 +3386,17 @@
                             }
                             const concepto = conceptosMap.get(key);
 
-                            // DEBUG: Ver el valor de importe
+                            // Obtener el valor de importe
                             const valorImporte = parseFloat(linea.importe) || 0;
-                            console.log(`[Matriz] Rev ${revIdx} - "${key.substring(0, 30)}..." importe=${linea.importe} -> ${valorImporte}`);
 
-                            concepto.montos[revIdx] = valorImporte;
-                            // Actualizar categoría si viene más completa
-                            if (linea.categoria && !concepto.categoria) {
-                                concepto.categoria = linea.categoria;
+                            // Si ya hay un valor, sumar (por si hay duplicados)
+                            if (concepto.montos[revIdx] !== null) {
+                                concepto.montos[revIdx] += valorImporte;
+                            } else {
+                                concepto.montos[revIdx] = valorImporte;
                             }
+
+                            console.log(`[Matriz] Rev ${revIdx} - "${desc.substring(0, 30)}..." [${cat}] importe=${linea.importe} -> ${concepto.montos[revIdx]}`);
                         });
                     });
 

@@ -617,26 +617,46 @@ function getMatrizPresupuesto(idComunicado) {
  */
 function obtenerMatrizPresupuestoDirecta(idComunicado) {
     const contexto = 'obtenerMatrizPresupuestoDirecta';
-    console.log(`[${contexto}] Iniciando para ID: ${idComunicado}`);
+
+    // LOG 1: Entrada a la función
+    console.log(`[${contexto}] ========== INICIO ==========`);
+    console.log(`[${contexto}] LOG 1 - Argumento recibido: "${idComunicado}"`);
+    console.log(`[${contexto}] LOG 1 - Tipo: ${typeof idComunicado}`);
+    console.log(`[${contexto}] LOG 1 - Es null: ${idComunicado === null}`);
+    console.log(`[${contexto}] LOG 1 - Es undefined: ${idComunicado === undefined}`);
 
     try {
+        // LOG 2: Validación
         if (!idComunicado) {
+            console.log(`[${contexto}] LOG 2 - ID vacío, retornando error`);
             return { success: false, message: 'ID de comunicado requerido' };
         }
+        console.log(`[${contexto}] LOG 2 - ID válido, continuando...`);
 
+        // LOG 3: Obtener spreadsheet
+        console.log(`[${contexto}] LOG 3 - Obteniendo spreadsheet...`);
         const ss = SpreadsheetApp.getActiveSpreadsheet();
-        const idBuscado = String(idComunicado).trim();
+        console.log(`[${contexto}] LOG 3 - Spreadsheet: ${ss.getName()}`);
 
-        // 1. LEER COMUNICADO DIRECTO
+        const idBuscado = String(idComunicado).trim();
+        console.log(`[${contexto}] LOG 3 - ID normalizado: "${idBuscado}"`);
+
+        // LOG 4: Leer Comunicados
+        console.log(`[${contexto}] LOG 4 - Buscando hoja Comunicados...`);
         const sheetComunicados = ss.getSheetByName('Comunicados');
         if (!sheetComunicados) {
+            console.log(`[${contexto}] LOG 4 - ERROR: Hoja Comunicados no encontrada`);
             return { success: false, message: 'Hoja Comunicados no encontrada' };
         }
+        console.log(`[${contexto}] LOG 4 - Hoja Comunicados encontrada`);
 
         const datosComunicados = sheetComunicados.getDataRange().getValues();
+        console.log(`[${contexto}] LOG 4 - Total filas Comunicados: ${datosComunicados.length}`);
+
         const headersCom = datosComunicados[0];
         const idxIdCom = headersCom.indexOf('id');
         const idxComunicadoNombre = headersCom.indexOf('comunicado');
+        console.log(`[${contexto}] LOG 4 - Índice columna id: ${idxIdCom}, comunicado: ${idxComunicadoNombre}`);
 
         let comunicadoEncontrado = null;
         for (let i = 1; i < datosComunicados.length; i++) {
@@ -645,15 +665,16 @@ function obtenerMatrizPresupuestoDirecta(idComunicado) {
                     id: datosComunicados[i][idxIdCom],
                     comunicado: datosComunicados[i][idxComunicadoNombre] || ''
                 };
+                console.log(`[${contexto}] LOG 4 - Comunicado encontrado en fila ${i + 1}`);
                 break;
             }
         }
 
         if (!comunicadoEncontrado) {
-            console.log(`[${contexto}] Comunicado no encontrado: ${idBuscado}`);
+            console.log(`[${contexto}] LOG 4 - Comunicado NO encontrado: ${idBuscado}`);
             return { success: false, message: `Comunicado ${idBuscado} no encontrado` };
         }
-        console.log(`[${contexto}] Comunicado encontrado: ${comunicadoEncontrado.comunicado}`);
+        console.log(`[${contexto}] LOG 4 - Comunicado: ${comunicadoEncontrado.comunicado}`);
 
         // 2. LEER ACTUALIZACIONES DIRECTO
         const sheetActualizaciones = ss.getSheetByName('Actualizaciones');
@@ -761,11 +782,14 @@ function obtenerMatrizPresupuestoDirecta(idComunicado) {
             };
         });
 
-        console.log(`[${contexto}] Matriz completada`);
-        return { success: true, data: { comunicado: comunicadoEncontrado, actualizaciones: actualizacionesConLineas } };
+        console.log(`[${contexto}] LOG FINAL - Matriz completada con ${actualizacionesConLineas.length} actualizaciones`);
+        const resultado = { success: true, data: { comunicado: comunicadoEncontrado, actualizaciones: actualizacionesConLineas } };
+        console.log(`[${contexto}] LOG FINAL - Retornando resultado exitoso`);
+        return resultado;
 
     } catch (error) {
-        console.error(`[${contexto}] Error:`, error);
+        console.error(`[${contexto}] EXCEPCIÓN:`, error);
+        console.error(`[${contexto}] EXCEPCIÓN mensaje:`, error.message);
         return { success: false, message: `Error: ${error.message}` };
     }
 }

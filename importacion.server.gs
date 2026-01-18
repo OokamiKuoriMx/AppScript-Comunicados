@@ -660,7 +660,9 @@ function _analizarDocumento(doc, cache, batchDocs = []) {
                 if (idDRNuevo) {
                     if (String(idDRNuevo) !== String(dgActual.idDR)) {
                         hasChanges = true;
-                        changes.push('Distrito');
+                        // Obtener nombre anterior para mostrar contexto
+                        const drAnterior = cache.distritosRiego.find(dr => String(dr.id) === String(dgActual.idDR));
+                        changes.push(`Distrito (${drAnterior?.distritoRiego || '??'} → ${h.distritoRiego})`);
                     }
                 } else if (h.distritoRiego) {
                     hasChanges = true;
@@ -672,7 +674,9 @@ function _analizarDocumento(doc, cache, batchDocs = []) {
                 if (idSiniestroNuevo) {
                     if (String(idSiniestroNuevo) !== String(dgActual.idSiniestro)) {
                         hasChanges = true;
-                        changes.push('Siniestro');
+                        // Obtener nombre anterior para mostrar contexto
+                        const sinAnterior = cache.siniestros.find(s => String(s.id) === String(dgActual.idSiniestro));
+                        changes.push(`Siniestro (${sinAnterior?.siniestro || '??'} → ${h.refSiniestro})`);
                     }
                 } else if (h.refSiniestro) {
                     hasChanges = true;
@@ -1792,19 +1796,26 @@ function _procesarBatchInterno(loteAgrupado, cache) {
                         doUpdate = true;
                     }
 
-                    // 2. Distrito
+                    // 2. Distrito - CON VINCULACIÓN DE DATOS FALTANTES
                     const idDR = _resolveIdFromCache(cache.distritosRiego, doc.header.distritoRiego, 'distritoRiego');
-                    if (idDR && String(idDR) !== String(existingDG.idDR)) {
-                        logBatch(`[${contexto}] -> Distrito CAMBIO: ${existingDG.idDR} -> ${idDR}`);
-                        updates.idDR = idDR;
-                        doUpdate = true;
+                    if (idDR) {
+                        // Vincular si BD está vacía O actualizar si cambió
+                        if (!existingDG.idDR || String(idDR) !== String(existingDG.idDR)) {
+                            logBatch(`[${contexto}] -> Distrito ${existingDG.idDR ? 'CAMBIO' : 'VINCULADO'}: ${existingDG.idDR || 'vacío'} -> ${idDR}`);
+                            updates.idDR = idDR;
+                            doUpdate = true;
+                        }
                     }
 
-                    // 3. Siniestro
+                    // 3. Siniestro - CON VINCULACIÓN DE DATOS FALTANTES
                     const idSiniestro = _resolveIdFromCache(cache.siniestros, doc.header.refSiniestro, 'siniestro');
-                    if (idSiniestro && String(idSiniestro) !== String(existingDG.idSiniestro)) {
-                        updates.idSiniestro = idSiniestro;
-                        doUpdate = true;
+                    if (idSiniestro) {
+                        // Vincular si BD está vacía O actualizar si cambió
+                        if (!existingDG.idSiniestro || String(idSiniestro) !== String(existingDG.idSiniestro)) {
+                            logBatch(`[${contexto}] -> Siniestro ${existingDG.idSiniestro ? 'CAMBIO' : 'VINCULADO'}: ${existingDG.idSiniestro || 'vacío'} -> ${idSiniestro}`);
+                            updates.idSiniestro = idSiniestro;
+                            doUpdate = true;
+                        }
                     }
 
                     // 4. Fecha
@@ -1871,9 +1882,18 @@ function _procesarBatchInterno(loteAgrupado, cache) {
                                 counts.updatedDG++;
                                 logBatch(`[${contexto}] -> UPDATE exitoso para DG ID ${existingDG.id}`);
 
-                                // CRITICO: Actualizar el CACHE en memoria para que la siguiente iteración (ej: L30B -> L30C)
+                                // CRÍTICO: Actualizar el CACHE en memoria para que la siguiente iteración (ej: L30B -> L30C)
                                 // vea la descripción actualizada (L30, L30B) y pueda adjuntar la suya.
                                 Object.assign(existingDG, updates);
+
+                                // NUEVO: Actualizar descripciones de catálogos si hay cambios contextuales
+                                const catalogosActualizados = _actualizarCatalogosSiNecesario(doc, existingDG, cache);
+                                if (catalogosActualizados.siniestrosUpdated) {
+                                    logBatch(`[${contexto}] -> Catálogo Siniestros actualizado con info más completa`);
+                                }
+                                if (catalogosActualizados.distritosUpdated) {
+                                    logBatch(`[${contexto}] -> Catálogo Distritos actualizado con info más completa`);
+                                }
 
                             } else {
                                 logBatch(`[${contexto}] -> UPDATE falló para DG ID ${existingDG.id}: ${resUpd.message}`);
@@ -1912,11 +1932,11 @@ function _procesarBatchInterno(loteAgrupado, cache) {
                     const actExistenteOrden = actsPrevias.sort((a, b) =>
                         Number(b.consecutivo) - Number(a.consecutivo)
                     )[0];
-                    
+
                     if (actExistenteOrden && actExistenteOrden.id && doc.header.totalPdf !== undefined) {
                         const montoNuevo = parseFloat(doc.header.totalPdf) || 0;
                         const montoExistente = parseFloat(actExistenteOrden.monto) || 0;
-                        
+
                         if (Math.abs(montoNuevo - montoExistente) > 0.01) {
                             logBatch(`[${contexto}] FASE 3: Actualizando monto de ActID ${actExistenteOrden.id}: $${montoExistente} -> $${montoNuevo}`);
                             try {
@@ -3211,6 +3231,96 @@ function _findMatchingDistrito(nuevoNombre, existingDistritos) {
     return null;
 }
 
+/**
+ * Actualiza descripciones de catálogos (siniestros, distritos) SOLO si hay cambios contextuales.
+ * Esto no crea nuevos registros, solo actualiza los existentes con información más completa.
+ * @param {Object} doc - Documento procesado con header
+ * @param {Object} existingDG - DatosGenerales existente en BD
+ * @param {Object} cache - Cache de catálogos
+ * @returns {Object} Resumen de actualizaciones realizadas {siniestrosUpdated, distritosUpdated}
+ */
+function _actualizarCatalogosSiNecesario(doc, existingDG, cache) {
+    const contexto = '_actualizarCatalogosSiNecesario';
+    const h = doc.header;
+    const resultado = { siniestrosUpdated: false, distritosUpdated: false };
+
+    // SINIESTRO: Actualizar descripción solo si hay cambio contextual
+    if (h.refSiniestro && existingDG.idSiniestro) {
+        const siniestroActual = cache.siniestros.find(s => String(s.id) === String(existingDG.idSiniestro));
+        if (siniestroActual) {
+            const updatesSiniestro = {};
+            let doUpdateSiniestro = false;
+
+            // Detectar cambio contextual en fenómeno (de "SIN DATO" a algo específico)
+            const fenomenoActual = String(siniestroActual.fenomeno || '').toUpperCase().trim();
+            const fenomenoNuevo = String(h.fenomeno || '').toUpperCase().trim();
+            if (fenomenoNuevo && fenomenoNuevo !== 'SIN DATO' &&
+                (fenomenoActual === 'SIN DATO' || fenomenoActual === '' || fenomenoNuevo.length > fenomenoActual.length)) {
+                updatesSiniestro.fenomeno = h.fenomeno;
+                doUpdateSiniestro = true;
+                console.log(`[${contexto}] Siniestro ID ${siniestroActual.id}: Fenómeno "${fenomenoActual}" -> "${fenomenoNuevo}"`);
+            }
+
+            // Detectar cambio en FI (Fecha de Incidencia)
+            const fiActual = String(siniestroActual.fi || '').toUpperCase().trim();
+            const fiNuevo = String(h.fi || '').toUpperCase().trim();
+            if (fiNuevo && fiNuevo !== 'SIN DATO' && (fiActual === 'SIN DATO' || fiActual === '')) {
+                updatesSiniestro.fi = h.fi;
+                doUpdateSiniestro = true;
+                console.log(`[${contexto}] Siniestro ID ${siniestroActual.id}: FI "${fiActual}" -> "${fiNuevo}"`);
+            }
+
+            // Detectar cambio en Fondo
+            const fondoActual = String(siniestroActual.fondo || '').toUpperCase().trim();
+            const fondoNuevo = String(h.fondo || '').toUpperCase().trim();
+            if (fondoNuevo && fondoNuevo !== 'SIN DATO' && (fondoActual === 'SIN DATO' || fondoActual === '')) {
+                updatesSiniestro.fondo = h.fondo;
+                doUpdateSiniestro = true;
+                console.log(`[${contexto}] Siniestro ID ${siniestroActual.id}: Fondo "${fondoActual}" -> "${fondoNuevo}"`);
+            }
+
+            if (doUpdateSiniestro) {
+                try {
+                    const res = updateRow('siniestros', siniestroActual.id, updatesSiniestro);
+                    if (res.success) {
+                        resultado.siniestrosUpdated = true;
+                        // Actualizar cache para consistencia
+                        Object.assign(siniestroActual, updatesSiniestro);
+                        console.log(`[${contexto}] ✓ Siniestro actualizado: ${JSON.stringify(updatesSiniestro)}`);
+                    }
+                } catch (e) {
+                    console.error(`[${contexto}] Error actualizando siniestro: ${e.message}`);
+                }
+            }
+        }
+    }
+
+    // DISTRITO: Actualizar descripción solo si el nuevo nombre es más completo
+    if (h.distritoRiego && existingDG.idDR) {
+        const distritoActual = cache.distritosRiego.find(d => String(d.id) === String(existingDG.idDR));
+        if (distritoActual) {
+            const nombreActual = String(distritoActual.distritoRiego || '').toUpperCase().trim();
+            const nombreNuevo = String(h.distritoRiego || '').toUpperCase().trim();
+
+            // Actualizar solo si el nombre nuevo es más completo (más largo y contiene al actual)
+            if (nombreNuevo.length > nombreActual.length && nombreNuevo.includes(nombreActual)) {
+                try {
+                    const res = updateRow('distritosRiego', distritoActual.id, { distritoRiego: h.distritoRiego });
+                    if (res.success) {
+                        resultado.distritosUpdated = true;
+                        distritoActual.distritoRiego = h.distritoRiego;
+                        console.log(`[${contexto}] ✓ Distrito actualizado: "${nombreActual}" -> "${nombreNuevo}"`);
+                    }
+                } catch (e) {
+                    console.error(`[${contexto}] Error actualizando distrito: ${e.message}`);
+                }
+            }
+        }
+    }
+
+    return resultado;
+}
+
 function _prepareSiniestrosBatch(validos, cache) {
     const inserts = [];
     const keys = []; // Para update cache
@@ -3552,6 +3662,36 @@ function _compararConExistente(doc, existingCom, cache) {
                 cambios.push(`${doc.lineas.length} líneas nuevas`);
                 tieneCambios = true;
             }
+        }
+    }
+
+    // 5. Comparar Siniestro (idSiniestro) - NUEVO
+    if (h.refSiniestro) {
+        const idSiniestroNuevo = _resolveIdFromCache(cache.siniestros, h.refSiniestro, 'siniestro');
+        if (idSiniestroNuevo && String(idSiniestroNuevo) !== String(dgActual.idSiniestro)) {
+            cambios.push(`Siniestro (ID ${dgActual.idSiniestro || 'N/A'} → ${idSiniestroNuevo})`);
+            tieneCambios = true;
+            console.log(`[${contexto}] Diferencia en siniestro: BD=${dgActual.idSiniestro}, PDF=${idSiniestroNuevo}`);
+        } else if (!dgActual.idSiniestro && h.refSiniestro) {
+            // BD no tiene siniestro pero PDF sí → VINCULAR
+            cambios.push(`Vincular Siniestro: ${h.refSiniestro}`);
+            tieneCambios = true;
+            console.log(`[${contexto}] Siniestro FALTANTE en BD, se vinculará: ${h.refSiniestro}`);
+        }
+    }
+
+    // 6. Comparar Distrito (idDR) - NUEVO
+    if (h.distritoRiego) {
+        const idDRNuevo = _resolveIdFromCache(cache.distritosRiego, h.distritoRiego, 'distritoRiego');
+        if (idDRNuevo && String(idDRNuevo) !== String(dgActual.idDR)) {
+            cambios.push(`Distrito (ID ${dgActual.idDR || 'N/A'} → ${idDRNuevo})`);
+            tieneCambios = true;
+            console.log(`[${contexto}] Diferencia en distrito: BD=${dgActual.idDR}, PDF=${idDRNuevo}`);
+        } else if (!dgActual.idDR && h.distritoRiego) {
+            // BD no tiene distrito pero PDF sí → VINCULAR
+            cambios.push(`Vincular Distrito: ${h.distritoRiego}`);
+            tieneCambios = true;
+            console.log(`[${contexto}] Distrito FALTANTE en BD, se vinculará: ${h.distritoRiego}`);
         }
     }
 
