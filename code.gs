@@ -229,6 +229,21 @@ const TABLE_DEFINITIONS = {
         uniqueFields: []
     },
 
+    relacionContratistas: {
+        sheetName: 'RelacionContratistas',
+        primaryField: 'id',
+        headers: {
+            id: ['id', 'ID'],
+            idComunicado: ['idComunicado', 'Comunicado'],
+            idEmpresa: ['idEmpresa', 'Empresa', 'ID Empresa'],
+            esContratista: ['esContratista', 'Es Contratista'],
+            esVigente: ['esVigente', 'Es Vigente', 'Vigente'],
+            fechaAsignacion: ['fechaAsignacion', 'Fecha Asignación', 'Fecha']
+        },
+        requiredFields: ['idComunicado', 'idEmpresa'],
+        uniqueFields: []
+    },
+
     facturas: {
         sheetName: 'Facturas',
         primaryField: 'id',
@@ -255,9 +270,15 @@ const TABLE_DEFINITIONS = {
             id: ['id', 'ID'],
             idComunicado: ['idComunicado', 'Comunicado', 'ID Comunicado'],
             entidad: ['entidad', 'Entidad'],  // CONSTRUCTORA, SUPERVISION
+            idEmpresa: ['idEmpresa', 'Empresa', 'ID Empresa'],
             tipo: ['tipo', 'Tipo'],
             numero: ['numero', 'Número', 'No.'],
-            montoAutorizado: ['montoAutorizado', 'Monto', 'Importe'],
+            montoAvanceFisico: ['montoAvanceFisico', 'Monto Avance Físico', 'Avance Físico', 'Estimación', 'montoEstimado'],
+            porcentajeAvanceFisico: ['porcentajeAvanceFisico', 'Porcentaje Avance Físico', 'Avance Físico %', '% Avance'],
+            amortizacion: ['amortizacion', 'Amortización', 'Amortizacion'],
+            montoNeto: ['montoNeto', 'Monto Neto', 'Neto'],
+            iva: ['iva', 'IVA', 'Impuesto'],
+            montoTotal: ['montoTotal', 'Monto Total', 'Total'],
             fechaCorte: ['fechaCorte', 'Fecha Corte', 'Fecha'],
             periodoInicio: ['periodoInicio', 'Periodo Inicio', 'Inicio'],
             periodoFin: ['periodoFin', 'Periodo Fin', 'Fin'],
@@ -275,10 +296,17 @@ const TABLE_DEFINITIONS = {
             idEstimacion: ['idEstimacion', 'Estimación', 'ID Estimación'],
             folioFactura: ['folioFactura', 'Folio', 'Factura'],
             uuid: ['uuid', 'UUID', 'Folio Fiscal'],
-            monto: ['monto', 'Monto', 'Importe'],
-            estatusSAT: ['estatusSAT', 'Estatus SAT', 'Estado'],
+            fecha: ['fecha', 'Fecha Factura', 'Fecha Emision'],
+            monto: ['monto', 'Monto', 'Importe', 'Subtotal'],
+            iva: ['iva', 'IVA', 'Impuesto'],
+            total: ['total', 'Total'],
+            tipo: ['tipo', 'Tipo', 'Complemento'], // Antes complemento
+            idFacturaRelacionada: ['idFacturaRelacionada', 'Factura Relacionada', 'ID Relacionado'],
+            fechaPago: ['fechaPago', 'Fecha Pago', 'Fecha de Pago'],
+            estatusSAT: ['estatusSAT', 'Estatus SAT'],
             archivoXml: ['archivoXml', 'XML', 'Archivo XML'],
-            archivoPdf: ['archivoPdf', 'PDF', 'Archivo PDF']
+            archivoPdf: ['archivoPdf', 'PDF', 'Archivo PDF'],
+            fechaEntrega: ['fechaEntrega', 'Fecha Entrega CONAGUA', 'Entrega CONAGUA']
         },
         requiredFields: ['idEstimacion', 'folioFactura'],
         uniqueFields: ['uuid']
@@ -295,7 +323,7 @@ const TABLE_DEFINITIONS = {
     bitacoraFacturas: {
         sheetName: 'BitacoraFacturas',
         primaryField: 'id',
-        headers: ['id', 'idFactura', 'fecha', 'tipoEvento', 'observacion', 'usuario'],
+        headers: ['id', 'idFactura', 'fecha', 'tipoEvento', 'observacion', 'usuario', 'emisor', 'responsable'],
         requiredFields: ['idFactura'],
         uniqueFields: []
     }
@@ -382,6 +410,7 @@ function flushDatabase() {
         'aseguradoras',
         'distritosRiego',
         'empresas',
+        'relacionContratistas',
         'equipo'
         // 'estados' - NO SE LIMPIA (permanente)
     ];
@@ -568,6 +597,7 @@ function getMatrizPresupuesto(idComunicado) {
                 if (String(categoria) === '2') categoria = 'DESAZOLVES';
 
                 return {
+                    idLinea: linea.idLinea,
                     descripcion: descObj ? descObj.descripcion : 'Sin descripción',
                     categoria: categoria,
                     importe: parseFloat(linea.importe) || 0,
@@ -766,6 +796,7 @@ function obtenerMatrizPresupuestoDirecta(idComunicado) {
                 if (String(cat) === '2') cat = 'DESAZOLVES';
 
                 return {
+                    idLinea: linea.idLinea,
                     descripcion: descObj ? descObj.descripcion : 'Sin descripción',
                     categoria: cat,
                     importe: parseFloat(linea.importe) || 0,
