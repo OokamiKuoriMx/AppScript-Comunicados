@@ -9,8 +9,11 @@
                     <i class="bi bi-arrow-left"></i> Volver
                 </button>
                 <div>
-                    <h5 class="m-0 fw-bold text-primary" id="header-titulo">Cargando...</h5>
-                    <small class="text-muted" id="header-subtitulo">...</small>
+                    <h5 class="m-0 fw-bold text-primary text-uppercase" id="header-titulo"
+                        style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 900px;">
+                        Cargando...</h5>
+                    <!-- Subtitulo eliminado por requerimiento -->
+                    <small class="text-muted d-none" id="header-subtitulo"></small>
                 </div>
             </div>
             <div class="d-flex gap-2">
@@ -48,10 +51,28 @@
                         data-bs-toggle="list" href="#tab-equipo" role="tab">
                         <i class="bi bi-people"></i> Equipo y Asignaciones
                     </a>
-                    <a class="list-group-item list-group-item-action d-flex align-items-center gap-2 py-3"
-                        data-bs-toggle="list" href="#tab-financiero" role="tab">
-                        <i class="bi bi-receipt"></i> Estimaciones y Facturas
+                    <!-- Collapsible Parent -->
+                    <a class="list-group-item list-group-item-action d-flex align-items-center justify-content-between py-3"
+                        data-bs-toggle="collapse" href="#menu-financiero" role="button" aria-expanded="false">
+                        <div class="d-flex align-items-center gap-2">
+                            <i class="bi bi-receipt"></i> Estimaciones y Facturas
+                        </div>
+                        <i class="bi bi-chevron-down small"></i>
                     </a>
+
+                    <!-- Collapsible Children -->
+                    <div class="collapse" id="menu-financiero">
+                        <div class="list-group list-group-flush bg-white border-bottom">
+                            <a class="list-group-item list-group-item-action ps-5 py-2 small border-0"
+                                data-bs-toggle="list" href="#tab-estimaciones-constructora" role="tab">
+                                <i class="bi bi-building me-2 text-muted"></i>Contratista
+                            </a>
+                            <a class="list-group-item list-group-item-action ps-5 py-2 small border-0"
+                                data-bs-toggle="list" href="#tab-estimaciones-supervision" role="tab">
+                                <i class="bi bi-binoculars me-2 text-muted"></i>Supervisión
+                            </a>
+                        </div>
+                    </div>
                     <a class="list-group-item list-group-item-action d-flex align-items-center gap-2 py-3"
                         data-bs-toggle="list" href="#tab-tickets" role="tab">
                         <i class="bi bi-ticket-perforated"></i> Sistema de Tickets
@@ -72,8 +93,9 @@
 
                         <!-- GRUPO 1: DATOS DEL COMUNICADO -->
                         <div class="card shadow-sm border-0 mb-4">
-                            <div class="card-header bg-white py-3">
-                                <h6 class="mb-0 fw-bold">1. Datos del Comunicado</h6>
+                            <div class="card-header bg-white py-3 border-start border-4 border-primary">
+                                <h6 class="mb-0 fw-bold"><i class="bi bi-file-earmark-text me-2 text-primary"></i>1.
+                                    Datos del Comunicado</h6>
                             </div>
                             <div class="card-body">
                                 <form id="form-general">
@@ -118,8 +140,9 @@
 
                         <!-- GRUPO 2: DATOS DEL AJUSTADOR -->
                         <div class="card shadow-sm border-0 mb-4">
-                            <div class="card-header bg-white py-3">
-                                <h6 class="mb-0 fw-bold">2. Datos del Ajustador</h6>
+                            <div class="card-header bg-white py-3 border-start border-4 border-primary">
+                                <h6 class="mb-0 fw-bold"><i class="bi bi-person-badge me-2 text-primary"></i>2. Datos
+                                    del Ajustador</h6>
                             </div>
                             <div class="card-body">
                                 <div class="row g-3">
@@ -153,8 +176,9 @@
 
                         <!-- GRUPO 3: DATOS DE LA ASEGURADORA -->
                         <div class="card shadow-sm border-0 mb-4">
-                            <div class="card-header bg-white py-3">
-                                <h6 class="mb-0 fw-bold">3. Datos de la Aseguradora</h6>
+                            <div class="card-header bg-white py-3 border-start border-4 border-primary">
+                                <h6 class="mb-0 fw-bold"><i class="bi bi-shield-check me-2 text-primary"></i>3. Datos de
+                                    la Aseguradora</h6>
                             </div>
                             <div class="card-body">
                                 <div class="row g-3">
@@ -214,8 +238,9 @@
 
                         <!-- GRUPO 4: UBICACIÓN -->
                         <div class="card shadow-sm border-0">
-                            <div class="card-header bg-white py-3">
-                                <h6 class="mb-0 fw-bold">4. Ubicación</h6>
+                            <div class="card-header bg-white py-3 border-start border-4 border-primary">
+                                <h6 class="mb-0 fw-bold"><i class="bi bi-geo-alt me-2 text-primary"></i>4. Ubicación
+                                </h6>
                             </div>
                             <div class="card-body">
                                 <div class="row g-3">
@@ -249,9 +274,12 @@
                     <!-- TAB: PRESUPUESTO (Actualizaciones) -->
                     <div class="tab-pane fade" id="tab-presupuesto" role="tabpanel">
                         <div class="card shadow-sm border-0">
-                            <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
+                            <div
+                                class="card-header bg-white py-3 d-flex justify-content-between align-items-center border-start border-4 border-primary">
                                 <div>
-                                    <h6 class="mb-0 fw-bold">Bitácora de Presupuesto</h6>
+                                    <h6 class="mb-0 fw-bold"><i
+                                            class="bi bi-journal-text me-2 text-primary"></i>Bitácora de Presupuesto
+                                    </h6>
                                     <small class="text-muted">Registro de actualizaciones (Origen y Revisiones)</small>
                                 </div>
                                 <button class="btn btn-primary btn-sm" id="btn-add-actualizacion">
@@ -297,31 +325,50 @@
                         <div class="row g-4">
                             <!-- Contratistas -->
                             <div class="col-12">
-                                <div class="card shadow-sm border-0">
+                                <div class="card shadow-sm border-0 mb-4">
                                     <div
-                                        class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
-                                        <h6 class="mb-0 fw-bold">Contratistas Asignados</h6>
-                                        <button class="btn btn-outline-primary btn-sm" id="btn-add-contratista">
-                                            <i class="bi bi-person-plus"></i> Asignar Contratista
+                                        class="card-header bg-white py-3 d-flex justify-content-between align-items-center border-start border-4 border-warning">
+                                        <div>
+                                            <h6 class="mb-0 fw-bold"><i
+                                                    class="bi bi-briefcase me-2 text-warning"></i>Contratistas Asignados
+                                            </h6>
+                                            <small class="text-muted">Historial de empresas asignadas a este
+                                                comunicado</small>
+                                        </div>
+                                        <button class="btn btn-warning btn-sm" id="btn-add-contratista">
+                                            <i class="bi bi-plus-lg"></i> Asignar Contratista
                                         </button>
                                     </div>
-                                    <div class="card-body p-0">
-                                        <div id="lista-contratistas" class="list-group list-group-flush">
-                                            <div class="text-center py-4 text-muted">
-                                                <small>No hay contratistas asignados</small>
-                                            </div>
-                                        </div>
+                                    <div class="table-responsive">
+                                        <table class="table table-hover align-middle mb-0 small">
+                                            <thead class="bg-light text-secondary">
+                                                <tr>
+                                                    <th style="min-width: 200px;">Empresa</th>
+                                                    <th style="min-width: 120px;">Fecha Asignación</th>
+                                                    <th style="min-width: 100px;">Estatus</th>
+                                                    <th class="text-end" style="width: 100px;">Acciones</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody id="lista-contratistas">
+                                                <!-- Dynamic -->
+                                            </tbody>
+                                        </table>
                                     </div>
                                 </div>
                             </div>
+
                             <!-- Supervisión -->
                             <div class="col-12">
                                 <div class="card shadow-sm border-0">
                                     <div
-                                        class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
-                                        <h6 class="mb-0 fw-bold">Equipo de Supervisión</h6>
-                                        <button class="btn btn-outline-primary btn-sm" id="btn-add-supervisor">
-                                            <i class="bi bi-person-plus"></i> Asignar Supervisor
+                                        class="card-header bg-white py-3 d-flex justify-content-between align-items-center border-start border-4 border-info">
+                                        <div>
+                                            <h6 class="mb-0 fw-bold"><i class="bi bi-people me-2 text-info"></i>Equipo
+                                                de Supervisión</h6>
+                                            <small class="text-muted">Personal de supervisión asignado</small>
+                                        </div>
+                                        <button class="btn btn-info btn-sm text-white" id="btn-add-supervisor">
+                                            <i class="bi bi-plus-lg"></i> Asignar Supervisor
                                         </button>
                                     </div>
                                     <div class="card-body p-0">
@@ -336,9 +383,8 @@
                         </div>
                     </div>
 
-                    <!-- TAB: FINANCIERO -->
-                    <!-- TAB: FINANCIERO -->
-                    <div class="tab-pane fade" id="tab-financiero" role="tabpanel">
+                    <!-- TAB: ESTIMACIONES CONSTRUCTORA -->
+                    <div class="tab-pane fade" id="tab-estimaciones-constructora" role="tabpanel">
                         <!-- Resumen Financiero Superior -->
                         <div class="row g-3 mb-4">
                             <div class="col-md-4">
@@ -370,44 +416,224 @@
                             </div>
                         </div>
 
-                        <!-- Tabla Detallada Unificada -->
-                        <div class="card shadow-sm border-0">
-                            <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
+                        <!-- SECCIÓN CONSTRUCTORA -->
+                        <div class="card shadow-sm border-0 mb-4">
+                            <div
+                                class="card-header bg-white py-3 d-flex justify-content-between align-items-center border-start border-4 border-warning">
                                 <div>
-                                    <h6 class="mb-0 fw-bold">Estimaciones y Facturación</h6>
-                                    <small class="text-muted">Desglose de estimaciones, amortizaciones y facturas
-                                        asociadas</small>
+                                    <h6 class="mb-0 fw-bold"><i
+                                            class="bi bi-building me-2 text-warning"></i>Constructora</h6>
+                                    <small class="text-muted">Estimaciones de avance de obra, anticipos y
+                                        finiquito</small>
                                 </div>
-                                <button class="btn btn-primary btn-sm" id="btn-add-estimacion">
-                                    <i class="bi bi-plus-lg"></i> Registrar Estimación
-                                </button>
+                                <div class="d-flex align-items-center gap-2">
+                                    <div class="input-group input-group-sm">
+                                        <span class="input-group-text bg-white border-warning text-warning"><i
+                                                class="bi bi-person-check-fill"></i></span>
+                                        <select id="select-contratista-main" class="form-select border-warning"
+                                            style="max-width: 300px;">
+                                            <option value="">Cargando...</option>
+                                        </select>
+                                    </div>
+                                    <button class="btn btn-warning btn-sm" id="btn-add-estimacion-constructora">
+                                        <i class="bi bi-plus-lg"></i> Nueva Estimación
+                                    </button>
+                                </div>
                             </div>
                             <div class="table-responsive">
-                                <table class="table table-hover align-middle mb-0 small checkbox-fix">
+                                <table class="table table-hover align-middle mb-0 small">
                                     <thead class="bg-light text-secondary">
                                         <tr>
-                                            <th style="min-width: 80px;">No.</th>
-                                            <th style="min-width: 110px;">Fecha</th>
-                                            <th class="text-end" style="min-width: 120px;">Monto Ejecutado</th>
-                                            <th class="text-end" style="min-width: 120px;">Amortización</th>
-                                            <th class="text-end bg-light" style="min-width: 110px;">Subtotal</th>
-                                            <th class="text-end bg-light" style="min-width: 100px;">IVA</th>
-                                            <th class="text-end fw-bold text-success" style="min-width: 120px;">Total
-                                                Factura</th>
-                                            <th style="min-width: 120px;">Folio Factura</th>
-                                            <th style="width: 50px;"></th>
+                                            <th style="min-width: 100px;">Tipo</th>
+                                            <th style="min-width: 60px;">No.</th>
+                                            <th style="min-width: 110px;">Fechas</th> <!-- Corte + Periodos -->
+
+                                            <!-- Desglose Financiero -->
+                                            <th class="text-end" style="min-width: 80px;">Av. Fis %</th>
+                                            <th class="text-end" style="min-width: 100px;">Avance Físico</th>
+                                            <th class="text-end" style="min-width: 100px;">Amort.</th>
+                                            <th class="text-end" style="min-width: 100px;">Neto</th>
+                                            <th class="text-end" style="min-width: 100px;">IVA</th>
+                                            <th class="text-end" style="min-width: 100px;" title="Monto Total a Pagar">
+                                                Total</th>
+
+
+                                            <th style="min-width: 100px;">Estatus</th>
+                                            <th style="width: 50px;"></th> <!-- Trash Btn -->
                                         </tr>
                                     </thead>
-                                    <tbody id="lista-estimaciones-body">
+                                    <tbody id="lista-estimaciones-constructora">
                                         <tr>
-                                            <td colspan="9" class="text-center py-5 text-muted">
-                                                Cargando información financiera...
+                                            <td colspan="7" class="text-center py-4 text-muted">
+                                                <i class="bi bi-inbox fs-4 d-block mb-2"></i>
+                                                Sin estimaciones de constructora registradas
                                             </td>
                                         </tr>
                                     </tbody>
+                                    <tfoot class="bg-light fw-bold">
+                                        <tr>
+                                            <td colspan="3" class="text-end">Total Constructora:</td>
+                                            <td class="text-end text-warning fs-6" id="total-constructora">$0.00</td>
+                                            <td colspan="3"></td>
+                                        </tr>
+                                    </tfoot>
+                                </table>
+                            </div>
+
+                            <!-- PANEL FACTURAS CONSTRUCTORA (Master-Detail) -->
+                            <div id="panel-facturas-constructora" class="mt-4">
+                                <!-- Placeholder: Visible inicial o cuando no hay selección -->
+                                <div id="facturas-placeholder-constructora"
+                                    class="card shadow-sm border-0 p-5 text-center bg-light">
+                                    <div class="text-muted">
+                                        <i class="bi bi-receipt-cutoff fs-1 d-block mb-3 opacity-50"></i>
+                                        <h6 class="fw-bold">Detalle de Facturación</h6>
+                                        <p class="small mb-0">Seleccione una estimación de la tabla superior para
+                                            gestionar sus facturas.</p>
+                                    </div>
+                                </div>
+
+                                <!-- Contenido: Visible solo tras seleccionar -->
+                                <div id="facturas-data-constructora" class="card shadow-sm border-0 d-none">
+                                    <div
+                                        class="card-header bg-white py-3 d-flex justify-content-between align-items-center border-start border-4 border-primary">
+                                        <div>
+                                            <h6 class="mb-0 fw-bold" id="titulo-facturas-constructora">
+                                                <i class="bi bi-receipt me-2 text-primary"></i>Facturas de la Estimación
+                                            </h6>
+                                            <small class="text-muted">Gestión de documentos fiscales asociados</small>
+                                        </div>
+                                        <button class="btn btn-primary btn-sm" id="btn-add-factura-constructora"
+                                            onclick="ComunicadoDetalle.addFactura('CONSTRUCTORA')">
+                                            <i class="bi bi-plus-lg"></i> Agregar Factura
+                                        </button>
+                                    </div>
+                                    <div class="card-body p-0">
+                                        <div class="table-responsive">
+                                            <table class="table table-hover align-middle mb-0 bg-white small">
+                                                <thead class="bg-light text-secondary">
+                                                    <tr>
+                                                        <th class="ps-3">No. Factura</th>
+                                                        <th class="text-end">Subtotal</th>
+                                                        <th class="text-end">IVA</th>
+                                                        <th class="text-end">Total</th>
+                                                        <th>Complemento</th>
+                                                        <th>Entregado CONAGUA</th>
+                                                        <th>Fecha Pago</th>
+                                                        <th>Estatus</th>
+                                                        <th style="width: 40px;"></th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody id="lista-facturas-constructora"></tbody>
+                                            </table>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                        </div>
+                    </div>
+
+                    <!-- TAB: ESTIMACIONES SUPERVISION -->
+                    <div class="tab-pane fade" id="tab-estimaciones-supervision" role="tabpanel">
+
+                        <!-- SECCIÓN SUPERVISIÓN (Moved here) -->
+                        <div class="card shadow-sm border-0">
+                            <div
+                                class="card-header bg-white py-3 d-flex justify-content-between align-items-center border-start border-4 border-info">
+                                <div>
+                                    <h6 class="mb-0 fw-bold"><i class="bi bi-binoculars me-2 text-info"></i>Supervisión
+                                    </h6>
+                                    <small class="text-muted">Solo Anticipo y Finiquito (vinculados a
+                                        Constructora)</small>
+                                </div>
+                                <button class="btn btn-info btn-sm text-white" id="btn-add-estimacion-supervision">
+                                    <i class="bi bi-plus-lg"></i> Nueva Supervisión
+                                </button>
+                            </div>
+                            <div class="table-responsive">
+                                <table class="table table-hover align-middle mb-0 small">
+                                    <thead class="bg-light text-secondary">
+                                        <tr>
+                                            <th style="min-width: 100px;">Tipo</th>
+                                            <th style="min-width: 70px;">No.</th>
+                                            <th style="min-width: 110px;">Fecha Corte</th>
+                                            <th class="text-end" style="min-width: 130px;">Monto Autorizado</th>
+                                            <th style="min-width: 140px;">Vinculado a</th>
+                                            <th style="min-width: 100px;">Estatus</th>
+                                            <th style="width: 50px;"></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="lista-estimaciones-supervision">
+                                        <tr>
+                                            <td colspan="7" class="text-center py-4 text-muted">
+                                                <i class="bi bi-inbox fs-4 d-block mb-2"></i>
+                                                Sin estimaciones de supervisión registradas
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                    <tfoot class="bg-light fw-bold">
+                                        <tr>
+                                            <td colspan="3" class="text-end">Total Supervisión:</td>
+                                            <td class="text-end text-info fs-6" id="total-supervision">$0.00</td>
+                                            <td colspan="3"></td>
+                                        </tr>
+                                    </tfoot>
                                 </table>
                             </div>
                         </div>
+
+                        <!-- PANEL FACTURAS SUPERVISION (Master-Detail) -->
+                        <div id="panel-facturas-supervision" class="mt-4">
+                            <!-- Placeholder -->
+                            <div id="facturas-placeholder-supervision"
+                                class="card shadow-sm border-0 p-5 text-center bg-light">
+                                <div class="text-muted">
+                                    <i class="bi bi-receipt-cutoff fs-1 d-block mb-3 opacity-50"></i>
+                                    <h6 class="fw-bold">Detalle de Facturación (Supervisión)</h6>
+                                    <p class="small mb-0">Seleccione una estimación de supervisión para gestionar sus
+                                        facturas.</p>
+                                </div>
+                            </div>
+
+                            <!-- Contenido -->
+                            <div id="facturas-data-supervision" class="card shadow-sm border-0 d-none">
+                                <div
+                                    class="card-header bg-white py-3 d-flex justify-content-between align-items-center border-start border-4 border-info">
+                                    <div>
+                                        <h6 class="mb-0 fw-bold" id="titulo-facturas-supervision">
+                                            <i class="bi bi-receipt me-2 text-info"></i>Facturas de Supervisión
+                                        </h6>
+                                        <small class="text-muted">Gestión de documentos fiscales asociados</small>
+                                    </div>
+                                    <button class="btn btn-info btn-sm text-white" id="btn-add-factura-supervision"
+                                        onclick="ComunicadoDetalle.addFactura('SUPERVISION')">
+                                        <i class="bi bi-plus-lg"></i> Agregar Factura
+                                    </button>
+                                </div>
+                                <div class="card-body p-0">
+                                    <div class="table-responsive">
+                                        <table class="table table-hover align-middle mb-0 bg-white small">
+                                            <thead class="bg-light text-secondary">
+                                                <tr>
+                                                    <th class="ps-3">No. Factura</th>
+                                                    <th class="text-end">Subtotal</th>
+                                                    <th class="text-end">IVA</th>
+                                                    <th class="text-end">Total</th>
+                                                    <th>Complemento</th>
+                                                    <th>Entregado CONAGUA</th>
+                                                    <th>Fecha Pago</th>
+                                                    <th>Estatus</th>
+                                                    <th style="width: 40px;"></th>
+                                                </tr>
+                                            </thead>
+                                            <tbody id="lista-facturas-supervision"></tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
                     </div>
 
                     <!-- TAB: TICKETS -->
@@ -439,19 +665,19 @@
                     <!-- TAB: MATRIX ACTUALIZACIONES -->
                     <div class="tab-pane fade" id="tab-matrix-actualizaciones" role="tabpanel">
                         <div class="card shadow-sm border-0">
-                            <div class="card-header bg-white py-3 border-bottom">
-                                <div class="d-flex justify-content-between align-items-center">
-                                    <div>
-                                        <h6 class="mb-0 fw-bold text-dark">Matriz de Actualizaciones</h6>
-                                        <small class="text-muted">Vista consolidada de todos los cambios por
-                                            ubicación/concepto</small>
-                                    </div>
-                                    <div class="d-flex gap-2">
-                                        <span class="badge bg-light text-dark border" id="matrix-count-conceptos">0
-                                            conceptos</span>
-                                        <span class="badge bg-primary" id="matrix-count-updates">0
-                                            actualizaciones</span>
-                                    </div>
+                            <div
+                                class="card-header bg-white py-3 d-flex justify-content-between align-items-center border-start border-4 border-primary">
+                                <div>
+                                    <h6 class="mb-0 fw-bold"><i class="bi bi-grid-3x3 me-2 text-primary"></i>Matriz de
+                                        Actualizaciones</h6>
+                                    <small class="text-muted">Vista consolidada de todos los cambios por
+                                        ubicación/concepto</small>
+                                </div>
+                                <div class="d-flex gap-2">
+                                    <span class="badge bg-light text-dark border" id="matrix-count-conceptos">0
+                                        conceptos</span>
+                                    <span class="badge bg-primary" id="matrix-count-updates">0
+                                        actualizaciones</span>
                                 </div>
                             </div>
                             <div class="card-body p-0">

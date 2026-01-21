@@ -118,6 +118,7 @@ function importarEstimacionesDesdeCSV(fileContent) {
                 entidad: entidad,
                 tipo: tipo,
                 numero: numero || (tipo === 'ANTICIPO' ? 'A' : tipo === 'FINIQUITO' ? 'F' : '1'),
+                idEstimacionVinculada: '', // Se vinculará después si es SUPERVISION
                 montoAutorizado: monto,
                 fechaCorte: idxFechaCorte > -1 ? String(row[idxFechaCorte]).trim() : new Date().toISOString().split('T')[0],
                 periodoInicio: idxPeriodoInicio > -1 ? String(row[idxPeriodoInicio]).trim() : '',
@@ -138,6 +139,10 @@ function importarEstimacionesDesdeCSV(fileContent) {
         if (nuevasEstimaciones.length > 0) {
             createBatch(TABLE_ESTIMACIONES, nuevasEstimaciones);
             createBatch(TABLE_BITACORA_EST, nuevasBitacoras);
+
+            // Vincular automáticamente SUPERVISION con CONSTRUCTORA
+            const vinculadas = _vincularSupervisionPost(comunicado.id, nuevasEstimaciones, estimacionesExistentes);
+            console.log(`[${contexto}] Estimaciones de supervisión vinculadas: ${vinculadas}`);
         }
 
         let mensaje = `Se importaron ${nuevasEstimaciones.length} estimaciones correctamente.`;
@@ -342,6 +347,11 @@ function crearEstimacion(datos) {
     const contexto = 'crearEstimacion';
 
     try {
+        // Si el ID es temporal (cliente), lo quitamos para que createRow genere uno consecutivo
+        if (datos.id && String(datos.id).startsWith('temp-')) {
+            delete datos.id;
+        }
+
         const resultado = createRow(TABLE_ESTIMACIONES, datos);
 
         if (resultado.success) {
@@ -422,6 +432,28 @@ function actualizarEstatusFactura(idFactura, nuevoEstatus, observacion) {
     }
 }
 
+function actualizarFactura(idFactura, datos) {
+    const contexto = 'actualizarFactura';
+    try {
+        const resultado = updateRow(TABLE_FACTURAS_EST, idFactura, datos);
+        return resultado;
+    } catch (e) {
+        console.error(`[${contexto}] Error:`, e);
+        return { success: false, message: e.message };
+    }
+}
+
+function eliminarFactura(idFactura) {
+    const contexto = 'eliminarFactura';
+    try {
+        const resultado = deleteRow(TABLE_FACTURAS_EST, idFactura);
+        return resultado;
+    } catch (e) {
+        console.error(`[${contexto}] Error:`, e);
+        return { success: false, message: e.message };
+    }
+}
+
 /**
  * Actualiza una estimación existente
  * 
@@ -466,19 +498,40 @@ function leerEstimacionesPorComunicado(idComunicado) {
     const contexto = 'leerEstimacionesPorComunicado';
 
     try {
-        const estimaciones = (readAllRows(TABLE_ESTIMACIONES).data || [])
-            .filter(e => String(e.idComunicado) === String(idComunicado));
-
+        const todasEstimaciones = readAllRows(TABLE_ESTIMACIONES).data || [];
+        const estimaciones = todasEstimaciones.filter(e => String(e.idComunicado) === String(idComunicado));
         const facturas = readAllRows(TABLE_FACTURAS_EST).data || [];
 
-        // Anidar facturas dentro de cada estimación
-        return estimaciones.map(est => ({
-            ...est,
-            facturas: facturas.filter(f => String(f.idEstimacion) === String(est.id))
-        }));
+        // Anidar facturas y datos de vinculación dentro de cada estimación
+        const resultado = estimaciones.map(est => {
+            const estConFacturas = {
+                ...est,
+                facturas: facturas.filter(f => String(f.idEstimacion) === String(est.id))
+            };
+
+            // Si es SUPERVISION y tiene vinculación, agregar datos de la constructora vinculada
+            if (est.entidad === 'SUPERVISION' && est.idEstimacionVinculada) {
+                const constructoraVinculada = todasEstimaciones.find(
+                    e => String(e.id) === String(est.idEstimacionVinculada)
+                );
+                if (constructoraVinculada) {
+                    estConFacturas.constructoraVinculada = {
+                        id: constructoraVinculada.id,
+                        tipo: constructoraVinculada.tipo,
+                        numero: constructoraVinculada.numero,
+                        montoAutorizado: constructoraVinculada.montoAutorizado
+                    };
+                }
+            }
+
+            return estConFacturas;
+        });
+
+        console.log(`[${contexto}] Encontradas ${resultado.length} estimaciones para comunicado ${idComunicado}`);
+        return { success: true, data: resultado };
     } catch (e) {
         console.error(`[${contexto}] Error:`, e);
-        return [];
+        return { success: false, message: e.message, data: [] };
     }
 }
 
@@ -575,6 +628,7 @@ function generarPlantillaFacturasEstimaciones() {
  */
 function generarPlantillaEstimaciones() {
     // Columnas basadas en TABLE_DEFINITIONS.estimaciones
+    // Nota: vinculadaA es opcional - si se omite, el sistema vincula automáticamente por tipo
     const headers = [
         'referenciaAjustador',  // Referencia del ajustador (ej: GL098774)
         'sufijo',               // Sufijo del comunicado (ej: L27, L27A)
@@ -589,13 +643,14 @@ function generarPlantillaEstimaciones() {
     ];
 
     // Ejemplo de datos - Constructora y Supervisión
+    // NOTA: SUPERVISION se vincula automáticamente a CONSTRUCTORA por tipo (ANTICIPO↔ANTICIPO, FINIQUITO↔FINIQUITO)
     const ejemplos = [
         // CONSTRUCTORA - puede tener todas las estimaciones
         ['GL098774', 'L27', 'CONSTRUCTORA', 'ANTICIPO', 'A', '500000.00', '2025-01-15', '', '', 'PAGADO'],
         ['GL098774', 'L27', 'CONSTRUCTORA', 'ESTIMACION', '1', '150000.00', '2025-02-01', '2025-01-01', '2025-01-31', 'EN_REVISION'],
         ['GL098774', 'L27', 'CONSTRUCTORA', 'ESTIMACION', '2', '200000.00', '2025-03-01', '2025-02-01', '2025-02-28', 'PENDIENTE'],
         ['GL098774', 'L27', 'CONSTRUCTORA', 'FINIQUITO', 'F', '100000.00', '2025-04-01', '', '', 'PENDIENTE'],
-        // SUPERVISION - solo ANTICIPO y FINIQUITO (5%)
+        // SUPERVISION - solo ANTICIPO y FINIQUITO (se vinculan automáticamente a CONSTRUCTORA)
         ['GL098774', 'L27', 'SUPERVISION', 'ANTICIPO', 'A', '25000.00', '2025-01-15', '', '', 'PAGADO'],
         ['GL098774', 'L27', 'SUPERVISION', 'FINIQUITO', 'F', '5000.00', '2025-04-01', '', '', 'PENDIENTE']
     ];
@@ -1035,6 +1090,235 @@ function generarPlantillaContratistas() {
                 totalSinEmpresa: filasDatos.length
             }
         };
+
+    } catch (e) {
+        console.error(`[${contexto}] Error:`, e);
+        return { success: false, message: e.message };
+    }
+}
+
+// ============================================================================
+// VINCULACIÓN SUPERVISION ↔ CONSTRUCTORA
+// ============================================================================
+
+/**
+ * Vincula automáticamente estimaciones de SUPERVISION con CONSTRUCTORA
+ * después de una importación. Busca por coincidencia de tipo.
+ * 
+ * @param {string|number} idComunicado - ID del comunicado procesado
+ * @param {Array} nuevasEstimaciones - Estimaciones recién importadas
+ * @param {Array} estimacionesExistentes - Estimaciones ya en BD
+ * @returns {number} Cantidad de vinculaciones realizadas
+ * @private
+ */
+function _vincularSupervisionPost(idComunicado, nuevasEstimaciones, estimacionesExistentes) {
+    const contexto = '_vincularSupervisionPost';
+    let vinculadas = 0;
+
+    try {
+        // Combinar estimaciones nuevas con existentes del mismo comunicado
+        const todasEstimaciones = [
+            ...estimacionesExistentes.filter(e => String(e.idComunicado) === String(idComunicado)),
+            ...nuevasEstimaciones.filter(e => String(e.idComunicado) === String(idComunicado))
+        ];
+
+        // Filtrar CONSTRUCTORA (posibles destinos de vinculación)
+        const constructoras = todasEstimaciones.filter(e =>
+            String(e.entidad || 'CONSTRUCTORA').toUpperCase() === 'CONSTRUCTORA'
+        );
+
+        // Filtrar SUPERVISION sin vínculo (candidatos para vincular)
+        const supervisionSinVinculo = nuevasEstimaciones.filter(e =>
+            String(e.entidad).toUpperCase() === 'SUPERVISION' &&
+            !e.idEstimacionVinculada
+        );
+
+        console.log(`[${contexto}] Constructoras disponibles: ${constructoras.length}, SUPERVISION sin vínculo: ${supervisionSinVinculo.length}`);
+
+        supervisionSinVinculo.forEach(sup => {
+            // Buscar CONSTRUCTORA con mismo tipo (ANTICIPO↔ANTICIPO, FINIQUITO↔FINIQUITO)
+            const match = constructoras.find(c =>
+                String(c.tipo).toUpperCase() === String(sup.tipo).toUpperCase()
+            );
+
+            if (match) {
+                // Actualizar en BD
+                const resultado = updateRow(TABLE_ESTIMACIONES, sup.id, {
+                    idEstimacionVinculada: match.id
+                });
+
+                if (resultado.success) {
+                    vinculadas++;
+                    console.log(`[${contexto}] Vinculado: SUPERVISION ${sup.tipo} (${sup.id}) → CONSTRUCTORA ${match.tipo} (${match.id})`);
+                }
+            } else {
+                console.log(`[${contexto}] Sin match: SUPERVISION ${sup.tipo} no encontró CONSTRUCTORA del mismo tipo`);
+            }
+        });
+
+        return vinculadas;
+
+    } catch (e) {
+        console.error(`[${contexto}] Error:`, e);
+        return vinculadas;
+    }
+}
+
+/**
+ * Vincula todas las estimaciones de SUPERVISION existentes a sus correspondientes CONSTRUCTORA
+ * Útil para datos históricos o migración
+ * 
+ * @returns {Object} Resultado con cantidad de vinculaciones
+ */
+function vincularSupervisionAConstructoraExistentes() {
+    const contexto = 'vincularSupervisionAConstructoraExistentes';
+    console.log(`[${contexto}] Iniciando vinculación masiva...`);
+
+    try {
+        const estimaciones = readAllRows(TABLE_ESTIMACIONES).data || [];
+
+        // Agrupar por idComunicado
+        const porComunicado = {};
+        estimaciones.forEach(e => {
+            const idCom = String(e.idComunicado);
+            if (!porComunicado[idCom]) porComunicado[idCom] = [];
+            porComunicado[idCom].push(e);
+        });
+
+        let totalVinculadas = 0;
+        let comunicadosProcesados = 0;
+
+        Object.entries(porComunicado).forEach(([idCom, ests]) => {
+            const constructoras = ests.filter(e =>
+                String(e.entidad || 'CONSTRUCTORA').toUpperCase() === 'CONSTRUCTORA'
+            );
+
+            const supervisionSinVinculo = ests.filter(e =>
+                String(e.entidad).toUpperCase() === 'SUPERVISION' &&
+                !e.idEstimacionVinculada
+            );
+
+            if (supervisionSinVinculo.length > 0 && constructoras.length > 0) {
+                comunicadosProcesados++;
+
+                supervisionSinVinculo.forEach(sup => {
+                    const match = constructoras.find(c =>
+                        String(c.tipo).toUpperCase() === String(sup.tipo).toUpperCase()
+                    );
+
+                    if (match) {
+                        const res = updateRow(TABLE_ESTIMACIONES, sup.id, {
+                            idEstimacionVinculada: match.id
+                        });
+                        if (res.success) {
+                            totalVinculadas++;
+                            console.log(`[${contexto}] Comm ${idCom}: ${sup.tipo} → ID ${match.id}`);
+                        }
+                    }
+                });
+            }
+        });
+
+        console.log(`[${contexto}] FIN. Comunicados: ${comunicadosProcesados}, Vinculadas: ${totalVinculadas}`);
+
+        return {
+            success: true,
+            message: `Se vincularon ${totalVinculadas} estimaciones de SUPERVISION`,
+            data: {
+                vinculadas: totalVinculadas,
+                comunicadosProcesados: comunicadosProcesados
+            }
+        };
+
+    } catch (e) {
+        console.error(`[${contexto}] Error:`, e);
+        return { success: false, message: e.message };
+    }
+}
+
+// ============================================================================
+// BITÁCORA DE FACTURAS
+// ============================================================================
+
+function agregarBitacoraFactura(idFactura, observacion, emisor, responsable, fecha) {
+    const contexto = 'agregarBitacoraFactura';
+    try {
+        const usuario = Session.getActiveUser().getEmail();
+        const fechaRegistro = fecha ? new Date(fecha) : new Date(); // Use provided date or now
+
+        const resultado = createRow('bitacoraFacturas', {
+            idFactura: idFactura,
+            fecha: fechaRegistro,
+            observacion: observacion,
+            usuario: usuario,
+            tipoEvento: 'OBSERVACION',
+            emisor: emisor || '',
+            responsable: responsable || ''
+        });
+        return resultado;
+    } catch (e) {
+        console.error(`[${contexto}] Error:`, e);
+        return { success: false, message: e.message };
+    }
+}
+
+function leerBitacoraFactura(idFactura) {
+    const contexto = 'leerBitacoraFactura';
+    try {
+        const registros = readAllRows('bitacoraFacturas');
+        if (!registros.success) return { success: true, data: [] };
+
+        const filtrados = (registros.data || [])
+            .filter(r => String(r.idFactura) === String(idFactura))
+            .sort((a, b) => new Date(b.fecha) - new Date(a.fecha)); // Descendente
+
+        return { success: true, data: filtrados };
+    } catch (e) {
+        console.error(`[${contexto}] Error:`, e);
+        return { success: false, message: e.message, data: [] };
+    }
+}
+
+/**
+ * Registra un complemento de pago vinculado a una factura
+ */
+function registrarComplemento(idFactura, datos) {
+    const contexto = 'registrarComplemento';
+    try {
+        if (!idFactura) throw new Error('Se requiere el ID de la factura.');
+        if (!datos.folio || !datos.fecha) throw new Error('Folio y Fecha son obligatorios.');
+
+        // 1. Verificar Factura Padre
+        const facturaRes = buscarPorId(TABLE_FACTURAS_EST, idFactura);
+        if (!facturaRes.success) throw new Error('Factura no encontrada.');
+        const factura = facturaRes.data;
+
+        // 2. Crear Registro de Complemento
+        const nuevoComplemento = {
+            idEstimacion: factura.idEstimacion, // Misma estimación
+            idFacturaRelacionada: idFactura,
+            folioFactura: datos.folio, // Referencia del pago
+            uuid: datos.uuid || '',     // UUID
+            fecha: datos.fecha, // Fecha del complemento
+            fechaPago: datos.fecha, // Fecha de pago
+            tipo: 'COMPLEMENTO',
+            monto: datos.monto || 0,
+            iva: datos.iva || 0,
+            total: datos.total || 0,
+            estatusSAT: 'VIGENTE',
+            fechaCreo: new Date()
+        };
+
+        const crearRes = insertarRegistro(TABLE_FACTURAS_EST, nuevoComplemento);
+        if (!crearRes.success) throw new Error(crearRes.message);
+
+        // 3. Actualizar Factura Padre (Fecha Pago)
+        actualizarRegistro(TABLE_FACTURAS_EST, idFactura, {
+            fechaPago: datos.fecha,
+            estatusSAT: 'PAGADO' // Asumimos pagado al registrar complemento
+        });
+
+        return { success: true, data: { message: 'Complemento registrado correctamente.' } };
 
     } catch (e) {
         console.error(`[${contexto}] Error:`, e);

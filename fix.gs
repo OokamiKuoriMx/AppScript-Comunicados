@@ -405,6 +405,90 @@ function crearHojasEstimaciones() {
 
 /**
  * ===================================================================
+ * SCRIPT DE MIGRACIÓN: Agregar columnas a Estimaciones
+ * ===================================================================
+ * 
+ * Agrega las columnas 'entidad' e 'idEstimacionVinculada' a la hoja
+ * Estimaciones para soportar el nuevo modelo de vinculación.
+ * 
+ * INSTRUCCIONES:
+ * 1. Ejecutar desde el editor de Apps Script
+ * 2. Verificar que las columnas se agregaron correctamente
+ * ===================================================================
+ */
+function migrarHojaEstimaciones() {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = ss.getSheetByName('Estimaciones');
+
+    if (!sheet) {
+        console.error('❌ Hoja "Estimaciones" no encontrada');
+        return;
+    }
+
+    console.log('=== INICIO: Migración hoja Estimaciones ===');
+
+    // Headers esperados después de la migración
+    const headersEsperados = [
+        'id', 'idComunicado', 'entidad', 'tipo', 'numero',
+        'idEstimacionVinculada', 'montoAutorizado', 'fechaCorte',
+        'periodoInicio', 'periodoFin', 'estatusInterno'
+    ];
+
+    // Leer headers actuales
+    const headersActuales = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    console.log('Headers actuales:', headersActuales);
+
+    // Verificar si ya tiene los nuevos campos
+    const tieneEntidad = headersActuales.includes('entidad');
+    const tieneVinculada = headersActuales.includes('idEstimacionVinculada');
+
+    if (tieneEntidad && tieneVinculada) {
+        console.log('✓ La hoja ya tiene todos los campos necesarios');
+        console.log('=== FIN: No se requieren cambios ===');
+        return;
+    }
+
+    // Insertar columnas faltantes
+    let colOffset = 0;
+
+    // 'entidad' va después de 'idComunicado' (posición 3)
+    if (!tieneEntidad) {
+        const posEntidad = headersActuales.indexOf('idComunicado') + 2; // +2 porque es 1-indexed y después de
+        sheet.insertColumnAfter(posEntidad + colOffset);
+        sheet.getRange(1, posEntidad + 1 + colOffset).setValue('entidad');
+
+        // Valor por defecto: CONSTRUCTORA
+        const numRows = sheet.getLastRow();
+        if (numRows > 1) {
+            sheet.getRange(2, posEntidad + 1 + colOffset, numRows - 1, 1).setValue('CONSTRUCTORA');
+        }
+        console.log('✓ Columna "entidad" agregada con valor por defecto CONSTRUCTORA');
+        colOffset++;
+    }
+
+    // Releer headers después de posible inserción
+    const headersPostEntidad = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+
+    // 'idEstimacionVinculada' va después de 'numero'
+    if (!tieneVinculada) {
+        const posVinculada = headersPostEntidad.indexOf('numero') + 1; // +1 porque indexOf es 0-based
+        sheet.insertColumnAfter(posVinculada);
+        sheet.getRange(1, posVinculada + 1).setValue('idEstimacionVinculada');
+        console.log('✓ Columna "idEstimacionVinculada" agregada (vacía)');
+    }
+
+    // Formatear encabezados
+    sheet.getRange(1, 1, 1, sheet.getLastColumn())
+        .setBackground('#4285f4')
+        .setFontColor('#ffffff')
+        .setFontWeight('bold');
+
+    console.log('=== FIN: Migración completada ===');
+    console.log('Headers finales:', sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0]);
+}
+
+/**
+ * ===================================================================
  * TEST: Diagnóstico de getMatrizPresupuesto
  * ===================================================================
  * Ejecutar desde el editor de Apps Script para ver logs detallados.
@@ -575,5 +659,144 @@ function testLecturaDirecta(idComunicado) {
     } catch (e) {
         console.error('[TEST] Error:', e);
         return { success: false, message: e.message };
+    }
+}
+
+/**
+ * ===================================================================
+ * SCRIPT DE MIGRACIÓN: Poblar tabla RelacionContratistas
+ * ===================================================================
+ * 
+ * Crea la hoja 'RelacionContratistas' si no existe y migra los datos
+ * existentes de contratistas (idEmpresa) desde 'DatosGenerales'.
+ * 
+ * INSTRUCCIONES:
+ * 1. Ejecutar desde el editor de Apps Script > migrarRelacionContratistas
+ * ===================================================================
+ */
+function migrarRelacionContratistas() {
+    const DRY_RUN = false;
+
+    console.log('=== INICIO: Migración RelacionContratistas ===');
+    console.log(`Modo: ${DRY_RUN ? 'SIMULACIÓN (No cambios)' : 'EJECUCIÓN REAL'}`);
+
+    // 1. Verificar/Crear Hoja
+    crearTablaRelacionContratistas();
+
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const nombreHoja = 'RelacionContratistas';
+    let sheet = ss.getSheetByName(nombreHoja);
+
+    // 2. Leer Datos Origen (DatosGenerales)
+    const respDG = readAllRows('datosGenerales');
+    if (!respDG.success) {
+        console.error('Error leyendo DatosGenerales:', respDG.message);
+        return;
+    }
+    const datosGenerales = respDG.data;
+    console.log(`Registros en DatosGenerales: ${datosGenerales.length}`);
+
+    // 3. Leer Datos Destino (RelacionContratistas) para evitar duplicados
+    let relacionesExistentes = [];
+    if (sheet || DRY_RUN) {
+        const respRel = readAllRows('relacionContratistas');
+        if (respRel.success) relacionesExistentes = respRel.data;
+    }
+
+    // Mapa de claves únicas para evitar duplicar lo que ya está en la hoja
+    const mapaExistentes = new Set();
+    relacionesExistentes.forEach(r => {
+        mapaExistentes.add(`${r.idComunicado}-${r.idEmpresa}`);
+    });
+
+    // 4. Identificar Registros a Migrar
+    let nuevosRegistros = 0;
+
+    datosGenerales.forEach(dg => {
+        // Solo nos interesan los que tienen idEmpresa asignado
+        if (!dg.idEmpresa) return;
+
+        const clave = `${dg.idComunicado}-${dg.idEmpresa}`;
+
+        // Verificar duplicidad
+        if (!mapaExistentes.has(clave)) {
+            // Preparar objeto
+            // Usamos fechaAsignacion si existe, sino fechaCreacion/FechaDocumento, sino hoy
+            let fecha = dg.fechaAsignacion || dg.fecha;
+            if (!fecha || fecha === '') fecha = new Date().toISOString().split('T')[0];
+            else {
+                // Formato YYYY-MM-DD
+                try { fecha = new Date(fecha).toISOString().split('T')[0]; } catch (e) { }
+            }
+
+            const nuevaRelacion = {
+                idComunicado: dg.idComunicado,
+                idEmpresa: dg.idEmpresa,
+                esContratista: 1, // Asumimos true al venir de idEmpresa principal
+                esVigente: 1,     // Asumimos true porque es el asignado actualmente
+                fechaAsignacion: fecha
+            };
+
+            if (!DRY_RUN) {
+                // Crear usando crud para generar ID correctamente y validaciones
+                // IMPORTANTE: createRow devuelve objeto resultado
+                const resultado = createRow('relacionContratistas', nuevaRelacion);
+                if (resultado.success) {
+                    console.log(`✓ Migrado: Comunicado ${dg.idComunicado} -> Empresa ${dg.idEmpresa}`);
+                    nuevosRegistros++;
+                    // Agregar al set para evitar duplicar en esta misma ejecución si hubiera datos corruptos
+                    mapaExistentes.add(clave);
+                } else {
+                    console.error(`Error migrando fila para Comunicado ${dg.idComunicado}: ${resultado.message}`);
+                }
+            } else {
+                console.log(`[SIMULACIÓN] Se migraría: Com ${dg.idComunicado} -> Emp ${dg.idEmpresa} (${fecha})`);
+                nuevosRegistros++;
+            }
+        }
+    });
+
+    console.log('---------------------------------------------------');
+    if (DRY_RUN) {
+        console.log(`[FIN SIMULACIÓN] Se habrían creado ${nuevosRegistros} registros.`);
+    } else {
+        console.log(`[FIN] Se crearon ${nuevosRegistros} registros nuevos en RelacionContratistas.`);
+    }
+}
+
+/**
+ * ===================================================================
+ * SCRIPT DE SETUP: Crear Tabla RelacionContratistas
+ * ===================================================================
+ * 
+ * Crea la hoja 'RelacionContratistas' con los encabezados correctos.
+ * Útil para inicializar la tabla sin ejecutar la migración completa.
+ * ===================================================================
+ */
+function crearTablaRelacionContratistas() {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const nombreHoja = 'RelacionContratistas';
+    let sheet = ss.getSheetByName(nombreHoja);
+
+    if (!sheet) {
+        console.log(`[SETUP] Hoja "${nombreHoja}" no existe. Creándola...`);
+        sheet = ss.insertSheet(nombreHoja);
+
+        // Headers definidos explícitamente para garantizar orden
+        const headers = ['id', 'idComunicado', 'idEmpresa', 'esContratista', 'esVigente', 'fechaAsignacion'];
+
+        // Escribir headers
+        sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+
+        // Estilos
+        sheet.getRange(1, 1, 1, headers.length)
+            .setBackground('#4285f4')
+            .setFontColor('#ffffff')
+            .setFontWeight('bold');
+
+        sheet.setFrozenRows(1);
+        console.log(`✓ Hoja "${nombreHoja}" creada exitosamente.`);
+    } else {
+        console.log(`[SETUP] Hoja "${nombreHoja}" ya existe. No se requieren cambios.`);
     }
 }

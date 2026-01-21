@@ -622,6 +622,10 @@ function readAllComunicados() {
  * === ENRIQUECER COMUNICADO ===
  * Adjunta catálogos, empresa, aseguradora, presupuesto y datos extendidos a un comunicado
  */
+/**
+ * === ENRIQUECER COMUNICADO ===
+ * Adjunta catálogos, empresa, aseguradora, presupuesto y datos extendidos a un comunicado
+ */
 function enriquecerComunicado(comunicado) {
     try {
         // Leer datos generales
@@ -712,23 +716,58 @@ function enriquecerComunicado(comunicado) {
         }
 
         // --- NUEVOS DATOS ---
-        // Equipo
+        // Equipo (Legacy y Supervisores)
         const equipoResponse = readAllRows('equipo');
         const equipo = equipoResponse.success ? equipoResponse.data.filter(e => String(e.idComunicado) === String(comunicado.id)) : [];
 
+        // RELACION CONTRATISTAS (Nueva Lista Histórica)
+        let relacionContratistas = [];
+        const relacionResponse = readAllRows('relacionContratistas');
+        if (relacionResponse.success) {
+            const rels = relacionResponse.data.filter(r => String(r.idComunicado) === String(comunicado.id));
+
+            // Enriquecer con Datos de Empresa
+            const empresasResponse = readAllRows('empresas');
+            const mapEmpresas = mapeoPorCampo(empresasResponse.success ? empresasResponse.data : [], 'id');
+
+            relacionContratistas = rels.map(r => {
+                const emp = obtenerDesdeMapa(mapEmpresas, r.idEmpresa);
+                return {
+                    id: r.id,
+                    idEmpresa: r.idEmpresa,
+                    nombreEmpresa: emp ? emp.razonSocial : 'Desconocida',
+                    esVigente: Number(r.esVigente) === 1,
+                    esContratista: Number(r.esContratista) === 1,
+                    fechaAsignacion: r.fechaAsignacion
+                };
+            }).sort((a, b) => (b.esVigente - a.esVigente)); // Vigente primero
+        }
+
         // Financiero
-        const financieroResponse = readAllRows('financiero');
-        const financieroItems = financieroResponse.success ? financieroResponse.data.filter(f => String(f.idComunicado) === String(comunicado.id)) : [];
-        const estimaciones = financieroItems.filter(f => f.tipo === 'estimacion');
-        const facturas = financieroItems.filter(f => f.tipo === 'factura');
+        const financieroResponse = readAllRows('estimaciones'); // Nota: Antes llamada financiero, ahora estimaciones
+        const itemsFinancieros = financieroResponse.success ? financieroResponse.data.filter(f => String(f.idComunicado) === String(comunicado.id)) : [];
+
+        // Cargar Facturas de Estimaciones y anidarlas
+        const facturasEstResponse = readAllRows('facturasEstimaciones');
+        const todasFacturasEst = facturasEstResponse.success ? facturasEstResponse.data : [];
+
+        itemsFinancieros.forEach(est => {
+            est.facturas = todasFacturasEst.filter(f => String(f.idEstimacion) === String(est.id));
+        });
+
+        const estimaciones = itemsFinancieros.filter(f => (f.entidad || 'CONSTRUCTORA') === 'CONSTRUCTORA');
+        const facturas = readAllRows('facturas'); // Facturas generales legacy
+        const facturasLegacy = facturas.success ? facturas.data.filter(f => String(f.idComunicado) === String(comunicado.id)) : [];
+
+        // Estructura para el frontend
+        const financieroCompleto = {
+            estimaciones: itemsFinancieros
+        };
 
         // Tickets
-        const ticketsResponse = readAllRows('tickets');
-        const tickets = ticketsResponse.success ? ticketsResponse.data.filter(t => String(t.idComunicado) === String(comunicado.id)) : [];
+        const tickets = [];
 
         // --- ACTUALIZACIONES DE PRESUPUESTO ---
-        // Cargar desde la tabla Actualizaciones (Origen, A, B, etc.)
-        // Cargar desde la tabla Actualizaciones (Origen, A, B, etc.)
         const actualizacionesPresResponse = readAllRows('actualizaciones');
         let actualizacionesPresupuesto = [];
 
@@ -743,7 +782,7 @@ function enriquecerComunicado(comunicado) {
         // Mapa ID -> Descripción para acceso rápido
         const mapDescripciones = new Map();
         todasLasDescripciones.forEach(d => {
-            mapDescripciones.set(String(d.id), d); // d tiene {id, descripcion, categoria}
+            mapDescripciones.set(String(d.id), d);
         });
 
         if (actualizacionesPresResponse.success && actualizacionesPresResponse.data) {
@@ -751,26 +790,18 @@ function enriquecerComunicado(comunicado) {
                 .filter(a => String(a.idComunicado) === String(comunicado.id))
                 .sort((a, b) => Number(a.consecutivo) - Number(b.consecutivo))
                 .map(a => {
-                    // Filtrar hijos para esta actualización
-                    const misLineas = (typeof calcularEstadoVersion === 'function' ? (calcularEstadoVersion(comunicado.id, a.id).lineas || []) : todasLasLineas.filter(l => String(l.idActualizacion) === String(a.id)))
+                    const misLineas = todasLasLineas.filter(l => String(l.idActualizacion) === String(a.id))
                         .map(l => {
-                            // JOINT: Buscar descripción y categoría base
                             const descObj = mapDescripciones.get(String(l.idLinea));
-
-                            // Lógica de Categoría:
-                            // 1. Usar categoría de la línea de presupuesto si existe (prioridad)
-                            // 2. Si es código numérico, mapear a texto legible
-                            // 3. Fallback a categoría de la definición de la línea
                             let catRaw = l.categoria || (descObj ? descObj.categoria : '') || '';
                             let catFinal = catRaw;
-
                             if (String(catRaw) === '1') catFinal = 'DAÑO FISICO';
                             if (String(catRaw) === '2') catFinal = 'DESAZOLVES';
 
                             return {
                                 ...l,
-                                descripcion: l.descripcion || (descObj ? descObj.descripcion : ''), // Priorizar descripcion existente
-                                categoria: catFinal // Populate Normalized Category
+                                descripcion: l.descripcion || (descObj ? descObj.descripcion : ''),
+                                categoria: catFinal
                             };
                         })
                         .sort((x, y) => (Number(x.consecutivo) || 999999) - (Number(y.consecutivo) || 999999));
@@ -780,7 +811,6 @@ function enriquecerComunicado(comunicado) {
                         revision: a.esOrigen == 1 ? 'Origen' : (a.revision || ''),
                         fecha: a.fecha,
                         monto: a.monto || 0,
-                        // Fix: Permitir null para indicar "Sin Captura Manual" vs 0 explicito
                         montoCapturado: (a.montoCapturado !== '' && a.montoCapturado !== null && a.montoCapturado !== undefined) ? Number(a.montoCapturado) : null,
                         montoSupervision: a.montoSupervisión || 0,
                         esOrigen: a.esOrigen == 1,
@@ -790,12 +820,10 @@ function enriquecerComunicado(comunicado) {
                 });
         }
 
-        // Construir objeto enriquecido
         return {
-            // Datos del comunicado
             id: comunicado.id,
             idReferencia: comunicado.idReferencia,
-            idCuenta: comunicado.idReferencia, // Compatibilidad
+            idCuenta: comunicado.idReferencia,
             referencia: cuentaObj ? (cuentaObj.referencia || cuentaObj.cuenta || cuentaObj.nombre || String(comunicado.idReferencia)) : String(comunicado.idReferencia),
             cuenta: cuentaObj ? (cuentaObj.cuenta || cuentaObj.referencia || cuentaObj.nombre || String(comunicado.idReferencia)) : String(comunicado.idReferencia),
             cuentaNombre: cuentaObj ? (cuentaObj.nombre || cuentaObj.cuenta || '') : '',
@@ -842,14 +870,17 @@ function enriquecerComunicado(comunicado) {
             aseguradora: aseguradoraActual,
             aseguradoraNombre: aseguradoraActual ? aseguradoraActual.descripcion : '',
 
-            // Presupuesto (Actualizaciones: Origen, A, B, etc.)
+            // Presupuesto
             presupuestoVigente: presupuestoVigente,
             presupuestoTotal: presupuestoVigente ? presupuestoVigente.total : null,
-            presupuesto: actualizacionesPresupuesto, // Array de actualizaciones (Origen, A, B...)
+            presupuesto: actualizacionesPresupuesto,
 
             // Nuevos Tabs
-            equipo: equipo,
-            financiero: { estimaciones: estimaciones, facturas: facturas },
+            equipo: equipo, // Legacy y Supervisores
+            relacionContratistas: relacionContratistas, // Nueva Lista
+            financiero: financieroCompleto,
+            estimaciones: estimaciones, // Para compatibilidad
+            facturas: facturasLegacy, // Para compatibilidad
             tickets: tickets,
 
             // Objeto completo de datos generales
@@ -859,6 +890,88 @@ function enriquecerComunicado(comunicado) {
     } catch (error) {
         console.error('Error en enriquecerComunicado:', error);
         return { ...comunicado, error: error.message, datosGenerales: null };
+    }
+}
+
+/**
+ * === ASIGNAR CONTRATISTA ===
+ * Registra una relación de empresa contratista y actualiza el vigente
+ */
+function asignarContratista(idComunicado, idEmpresa) {
+    const contexto = 'asignarContratista';
+    try {
+        if (!idComunicado || !idEmpresa) return crearRespuestaError('Faltan argumentos', { source: contexto });
+
+        // 1. Desactivar vigencia de otros
+        const currentRels = readAllRows('relacionContratistas');
+        if (currentRels.success) {
+            const rels = currentRels.data.filter(r => String(r.idComunicado) === String(idComunicado));
+            rels.forEach(r => {
+                if (Number(r.esVigente) === 1) {
+                    updateRow('relacionContratistas', r.id, { esVigente: 0 });
+                }
+            });
+
+            // 2. Verificar si ya existe la relacion con esta empresa
+            const existingRel = rels.find(r => String(r.idEmpresa) === String(idEmpresa));
+            if (existingRel) {
+                // Reactivar
+                updateRow('relacionContratistas', existingRel.id, {
+                    esVigente: 1
+                });
+            } else {
+                // Crear nueva
+                createRow('relacionContratistas', {
+                    idComunicado: idComunicado,
+                    idEmpresa: idEmpresa,
+                    esContratista: 1,
+                    esVigente: 1,
+                    fechaAsignacion: new Date()
+                });
+            }
+        }
+
+        // 3. Actualizar Datos Generales (Puntero maestro)
+        const dgRes = buscarPorCampo('datosGenerales', 'idComunicado', idComunicado);
+        if (dgRes.success && dgRes.data) {
+            updateRow('datosGenerales', dgRes.data.id, { idEmpresa: idEmpresa });
+        }
+
+        return { success: true, message: 'Contratista asignado correctamente' };
+    } catch (e) {
+        return crearRespuestaError(e.message, { source: contexto });
+    }
+}
+
+/**
+ * === DESVINCULAR CONTRATISTA ===
+ * Elimina la vigencia y el puntero en datos generales
+ */
+function desvincularContratista(idComunicado, idRelacion) {
+    const contexto = 'desvincularContratista';
+    try {
+        const relRes = buscarPorId('relacionContratistas', idRelacion);
+        if (!relRes.success) return relRes;
+
+        const rel = relRes.data;
+
+        // Quitar vigencia (Soft Delete de la relacion activa)
+        updateRow('relacionContratistas', idRelacion, { esVigente: 0 });
+
+        // Si era la vigente, limpiar datos generales
+        if (Number(rel.esVigente) === 1) {
+            const dgRes = buscarPorCampo('datosGenerales', 'idComunicado', idComunicado);
+            if (dgRes.success && dgRes.data) {
+                // Solo limpiar si coincide (doble check)
+                if (String(dgRes.data.idEmpresa) === String(rel.idEmpresa)) {
+                    updateRow('datosGenerales', dgRes.data.id, { idEmpresa: '' }); // Limpiar
+                }
+            }
+        }
+
+        return { success: true, message: 'Contratista desvinculado.' };
+    } catch (e) {
+        return crearRespuestaError(e.message, { source: contexto });
     }
 }
 
@@ -993,6 +1106,19 @@ function updateComunicado(id, updates) {
             _syncChildTable('tickets', 'idComunicado', comunicadoId, updates.tickets);
         }
 
+        // 6. Actualizar Estimaciones (NUEVO - Persistencia Inteligente con Dependencias)
+        if (updates.estimaciones && Array.isArray(updates.estimaciones)) {
+            // Ordenar: Constructoras primero, Supervisiones después para resolver dependencias de IDs
+            const sortedEstimaciones = [...updates.estimaciones].sort((a, b) => {
+                const aIsSup = a.tipo === 'SUPERVISION';
+                const bIsSup = b.tipo === 'SUPERVISION';
+                if (aIsSup === bIsSup) return 0;
+                return aIsSup ? 1 : -1; // Supervisión al final
+            });
+
+            _syncEstimacionesSmart(comunicadoId, sortedEstimaciones);
+        }
+
         // 6. Actualizar Presupuesto
         if (updates.presupuesto) {
             _handlePresupuestoUpdate(comunicadoId, datosGenerales, updates.presupuesto);
@@ -1043,6 +1169,72 @@ function updateComunicado(id, updates) {
     }
 }
 
+
+/**
+ * Sincroniza una tabla hija de forma INTELIGENTE (Upsert + Delete).
+ * Preserva los IDs de registros existentes para no romper relaciones (ej: Facturas -> Estimaciones).
+ */
+function _syncChildTableSmart(tableName, foreignKeyField, foreignKeyValue, dataArray) {
+    const contexto = `_syncChildTableSmart(${tableName})`;
+    try {
+        console.log(`[${contexto}] Iniciando sync para FK ${foreignKeyField}=${foreignKeyValue}. Items: ${dataArray.length}`);
+
+        // 1. Leer existentes
+        const response = readAllRows(tableName);
+        const existentes = (response.success && response.data) ?
+            response.data.filter(row => String(row[foreignKeyField]) === String(foreignKeyValue)) : [];
+
+        const existentesMap = new Map(existentes.map(e => [String(e.id), e]));
+        const procesadosIds = new Set();
+
+        // 2. Upsert (Actualizar o Insertar)
+        dataArray.forEach(item => {
+            // Asegurar que el item tenga el FK correcto
+            const itemToSave = { ...item };
+            itemToSave[foreignKeyField] = foreignKeyValue;
+
+            // Campos de auditoría/control internos no deben ir a BD si no existen columnas (limpieza básica opcional)
+            delete itemToSave._isNew;
+            delete itemToSave._modified;
+
+            if (item.id && existentesMap.has(String(item.id))) {
+                // ACTUALIZAR
+                // Solo si hay cambios reales deberíamos actualizar, pero por simplicidad actualizamos
+                actualizarRegistro(tableName, item.id, itemToSave);
+                procesadosIds.add(String(item.id));
+            } else {
+                // INSERTAR
+                // Si trae un ID temporal o no trae, se crea nuevo.
+                // Aseguramos no enviar 'id' si es temporal para que el backend genere uno nuevo
+                if (String(item.id).startsWith('new_') || String(item.id).startsWith('temp_')) {
+                    delete itemToSave.id;
+                }
+                // Si no tiene id, delete itemToSave.id es inocuo
+
+                // Caso especial: Si viene sin ID pero queremos insertarlo.
+                if (!itemToSave.fechaCreacion) itemToSave.fechaCreacion = new Date(); // Timestamp basico
+
+                const res = insertarRegistro(tableName, itemToSave);
+                if (res.success && res.data && res.data.id) {
+                    // Podríamos devolver el mapeo ID temp -> ID real si fuera necesario
+                }
+            }
+        });
+
+        // 3. Delete (Los que estaban en BD pero no vinieron en dataArray)
+        existentes.forEach(existente => {
+            if (!procesadosIds.has(String(existente.id))) {
+                console.log(`[${contexto}] Eliminando registro huérfano ID: ${existente.id}`);
+                eliminarRegistro(tableName, existente.id);
+            }
+        });
+
+    } catch (e) {
+        console.error(`Error en ${contexto}:`, e);
+        throw e;
+    }
+}
+
 function getComunicadoCompleto(id) {
     const contexto = 'getComunicadoCompleto';
     console.log(`[${contexto}] Iniciando solicitud para ID: ${id}`);
@@ -1060,6 +1252,10 @@ function getComunicadoCompleto(id) {
         }
 
         const comunicadoEnriquecido = enriquecerComunicado(comunicadoResult.data);
+
+        // Agregar timestamp para verificar frescura
+        comunicadoEnriquecido._ts = new Date().toISOString();
+
         const response = { success: true, data: comunicadoEnriquecido };
         const sanitizedResponse = JSON.parse(JSON.stringify(response));
 
@@ -1073,8 +1269,84 @@ function getComunicadoCompleto(id) {
 }
 
 /**
- * Sincroniza una tabla hija (borra anteriores e inserta nuevos)
+ * Sincronización específica para ESTIMACIONES que maneja dependencias de IDs temporales
+ * (Ej: Supervisión vinculada a una Constructora nueva creada en el mismo lote)
  */
+function _syncEstimacionesSmart(comunicadoId, dataArray) {
+    const contexto = `_syncEstimacionesSmart`;
+    const tableName = 'Estimaciones';
+    const foreignKeyField = 'idComunicado';
+    const foreignKeyValue = comunicadoId;
+
+    try {
+        console.log(`[${contexto}] Inicio. Items: ${dataArray.length}`);
+
+        // 1. Leer existentes
+        const response = readAllRows(tableName);
+        const existentes = (response.success && response.data) ?
+            response.data.filter(row => String(row[foreignKeyField]) === String(foreignKeyValue)) : [];
+
+        const existentesMap = new Map(existentes.map(e => [String(e.id), e]));
+        const procesadosIds = new Set();
+
+        // Mapa para resolver IDs temporales (TempID -> RealID)
+        const tempIdMap = new Map();
+
+        // 2. Procesar secuencialmente (importante el orden pre-establecido)
+        dataArray.forEach(item => {
+            const itemToSave = { ...item };
+            itemToSave[foreignKeyField] = foreignKeyValue;
+
+            // Limpieza
+            delete itemToSave._isNew;
+            delete itemToSave._modified;
+
+            const idOriginal = String(item.id);
+            const esTemp = idOriginal.startsWith('new_') || idOriginal.startsWith('temp_');
+
+            // Resolver dependencia de vinculación si existe
+            if (itemToSave.idEstimacionVinculada) {
+                const vincId = String(itemToSave.idEstimacionVinculada);
+                if (tempIdMap.has(vincId)) {
+                    itemToSave.idEstimacionVinculada = tempIdMap.get(vincId);
+                    console.log(`[${contexto}] Mapeado FK temporal ${vincId} -> ${itemToSave.idEstimacionVinculada}`);
+                }
+            }
+
+            if (!esTemp && existentesMap.has(idOriginal)) {
+                // UPDATE
+                actualizarRegistro(tableName, idOriginal, itemToSave);
+                procesadosIds.add(idOriginal);
+            } else {
+                // INSERT
+                if (esTemp) delete itemToSave.id; // Dejar que DB asigne ID
+                if (!itemToSave.fechaCreacion) itemToSave.fechaCreacion = new Date();
+
+                const res = insertarRegistro(tableName, itemToSave);
+                if (res.success && res.data && res.data.id) {
+                    const newId = String(res.data.id);
+                    if (esTemp) {
+                        tempIdMap.set(idOriginal, newId);
+                        // console.log(`[${contexto}] Mapeado ID temporal ${idOriginal} -> ${newId}`);
+                    }
+                }
+            }
+        });
+
+        // 3. Delete Huérfanos
+        existentes.forEach(existente => {
+            if (!procesadosIds.has(String(existente.id))) {
+                console.log(`[${contexto}] Eliminando estimación huérfana ID: ${existente.id}`);
+                eliminarRegistro(tableName, existente.id);
+            }
+        });
+
+    } catch (e) {
+        console.error(`Error en ${contexto}:`, e);
+        throw e;
+    }
+}
+
 function _syncChildTable(tableName, foreignKeyField, foreignKeyValue, dataArray) {
     try {
         // 1. Leer todos

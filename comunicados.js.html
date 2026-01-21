@@ -382,7 +382,7 @@
                             } else if (status === 'REEMPLAZAR') {
                                 // Obtener lista de cambios detectados
                                 const cambios = res.analisis?.comunicado?.cambios || [];
-                                const cambiosHtml = cambios.length > 0 
+                                const cambiosHtml = cambios.length > 0
                                     ? `<div class="changes-list mt-2 small border-start border-info ps-2 ms-1">
                                         ${cambios.map(c => `<div class="text-muted py-1"><i class="bi bi-arrow-right-short text-info"></i>${c}</div>`).join('')}
                                        </div>`
@@ -3247,8 +3247,6 @@
 
             async function abrirHistorialPresupuesto(idComunicado) {
                 if (!idComunicado) return;
-
-                // Asegurar que el ID sea un string
                 const idStr = idComunicado;
 
                 // Referencias DOM del modal
@@ -3257,7 +3255,6 @@
                 const content = document.getElementById('historial-content');
                 const emptyState = document.getElementById('historial-empty');
                 const btnGestion = document.getElementById('btnVerGestionCompleta');
-                const btnCerrar = modal ? modal.querySelector('.btn-close') : null;
                 const badgeConceptos = document.getElementById('badge-conceptos');
                 const badgeActualizaciones = document.getElementById('badge-actualizaciones');
                 const headerRow = document.getElementById('matriz-header');
@@ -3269,66 +3266,102 @@
                     return;
                 }
 
-                // Crear instancia si no existe (sin backdrop estático por defecto)
+                // 0. GESTIÓN DE INSTANCIA (Forzar Static Backdrop)
+                // Si ya existe instancia, la destruimos para asegurar que se aplique la config 'static'
+                // Esto es crucial si la instancia se creó previamente sin estas opciones.
+                if (historialModalInstance) {
+                    // Solo eliminar si no está visible para evitar parpadeos feos, 
+                    // aunque si el usuario hace doble clic probablemente esté cerrado o quiera refrescar.
+                    // Si está abierto y 'dispose', se pierde el backdrop. Mejor comprobar.
+                    if (!modal.classList.contains('show')) {
+                        historialModalInstance.dispose();
+                        historialModalInstance = null;
+                    }
+                }
+
                 if (!historialModalInstance && typeof bootstrap !== 'undefined') {
                     historialModalInstance = new bootstrap.Modal(modal, {
                         backdrop: 'static',  // No se cierra al hacer clic fuera
-                        keyboard: false      // No se cierra con Escape mientras carga
+                        keyboard: false      // No se cierra con Escape
                     });
 
                     // Listener para botón de gestión completa
                     if (btnGestion) {
-                        btnGestion.addEventListener('click', () => {
-                            if (!historialCargando && historialModalInstance) {
-                                historialModalInstance.hide();
-                                verDetalle(historialComunicadoId);
-                            }
-                        });
+                        // Eliminar listeners viejos clonando? No, addEventListener acumula.
+                        // Mejor usar una propiedad para no duplicar
+                        if (btnGestion.dataset.hasListener !== 'true') {
+                            btnGestion.addEventListener('click', () => {
+                                if (!historialCargando && historialModalInstance) {
+                                    historialModalInstance.hide();
+                                    verDetalle(historialComunicadoId);
+                                }
+                            });
+                            btnGestion.dataset.hasListener = 'true';
+                        }
                     }
                 }
 
-                // Reiniciar estado del modal para nueva carga
+                // Reiniciar estado
                 historialComunicadoId = idStr;
                 historialCargando = true;
 
-                // Bloquear botón de cerrar mientras carga
-                if (btnCerrar) btnCerrar.disabled = true;
+                // 1. BLOQUEAR CIERRE (Botones de Header y Footer)
+                const closeButtons = modal.querySelectorAll('[data-bs-dismiss="modal"], .btn-close');
+                closeButtons.forEach(btn => btn.disabled = true);
                 if (btnGestion) btnGestion.disabled = true;
 
-                // Reiniciar contenido - mostrar loader, ocultar contenido
+                // 2. REINICIAR VISUALIZACIÓN (Loader visible, contenido oculto)
                 if (loader) {
                     loader.classList.remove('d-none');
                     loader.innerHTML = `
                         <div class="spinner-border text-primary" role="status">
                             <span class="visually-hidden">Cargando...</span>
                         </div>
-                        <p class="mt-3 text-muted">Cargando matriz de presupuestos...</p>
+                        <p class="mt-3 text-muted">Cargando historial...</p>
                     `;
                 }
                 if (content) content.classList.add('d-none');
                 if (emptyState) emptyState.classList.add('d-none');
+
+                // Limpiar tablas
                 if (headerRow) headerRow.innerHTML = '';
                 if (tbody) tbody.innerHTML = '';
                 if (totalsRow) totalsRow.innerHTML = '';
                 if (badgeConceptos) badgeConceptos.textContent = '';
                 if (badgeActualizaciones) badgeActualizaciones.textContent = '';
 
-                // Obtener referencia del comunicado desde el state
-                const com = state.comunicados.find(c => String(c.id) === String(idComunicado));
-                const titulo = com ? com.descripcion : `Comunicado ID: ${idComunicado}`;
-
-                // Mostrar modal (si ya está abierto, el contenido se reinició arriba)
+                // Mostrar modal
                 historialModalInstance.show();
 
                 try {
-                    // Usar getComunicadoCompleto que ya funciona correctamente
-                    console.log('[Matriz] Llamando getComunicadoCompleto con idComunicado:', idStr);
+                    console.log('[Matriz NEW] Solicitando datos. Time:', new Date().toISOString());
                     const comunicadoCompleto = await serverCall('getComunicadoCompleto', idStr);
-
-                    console.log('[Matriz] Datos recibidos:', comunicadoCompleto);
+                    console.log('[Matriz NEW] Datos recibidos.', comunicadoCompleto.success);
 
                     if (!comunicadoCompleto) {
                         throw new Error('No se encontraron datos del comunicado');
+                    }
+
+                    // DEBUG: Mostrar timestamp de actualización
+                    console.log(`[Matriz] Datos frescos recibidos. Ts: ${comunicadoCompleto.data?._ts || 'N/A'}`);
+
+                    // Inyectar badge visual de actualización (Feedback para usuario)
+                    const modalTitle = modal.querySelector('.modal-title');
+                    if (modalTitle && comunicadoCompleto.data?._ts) {
+                        const oldBadge = modalTitle.querySelector('.badge-debug-ts');
+                        if (oldBadge) oldBadge.remove();
+
+                        const ts = new Date(comunicadoCompleto.data._ts);
+                        const timeTag = ts.getHours().toString().padStart(2, '0') + ':' +
+                            ts.getMinutes().toString().padStart(2, '0') + ':' +
+                            ts.getSeconds().toString().padStart(2, '0');
+
+                        const debugBadge = document.createElement('span');
+                        debugBadge.className = 'badge bg-info text-dark ms-2 badge-debug-ts';
+                        debugBadge.style.fontSize = '0.65rem';
+                        debugBadge.title = 'Hora de consulta al servidor';
+                        debugBadge.innerText = `Refreshed: ${timeTag}`;
+                        modalTitle.appendChild(debugBadge);
                     }
 
                     // Los datos vienen en comunicadoCompleto.presupuesto (array de actualizaciones)
@@ -3522,11 +3555,12 @@
                         </div>
                     `;
                 } finally {
-                    // Desbloquear modal - permitir cierre
+                    // DESBLOQUEAR MODAL - Permitir cierre
                     historialCargando = false;
-                    const btnCerrar = document.querySelector('#modalHistorialPresupuestos .btn-close');
-                    const btnGestion = document.getElementById('btnVerGestionCompleta');
-                    if (btnCerrar) btnCerrar.disabled = false;
+
+                    const closeButtons = document.querySelectorAll('#modalHistorialPresupuestos [data-bs-dismiss="modal"], #modalHistorialPresupuestos .btn-close');
+                    closeButtons.forEach(btn => btn.disabled = false);
+
                     if (btnGestion) btnGestion.disabled = false;
                 }
             }
