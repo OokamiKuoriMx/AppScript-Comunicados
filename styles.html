@@ -596,4 +596,390 @@
         background: #dbeafe;
         color: #1e40af;
     }
+
+    /* ====================================================================
+       TEMA CORPORATIVO MODERNO (CLEAN CORPORATE)
+       ==================================================================== */
+    :root {
+        /* Paleta Slate (Gris Azulado Profesional) */
+        --c-bg-app: #f1f5f9;
+        /* Fondo general */
+        --c-bg-surface: #ffffff;
+        /* Fondo de tarjetas */
+
+        --c-text-primary: #0f172a;
+        /* Texto principal (casi negro) */
+        --c-text-secondary: #64748b;
+        /* Texto secundario */
+        --c-text-tertiary: #94a3b8;
+        /* Texto deshabilitado */
+
+        --c-primary: #2563eb;
+        /* Azul principal vibrante */
+        --c-primary-soft: #eff6ff;
+        /* Fondo azul muy claro */
+
+        --shadow-card: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+        --radius-md: 0.75rem;
+        /* 12px */
+        --radius-sm: 0.5rem;
+        /* 8px */
+    }
+
+    body {
+        background-color: var(--c-bg-app);
+        color: var(--c-text-primary);
+        font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    }
+
+    /* --- TARJETAS LIMPIAS --- */
+    .card {
+        background-color: var(--c-bg-surface);
+        border: 1px solid #e2e8f0;
+        border-radius: var(--radius-md);
+        box-shadow: var(--shadow-card);
+        margin-bottom: 1.5rem;
+        /* Espaciado automático */
+    }
+
+    /* Header de Tarjeta Moderno */
+    .card-modern-header {
+        background: transparent;
+        border-bottom: 1px solid #f1f5f9;
+        padding: 1rem 1.5rem;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+
+    .card-modern-title {
+        font-weight: 600;
+        font-size: 0.95rem;
+        color: var(--c-text-primary);
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.02em;
+    }
+
+    /* --- TABLAS MODERNAS --- */
+    .table-modern {
+        margin-bottom: 0;
+        width: 100%;
+    }
+
+    .table-modern thead th {
+        background-color: #f8fafc;
+        color: var(--c-text-secondary);
+        font-weight: 600;
+        text-transform: uppercase;
+        font-size: 0.7rem;
+        letter-spacing: 0.05em;
+        border-bottom: 1px solid #e2e8f0;
+        padding: 0.75rem 1rem;
+    }
+
+    .table-modern tbody td {
+        padding: 0.75rem 1rem;
+        vertical-align: middle;
+        border-bottom: 1px solid #f1f5f9;
+        color: var(--c-text-primary);
+        font-size: 0.85rem;
+    }
+
+    .table-modern tbody tr:last-child td {
+        border-bottom: none;
+    }
+
+    /* --- INPUTS & FORMS --- */
+    .form-label {
+        font-size: 0.75rem;
+        font-weight: 600;
+        color: var(--c-text-secondary);
+        margin-bottom: 0.3rem;
+        text-transform: uppercase;
+    }
+
+    .form-control,
+    .form-select {
+        border: 1px solid #cbd5e1;
+        border-radius: var(--radius-sm);
+        padding: 0.5rem 0.75rem;
+        font-size: 0.9rem;
+        box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+    }
+
+    .form-control:focus,
+    .form-select:focus {
+        border-color: var(--c-primary);
+        box-shadow: 0 0 0 3px var(--c-primary-soft);
+    }
+
+    /* Input "Fantasma" para Tablas */
+    .form-control-ghost {
+        border: 1px solid transparent;
+        background: transparent;
+        padding: 0.25rem 0.5rem;
+        border-radius: 4px;
+        transition: all 0.2s;
+    }
+
+    .form-control-ghost:hover {
+        background-color: #f8fafc;
+    }
+
+    .form-control-ghost:focus {
+        background-color: #fff;
+        border-color: var(--c-primary);
+        box-shadow: 0 0 0 2px var(--c-primary-soft);
+    }
+
+    /* --- BADGES SUAVES (Pill Badges) --- */
+    .badge-soft {
+        padding: 0.35em 0.8em;
+        font-weight: 600;
+        border-radius: 9999px;
+        font-size: 0.7rem;
+        letter-spacing: 0.02em;
+    }
+
+    .badge-soft-success {
+        background-color: #dcfce7;
+        color: #166534;
+    }
+
+    .badge-soft-warning {
+        background-color: #fef3c7;
+        color: #92400e;
+    }
+
+    .badge-soft-danger {
+        background-color: #fee2e2;
+        color: #991b1b;
+    }
+
+    .badge-soft-primary {
+        background-color: #dbeafe;
+        color: #1e40af;
+    }
+
+    .badge-soft-info {
+        background-color: #cff4fc;
+        color: #055160;
+    }
+
+    .badge-soft-dark {
+        background-color: #e2e8f0;
+        color: #1e293b;
+    }
+
+    /* --- BOTONES ICONO --- */
+    .btn-icon {
+        width: 32px;
+        height: 32px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 6px;
+        border: 1px solid transparent;
+        color: var(--c-text-secondary);
+        transition: all 0.2s;
+    }
+
+    .btn-icon:hover {
+        background-color: #f1f5f9;
+        color: var(--c-primary);
+    }
+
+    /* ====================================================================
+       ENHANCED FINANCIAL FORM STYLES
+       ==================================================================== */
+
+    /* Input with Icon Wrapper */
+    .input-icon-wrapper {
+        position: relative;
+        display: flex;
+        align-items: center;
+    }
+
+    .input-icon-wrapper .input-icon {
+        position: absolute;
+        left: 12px;
+        color: #6c757d;
+        pointer-events: none;
+        font-size: 0.875rem;
+        z-index: 1;
+        transition: color 0.2s ease;
+    }
+
+    .input-icon-wrapper input {
+        padding-left: 36px !important;
+    }
+
+    .input-icon-wrapper:focus-within .input-icon {
+        color: #0d6efd;
+    }
+
+    /* Enhanced Input Styling */
+    .form-control-enhanced {
+        border: 1px solid transparent;
+        background-color: rgba(248, 249, 250, 0.6);
+        transition: all 0.2s ease;
+        font-size: 0.9rem;
+    }
+
+    .form-control-enhanced:hover {
+        background-color: #f8f9fa;
+        border-color: #dee2e6;
+    }
+
+    .form-control-enhanced:focus {
+        background-color: #fff;
+        border-color: #0d6efd;
+        box-shadow: 0 0 0 0.15rem rgba(13, 110, 253, 0.1);
+    }
+
+    .form-control-enhanced::placeholder {
+        color: #adb5bd;
+        font-style: italic;
+        font-size: 0.85rem;
+    }
+
+    /* Currency Input */
+    .currency-enhanced {
+        font-family: 'Courier New', monospace;
+        text-align: right;
+        font-weight: 600;
+        letter-spacing: 0.5px;
+    }
+
+    /* Input Group Enhanced */
+    .input-group-enhanced {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.75rem;
+        background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+        border-radius: 6px;
+        border: 1px solid #e9ecef;
+        transition: all 0.2s ease;
+    }
+
+    .input-group-enhanced:hover {
+        border-color: #0d6efd;
+        box-shadow: 0 2px 6px rgba(13, 110, 253, 0.06);
+    }
+
+    .input-label-icon {
+        width: 32px;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #e7f1ff;
+        border-radius: 6px;
+        color: #0d6efd;
+        font-size: 1rem;
+    }
+
+    /* Field Hints */
+    .field-hint {
+        font-size: 0.75rem;
+        color: #6c757d;
+        margin-top: 0.25rem;
+    }
+
+    /* Status Pills */
+    .status-pill {
+        display: inline-block;
+        padding: 0.25rem 0.75rem;
+        border-radius: 12px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        text-transform: uppercase;
+    }
+
+    .status-pill.pending {
+        background: #cfe2ff;
+        color: #084298;
+    }
+
+    .status-pill.pagado {
+        background: #d1e7dd;
+        color: #0f5132;
+    }
+
+    /* ====================================================================
+       TABLE & FORM ENHANCEMENTS (REREGISTERED)
+       ==================================================================== */
+
+    /* Enhanced Table Row Styling */
+    .table-modern tbody tr {
+        border-bottom: 1px solid #e9ecef;
+        transition: background-color 0.12s ease;
+    }
+
+    .table-modern tbody tr:hover {
+        background-color: rgba(13, 110, 253, 0.03) !important;
+    }
+
+    .table-modern tbody td {
+        padding: 0.85rem 0.75rem !important;
+        vertical-align: middle;
+    }
+
+    .table-modern thead th {
+        font-size: 0.72rem !important;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.6px;
+        color: #6c757d;
+        background-color: #f8f9fa;
+        border-bottom: 2px solid #dee2e6;
+        padding: 0.75rem !important;
+    }
+
+    .table-modern tfoot td {
+        font-weight: 700 !important;
+        font-size: 1.05rem !important;
+        background-color: #f8f9fa;
+        border-top: 2px solid #dee2e6 !important;
+        padding: 1rem 0.75rem !important;
+    }
+
+    /* Improved Ghost Input */
+    .form-control-ghost {
+        border: 1px solid #dee2e6;
+        /* Fallback visually clearer */
+        background: rgba(248, 249, 250, 0.5);
+        padding: 0.45rem 0.65rem;
+        border-radius: 5px;
+        transition: all 0.18s ease;
+        font-size: 0.9rem;
+    }
+
+    .form-control-ghost:hover {
+        background-color: #f8f9fa;
+        border-color: #adb5bd;
+    }
+
+    .form-control-ghost:focus {
+        background-color: #fff;
+        border-color: #0d6efd;
+        box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.12);
+        outline: none;
+    }
+
+    /* Number Formatting */
+    .font-monospace {
+        font-family: 'SFMono-Regular', Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+        letter-spacing: 0.4px;
+    }
+
+    /* Compact Table Overrides */
+    .table-modern td,
+    .table-modern th {
+        padding: 0.45rem 0.5rem !important;
+    }
 </style>
