@@ -340,8 +340,11 @@
             }
             injectComponentScript(code);
             loadedScripts.add(scriptName);
-            // Dar tiempo al navegador para parsear y ejecutar
-            await new Promise(r => setTimeout(r, 100));
+
+            // Give the browser a moment to execute the script
+            // INCREASED TIMEOUT & ADDED POLLING to avoid race conditions
+            await new Promise(r => setTimeout(r, 500));
+
             devLog(`✅ Script dinámico ${scriptName} cargado correctamente.`);
             return true;
         } catch (err) {
@@ -371,16 +374,25 @@
                     }
                     injectComponentScript(code);
                     loadedScripts.add(config.script);
-                    // Give the browser a moment to execute the script
-                    await new Promise(r => setTimeout(r, 100)); // Increased timeout
+
+                    // POLLING MECHANISM: Wait for Global Variable to appear
+                    const maxAttempts = 20; // 20 * 100ms = 2 seconds max wait
+                    let attempts = 0;
+
+                    while (!globalThis[config.global] && !window[config.global] && attempts < maxAttempts) {
+                        await new Promise(r => setTimeout(r, 100));
+                        attempts++;
+                    }
 
                     // DEBUG: Verificar si se definió
                     if (globalThis[config.global] || window[config.global]) {
-                        devLog(`✅ Global ${config.global} detectado después de carga.`);
+                        devLog(`✅ Global ${config.global} detectado después de ${attempts * 100}ms.`);
+                        // Ensure it's in globalThis for consistency
+                        if (!globalThis[config.global] && window[config.global]) {
+                            globalThis[config.global] = window[config.global];
+                        }
                     } else {
-                        console.error(`❌ Global ${config.global} NO detectado después de carga y espera.`);
-                        // Intento de fallback: buscar si está en window explícitamente y asignar a globalThis
-                        if (window[config.global]) globalThis[config.global] = window[config.global];
+                        console.error(`❌ Global ${config.global} NO detectado después de espera de ${(attempts * 100)}ms.`);
                     }
 
                 } catch (err) {

@@ -347,8 +347,8 @@ function crearEstimacion(datos) {
     const contexto = 'crearEstimacion';
 
     try {
-        // Si el ID es temporal (cliente), lo quitamos para que createRow genere uno consecutivo
-        if (datos.id && String(datos.id).startsWith('temp-')) {
+        // Sanitize: Force new ID generation by removing any incoming ID
+        if (datos.id) {
             delete datos.id;
         }
 
@@ -381,7 +381,9 @@ function agregarFactura(idEstimacion, datosFactura) {
     const contexto = 'agregarFactura';
 
     try {
-        const datos = { ...datosFactura, idEstimacion };
+        // Sanitize: Remove ID to force new generation
+        const { id, ...cleanDatos } = datosFactura;
+        const datos = { ...cleanDatos, idEstimacion };
         const resultado = createRow(TABLE_FACTURAS_EST, datos);
 
         if (resultado.success) {
@@ -434,6 +436,13 @@ function actualizarEstatusFactura(idFactura, nuevoEstatus, observacion) {
 
 function actualizarFactura(idFactura, datos) {
     const contexto = 'actualizarFactura';
+
+    // Safety: Redirect temp IDs to creation
+    if (String(idFactura).startsWith('temp-') && datos.idEstimacion) {
+        console.warn(`[${contexto}] Redirigiendo a agregarFactura para ID: ${idFactura}`);
+        return agregarFactura(datos.idEstimacion, datos);
+    }
+
     try {
         const resultado = updateRow(TABLE_FACTURAS_EST, idFactura, datos);
         return resultado;
@@ -447,6 +456,37 @@ function eliminarFactura(idFactura) {
     const contexto = 'eliminarFactura';
     try {
         const resultado = deleteRow(TABLE_FACTURAS_EST, idFactura);
+        return resultado;
+    } catch (e) {
+        console.error(`[${contexto}] Error:`, e);
+        return { success: false, message: e.message };
+    }
+}
+
+/**
+ * Elimina una estimación de la base de datos
+ * NOTA: La eliminación en cascada (facturas, complementos) se maneja en el frontend
+ * 
+ * @param {string|number} idEstimacion - ID de la estimación a eliminar
+ * @returns {Object} Resultado de la operación
+ */
+function eliminarEstimacion(idEstimacion) {
+    const contexto = 'eliminarEstimacion';
+    try {
+        // Registrar en bitácora antes de eliminar
+        createRow(TABLE_BITACORA_EST, {
+            idEstimacion: idEstimacion,
+            fecha: new Date(),
+            observacion: 'Estimación eliminada por el usuario',
+            usuario: Session.getActiveUser().getEmail() || 'SISTEMA'
+        });
+
+        const resultado = deleteRow(TABLE_ESTIMACIONES, idEstimacion);
+
+        if (resultado.success) {
+            console.log(`[${contexto}] Estimación ${idEstimacion} eliminada correctamente`);
+        }
+
         return resultado;
     } catch (e) {
         console.error(`[${contexto}] Error:`, e);
@@ -528,7 +568,11 @@ function leerEstimacionesPorComunicado(idComunicado) {
         });
 
         console.log(`[${contexto}] Encontradas ${resultado.length} estimaciones para comunicado ${idComunicado}`);
-        return { success: true, data: resultado };
+
+        // CLEANUP: Ensure data is clean JSON (remove Date objects, prototypes, etc. that might break google.script.run)
+        const cleanData = JSON.parse(JSON.stringify(resultado));
+
+        return { success: true, data: cleanData };
     } catch (e) {
         console.error(`[${contexto}] Error:`, e);
         return { success: false, message: e.message, data: [] };
@@ -1301,7 +1345,7 @@ function registrarComplemento(idFactura, datos) {
             uuid: datos.uuid || '',     // UUID
             fecha: datos.fecha, // Fecha del complemento
             fechaPago: datos.fecha, // Fecha de pago
-            tipo: 'COMPLEMENTO',
+            tipo: 2, // 2 = COMPLEMENTO (Numerico por requerimiento)
             monto: datos.monto || 0,
             iva: datos.iva || 0,
             total: datos.total || 0,

@@ -144,6 +144,7 @@ function createRow(nombreTabla, datos) {
 
     try {
         sheet.appendRow(nuevaFila);
+        SpreadsheetApp.flush(); // Force write
         return { success: true, data: datos, message: 'Registro creado con éxito.' };
     } catch (error) {
         return crearRespuestaError(`Error al escribir en la hoja: ${error.message}`, {
@@ -221,6 +222,7 @@ function createBatch(nombreTabla, loteDatos) {
             // getRange(filaInicio, colInicio, filas, columnas)
             const startRow = sheet.getLastRow() + 1;
             sheet.getRange(startRow, 1, matrixToWrite.length, headers.length).setValues(matrixToWrite);
+            SpreadsheetApp.flush(); // Force write
         }
 
         console.log(`[${contexto}] Éxito. Insertados ${matrixToWrite.length} registros.`);
@@ -348,6 +350,7 @@ function updateRow(nombreTabla, id, nuevosDatos) {
 
     try {
         sheet.getRange(indiceFila + 2, 1, 1, filaActualizada.length).setValues([filaActualizada]);
+        SpreadsheetApp.flush(); // Force write
         return { success: true, data: filaAObjeto(def, headers, filaActualizada), message: 'Registro actualizado con éxito.' };
     } catch (error) {
         return crearRespuestaError(`Error al actualizar la hoja: ${error.message}`, {
@@ -393,6 +396,7 @@ function deleteRow(nombreTabla, id) {
 
     try {
         sheet.deleteRow(indiceFila + 2);
+        SpreadsheetApp.flush(); // Force write
         return { success: true, message: 'Registro eliminado con éxito.' };
     } catch (error) {
         return crearRespuestaError(`Error al eliminar la fila: ${error.message}`, {
@@ -863,6 +867,7 @@ function updateDatosGenerales(id, nuevosDatos) {
         // rows comienza en fila 2. 
         // indice 0 es fila 2.
         sheet.getRange(indiceFila + 2, 1, 1, newRow.length).setValues([newRow]);
+        SpreadsheetApp.flush(); // Force write
 
         return {
             success: true,
@@ -949,6 +954,10 @@ function updateBatchDatosGenerales(updates) {
                 errors.push(`Error actualizando ID ${id}: ${err.message}`);
             }
         });
+
+        if (successCount > 0) {
+            SpreadsheetApp.flush(); // Force write
+        }
 
         return {
             success: true,

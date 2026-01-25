@@ -1274,7 +1274,7 @@ function getComunicadoCompleto(id) {
  */
 function _syncEstimacionesSmart(comunicadoId, dataArray) {
     const contexto = `_syncEstimacionesSmart`;
-    const tableName = 'Estimaciones';
+    const tableName = 'estimaciones';
     const foreignKeyField = 'idComunicado';
     const foreignKeyValue = comunicadoId;
 
@@ -1302,7 +1302,7 @@ function _syncEstimacionesSmart(comunicadoId, dataArray) {
             delete itemToSave._modified;
 
             const idOriginal = String(item.id);
-            const esTemp = idOriginal.startsWith('new_') || idOriginal.startsWith('temp_');
+            const esTemp = idOriginal.startsWith('new_') || idOriginal.startsWith('temp_') || idOriginal.startsWith('temp-');
 
             // Resolver dependencia de vinculación si existe
             if (itemToSave.idEstimacionVinculada) {
@@ -1327,7 +1327,29 @@ function _syncEstimacionesSmart(comunicadoId, dataArray) {
                     const newId = String(res.data.id);
                     if (esTemp) {
                         tempIdMap.set(idOriginal, newId);
-                        // console.log(`[${contexto}] Mapeado ID temporal ${idOriginal} -> ${newId}`);
+
+                        // FIX: Re-link orphaned Facturas that point to this temp ID
+                        try {
+                            const facturasRes = readAllRows('facturasEstimaciones');
+                            if (facturasRes.success && facturasRes.data) {
+                                const huerfanas = facturasRes.data.filter(f => String(f.idEstimacion) === idOriginal);
+                                huerfanas.forEach(h => {
+                                    actualizarRegistro('facturasEstimaciones', h.id, { idEstimacion: newId });
+                                    console.log(`[${contexto}] Revalidando Factura ${h.id}: Temp ${idOriginal} -> Real ${newId}`);
+                                });
+                            }
+
+                            // FIX: Re-link orphaned Bitacora entries
+                            const bitacoraRes = readAllRows('bitacoraEstimaciones');
+                            if (bitacoraRes.success && bitacoraRes.data) {
+                                const huerfanasB = bitacoraRes.data.filter(b => String(b.idEstimacion) === idOriginal);
+                                huerfanasB.forEach(b => {
+                                    actualizarRegistro('bitacoraEstimaciones', b.id, { idEstimacion: newId });
+                                });
+                            }
+                        } catch (errLink) {
+                            console.warn(`[${contexto}] Error re-linking orphans for ${idOriginal}: ${errLink.message}`);
+                        }
                     }
                 }
             }

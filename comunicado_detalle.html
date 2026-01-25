@@ -469,10 +469,6 @@
                                             <option value="">Cargando...</option>
                                         </select>
                                     </div>
-                                    <button class="btn btn-primary btn-sm rounded-pill px-3"
-                                        id="btn-add-estimacion-constructora">
-                                        <i class="bi bi-plus-lg me-1"></i> Nueva Estimación
-                                    </button>
                                 </div>
                             </div>
                             <div class="card-body p-0">
@@ -501,15 +497,26 @@
                                                 </td>
                                             </tr>
                                         </tbody>
-                                        <tfoot class="bg-light fw-bold">
+                                        <tfoot class="bg-light border-top">
                                             <tr>
-                                                <td colspan="3" class="text-end text-muted small text-uppercase">Total
-                                                    Constructora:</td>
-                                                <td class="text-end text-dark fs-6 font-monospace"
-                                                    id="total-constructora" colspan="8">$0.00</td>
+                                                <td colspan="6"
+                                                    class="text-end text-muted small text-uppercase py-2 pe-3 fw-semibold"
+                                                    style="letter-spacing: 0.05em;">TOTALES:
+                                                </td>
+                                                <td class="text-center fw-bold border-start py-2"
+                                                    id="total-neto-constructora"
+                                                    style="font-size: 1rem; white-space: nowrap;">$0.00</td>
+                                                <td class="text-center fw-bold py-2" id="total-iva-constructora"
+                                                    style="font-size: 1rem; white-space: nowrap;">$0.00</td>
+                                                <td class="text-center text-primary fw-bold border-end py-2"
+                                                    id="total-constructora"
+                                                    style="font-size: 1rem; white-space: nowrap;">$0.00</td>
+                                                <td colspan="2"></td>
                                             </tr>
                                         </tfoot>
                                     </table>
+                                    <!-- Hidden trigger button -->
+                                    <button class="d-none" id="btn-add-estimacion-constructora"></button>
                                 </div>
                             </div>
                         </div>
@@ -534,13 +541,10 @@
                                         <i class="bi bi-receipt text-primary me-2"></i>
                                         Facturas de la Estimación
                                     </div>
-                                    <button
-                                        class="btn btn-sm btn-outline-primary rounded-pill border-0 bg-primary bg-opacity-10 text-primary fw-semibold px-3"
-                                        id="btn-add-factura-constructora"
-                                        onclick="ComunicadoDetalle.addFactura('CONSTRUCTORA')">
-                                        <i class="bi bi-plus-lg me-1"></i> Agregar Factura
-                                    </button>
                                 </div>
+                                <!-- Hidden trigger button -->
+                                <button class="d-none" id="btn-add-factura-constructora"
+                                    onclick="ComunicadoDetalle.addFactura('CONSTRUCTORA')"></button>
                                 <div class="card-body p-0">
                                     <div class="table-responsive">
                                         <table class="table table-modern mb-0">
@@ -625,7 +629,8 @@
                                                 style="font-size: 0.65rem; letter-spacing: 0.5px;">Av. Físico</small>
                                         </div>
                                         <div class="fs-5 fw-bold text-secondary text-truncate"
-                                            id="fin-avance-fisico-sup">$0.00</div>
+                                            id="fin-avance-fisico-sup">
+                                            $0.00</div>
                                     </div>
                                 </div>
                             </div>
@@ -654,11 +659,6 @@
                                     <i class="bi bi-binoculars text-primary me-2"></i>
                                     Supervisión
                                 </div>
-                                <button
-                                    class="btn btn-outline-primary btn-sm rounded-pill border-0 bg-primary bg-opacity-10 text-primary fw-semibold px-3"
-                                    id="btn-add-estimacion-supervision">
-                                    <i class="bi bi-plus-lg me-1"></i> Nueva Supervisión
-                                </button>
                             </div>
                             <div class="card-body p-0">
                                 <div class="">
@@ -682,16 +682,26 @@
                                                 </td>
                                             </tr>
                                         </tbody>
-                                        <tfoot class="bg-light fw-bold">
+                                        <tfoot class="bg-light border-top">
                                             <tr>
-                                                <td colspan="3" class="text-end text-muted small text-uppercase">Total
-                                                    Supervisión:</td>
-                                                <td class="text-end text-dark fs-6 font-monospace"
-                                                    id="total-supervision">$0.00</td>
-                                                <td colspan="5"></td>
+                                                <td colspan="4"
+                                                    class="text-end text-muted small text-uppercase py-2 pe-3 fw-semibold"
+                                                    style="letter-spacing: 0.05em;">TOTALES:
+                                                </td>
+                                                <td class="text-center fw-bold border-start py-2"
+                                                    id="total-neto-supervision"
+                                                    style="font-size: 1rem; white-space: nowrap;">$0.00</td>
+                                                <td class="text-center fw-bold py-2" id="total-iva-supervision"
+                                                    style="font-size: 1rem; white-space: nowrap;">$0.00</td>
+                                                <td class="text-center text-info fw-bold border-end py-2"
+                                                    id="total-supervision"
+                                                    style="font-size: 1rem; white-space: nowrap;">$0.00</td>
+                                                <td colspan="2"></td>
                                             </tr>
                                         </tfoot>
                                     </table>
+                                    <!-- Hidden trigger button -->
+                                    <button class="d-none" id="btn-add-estimacion-supervision"></button>
                                 </div>
                             </div>
                         </div>
