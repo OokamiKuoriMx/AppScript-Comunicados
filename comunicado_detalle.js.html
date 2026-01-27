@@ -2257,22 +2257,38 @@
         function _createTableSkeleton() {
             const table = document.createElement('table');
             table.className = 'table table-hover align-middle mb-0 shadow-sm border rounded overflow-hidden';
-            table.style.fontSize = '0.85rem';
+            table.style.fontSize = '0.8rem';
+            table.style.tableLayout = 'fixed';
+            table.style.width = '100%';
             table.innerHTML = `
+                <colgroup>
+                    <col style="width: 3%;"><!-- Expand/indent icon -->
+                    <col style="width: 8%;"><!-- Tipo -->
+                    <col style="width: 4%;"><!-- No. -->
+                    <col style="width: 10%;"><!-- Fecha Corte -->
+                    <col style="width: 10%;"><!-- Av. Fis -->
+                    <col style="width: 12%;"><!-- Monto -->
+                    <col style="width: 10%;"><!-- Amort -->
+                    <col style="width: 12%;"><!-- Neto -->
+                    <col style="width: 10%;"><!-- IVA -->
+                    <col style="width: 12%;"><!-- Total -->
+                    <col style="width: 6%;"><!-- Estatus -->
+                    <col style="width: 3%;"><!-- Acciones -->
+                </colgroup>
                 <thead class="bg-light text-secondary small text-uppercase">
                     <tr>
-                        <th style="width: 40px;"></th>
-                        <th style="width: 80px;">Tipo</th>
-                        <th style="width: 60px;">No.</th>
-                        <th style="width: 140px;">Fecha Corte</th>
-                        <th class="text-end" style="width: 140px;">Av. Fis ($)</th>
-                        <th class="text-end" style="width: 140px;">Monto</th>
-                        <th class="text-end" style="width: 140px;">Amort.</th>
-                        <th class="text-end" style="width: 140px;">Neto</th>
-                        <th class="text-end" style="width: 140px;">IVA</th>
-                        <th class="text-end" style="width: 150px;">Total</th>
-                        <th class="text-center" style="width: 100px;">Estatus</th>
-                        <th class="text-end" style="width: 80px;">Acciones</th>
+                        <th></th>
+                        <th>Tipo</th>
+                        <th class="text-center">No.</th>
+                        <th>Fecha Corte</th>
+                        <th class="text-end">Av. Fis ($)</th>
+                        <th class="text-end">Monto</th>
+                        <th class="text-end">Amort.</th>
+                        <th class="text-end">Neto</th>
+                        <th class="text-end">IVA</th>
+                        <th class="text-end">Total</th>
+                        <th class="text-center">Estatus</th>
+                        <th class="text-end"></th>
                     </tr>
                 </thead>
                 <tbody class="bg-white"></tbody>
@@ -2303,23 +2319,23 @@
             const tr = document.createElement('tr');
             tr.className = 'table-light border-bottom border-2';
             tr.style.backgroundColor = '#f8f9fa';
+            tr.style.fontSize = '0.8rem';
 
-            // Un row de solo lectura que actua como header
-            // Mostramos datos basicos
             const badgeResult = _getStatusBadge(est.estatusInterno);
+            const neto = (parseFloat(est.monto) || 0) - (parseFloat(est.amortizacion) || 0);
 
             tr.innerHTML = `
-                <td class="text-center text-muted"><i class="bi bi-link-45deg fs-5" title="Estimación Contratista Vinculada"></i></td>
-                <td><span class="badge bg-secondary bg-opacity-10 text-secondary border border-secondary border-opacity-25">${est.tipo}</span></td>
+                <td class="text-center text-muted"><i class="bi bi-link-45deg" title="Estimación Contratista Vinculada"></i></td>
+                <td><span class="badge bg-secondary bg-opacity-10 text-secondary border border-secondary border-opacity-25" style="font-size: 0.7rem;">${est.tipo}</span></td>
                 <td class="fw-bold text-muted text-center">${est.numero}</td>
-                <td class="text-muted small">${_formatDateISO(est.fechaCorte)}</td>
-                <td class="text-end font-monospace text-muted">${_formatCurrency(est.montoAvanceFisico)}</td>
-                <td class="text-end font-monospace fw-bold text-muted">${_formatCurrency(est.monto)}</td>
-                <td class="text-end font-monospace text-muted">${_formatCurrency(est.amortizacion)}</td>
-                <td class="text-end font-monospace text-muted">${_formatCurrency((parseFloat(est.monto) || 0) - (parseFloat(est.amortizacion) || 0))}</td>
-                <td class="text-end font-monospace text-muted">${_formatCurrency(est.iva)}</td>
-                <td class="text-end font-monospace fw-bold text-muted">${_formatCurrency(est.montoTotal)}</td>
-                <td class="text-center opacity-50 text-scale-75">${badgeResult}</td>
+                <td class="text-muted">${_formatDateISO(est.fechaCorte)}</td>
+                <td class="text-end font-monospace text-muted text-truncate">${_formatCurrency(est.montoAvanceFisico)}</td>
+                <td class="text-end font-monospace fw-semibold text-muted text-truncate">${_formatCurrency(est.monto)}</td>
+                <td class="text-end font-monospace text-muted text-truncate">${_formatCurrency(est.amortizacion)}</td>
+                <td class="text-end font-monospace text-muted text-truncate">${_formatCurrency(neto)}</td>
+                <td class="text-end font-monospace text-muted text-truncate">${_formatCurrency(est.iva)}</td>
+                <td class="text-end font-monospace fw-bold text-muted text-truncate">${_formatCurrency(est.montoTotal)}</td>
+                <td class="text-center">${badgeResult}</td>
                 <td class="text-end text-muted small fst-italic">Contratista</td>
             `;
             return tr;
@@ -2539,22 +2555,22 @@
                     : `<i class="bi bi-caret-right custom-caret cursor-pointer" onclick="ComunicadoDetalle.toggleInfo('${est.id}')" title="Ver Facturas"></i>`
                 }
                 </td>
-                <td><span class="badge bg-primary bg-opacity-10 text-primary border border-primary border-opacity-25">${est.tipo}</span></td>
+                <td><span class="badge bg-primary bg-opacity-10 text-primary border border-primary border-opacity-25" style="font-size: 0.7rem;">${est.tipo}</span></td>
                 <td class="fw-bold text-dark text-center">${est.numero}</td>
                 <td>
-                    <input type="date" class="${editableClass} small p-1" value="${_formatDateISO(est.fechaCorte)}" ${readonlyAttr} 
+                    <input type="date" class="${editableClass} p-1" style="font-size: 0.8rem;" value="${_formatDateISO(est.fechaCorte)}" ${readonlyAttr} 
                         onchange="ComunicadoDetalle.updateEstimacion('${est.id}', 'fechaCorte', this.value)">
                 </td>
                 <td>
-                    <input type="text" class="${editableClass} text-end font-monospace currency-input text-muted" value="${_formatCurrency(est.montoAvanceFisico)}" ${readonlyAttr}
+                    <input type="text" class="${editableClass} text-end font-monospace currency-input text-muted" style="font-size: 0.8rem;" value="${_formatCurrency(est.montoAvanceFisico)}" ${readonlyAttr}
                         onchange="ComunicadoDetalle.updateEstimacion('${est.id}', 'montoAvanceFisico', this.value)" placeholder="$0.00">
                 </td>
                 <td>
-                    <input type="text" class="${editableClass} text-end font-monospace currency-input fw-bold" value="${_formatCurrency(est.monto)}" ${readonlyAttr}
+                    <input type="text" class="${editableClass} text-end font-monospace currency-input fw-semibold" style="font-size: 0.8rem;" value="${_formatCurrency(est.monto)}" ${readonlyAttr}
                         onchange="ComunicadoDetalle.updateEstimacion('${est.id}', 'monto', this.value)" placeholder="$0.00">
                 </td>
                 <td>
-                    <input type="text" class="${editableClass} text-end font-monospace currency-input text-danger" value="${_formatCurrency(est.amortizacion)}" ${readonlyAttr}
+                    <input type="text" class="${editableClass} text-end font-monospace currency-input text-danger" style="font-size: 0.8rem;" value="${_formatCurrency(est.amortizacion)}" ${readonlyAttr}
                         onchange="ComunicadoDetalle.updateEstimacion('${est.id}', 'amortizacion', this.value)" placeholder="$0.00">
                 </td>
                 <td class="text-end font-monospace" id="input-neto-${est.id}">${_formatCurrency((parseFloat(est.monto) || 0) - (parseFloat(est.amortizacion) || 0))}</td>
