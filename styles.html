@@ -984,17 +984,18 @@
     }
 
     /* Fixed-layout table input constraints */
-    table[style*="table-layout: fixed"] input.currency-input,
-    table[style*="table-layout: fixed"] input[type="date"],
-    table[style*="table-layout: fixed"] input[type="text"] {
-        width: 100%;
-        max-width: 100%;
-        min-width: 0;
-        box-sizing: border-box;
+    .table-estimaciones input.currency-input,
+    .table-estimaciones input.form-control-ghost,
+    .table-estimaciones input[type="date"],
+    .table-estimaciones input[type="text"] {
+        width: 100% !important;
+        max-width: 100% !important;
+        min-width: 0 !important;
+        box-sizing: border-box !important;
     }
 
     /* Ensure cells don't overflow */
-    table[style*="table-layout: fixed"] td {
+    .table-estimaciones td {
         overflow: hidden;
         text-overflow: ellipsis;
     }
