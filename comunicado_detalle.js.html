@@ -4333,32 +4333,54 @@
             try {
                 _setGlobalLoader(true, 'Creando...');
                 const response = await serverCall('crearEstimacion', payload);
+                console.log('[Supervision Create] Response:', response);
+
                 if (response && (response.success || response.data)) {
+                    // Remove placeholder
                     state.data.estimaciones = state.data.estimaciones.filter(e => e.id !== placeholderId);
+
                     const data = response.data || response;
-                    if (data.id) {
-                        payload.id = data.id;
-                        // Force ID Relacionada persistence locally in case backend skeletal response lacked it
-                        payload.idRelacionada = placeholder.idRelacionada;
-                        // Add facturas array locally for UI rendering
-                        payload.facturas = [];
+                    console.log('[Supervision Create] Data object:', data);
+                    console.log('[Supervision Create] Data.id:', data.id);
 
-                        state.data.estimaciones.push(payload);
+                    // Extract ID - it might be in data.id or the response might contain the full object
+                    const newId = data.id || data[Object.keys(data).find(k => k.toLowerCase() === 'id')];
+                    console.log('[Supervision Create] Extracted ID:', newId);
 
-                        // Set as selected
-                        state.ui.selectedEstimacionId = payload.id;
-
-                        _renderFinanciero();
-                        globalThis.showToast?.('Creado exitosamente', 'success');
-
-                        // Auto expand
-                        setTimeout(() => {
-                            ComunicadoDetalle.toggleInfo(payload.id);
-                        }, 500);
+                    if (newId) {
+                        payload.id = newId;
+                    } else {
+                        // Generate temporary ID if server didn't return one for some reason
+                        payload.id = 'created-' + Date.now();
+                        console.warn('[Supervision Create] No ID in response, using temp:', payload.id);
                     }
+
+                    // Force ID Relacionada persistence locally
+                    payload.idRelacionada = placeholder.idRelacionada;
+                    // Add facturas array locally for UI rendering
+                    payload.facturas = [];
+
+                    console.log('[Supervision Create] Final payload to add:', payload);
+                    state.data.estimaciones.push(payload);
+                    console.log('[Supervision Create] State estimaciones count:', state.data.estimaciones.length);
+
+                    // Set as selected
+                    state.ui.selectedEstimacionId = payload.id;
+
+                    // ALWAYS render after successful creation
+                    console.log('[Supervision Create] Calling _renderFinanciero...');
+                    _renderFinanciero();
+                    globalThis.showToast?.('Creado exitosamente', 'success');
+
+                    // Auto expand
+                    setTimeout(() => {
+                        ComunicadoDetalle.toggleInfo(payload.id);
+                    }, 500);
+                } else {
+                    console.error('[Supervision Create] Response was not successful:', response);
                 }
             } catch (e) {
-                console.error(e);
+                console.error('[Supervision Create] Error:', e);
                 Swal.fire('Error', e.message, 'error');
             } finally {
                 _setGlobalLoader(false);
