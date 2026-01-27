@@ -1052,6 +1052,7 @@
                 tipo: tipo,
                 numero: numero,
                 idEstimacionVinculada: idVinculada,
+                idRelacionada: idVinculada, // Force explicit column match
 
                 // Init financial fields
                 porcentajeAvanceFisico: 0,
@@ -2192,7 +2193,8 @@
                 tbody.appendChild(trParent);
 
                 // Check for existing Supervision Children
-                const children = estSupervision.filter(s => String(s.idRelacionada || '') === String(parentEst.id));
+                // Check for idRelacionada (Sheet Header) or idEstimacionVinculada (Legacy/Import Object)
+                const children = estSupervision.filter(s => String(s.idRelacionada || s.idEstimacionVinculada || '').trim() === String(parentEst.id).trim());
 
                 // Si existe, mostrar
                 if (children.length > 0) {
@@ -2233,7 +2235,10 @@
             });
 
             // 5. Renderizar Huerfanas (Supervision sin idVinculada o con id invalido)
-            const orphans = estSupervision.filter(s => !s.idRelacionada || !estContratista.find(c => String(c.id) === String(s.idRelacionada)));
+            const orphans = estSupervision.filter(s => {
+                const refId = String(s.idRelacionada || s.idEstimacionVinculada || '').trim();
+                return !refId || !estContratista.find(c => String(c.id).trim() === refId);
+            });
             if (orphans.length > 0) {
                 // Header o separador para huerfanas
                 const trSep = document.createElement('tr');
