@@ -4335,16 +4335,21 @@
                 const response = await serverCall('crearEstimacion', payload);
                 console.log('[Supervision Create] Response:', response);
 
-                if (response && (response.success || response.data)) {
+                // serverCall unwraps the response, so 'response' IS the data object directly
+                // Check if we got a valid response (has id or entidad fields)
+                const isValidResponse = response && (response.id || response.entidad || response.tipo);
+
+                if (isValidResponse) {
                     // Remove placeholder
                     state.data.estimaciones = state.data.estimaciones.filter(e => e.id !== placeholderId);
 
-                    const data = response.data || response;
+                    // response IS the data (already unwrapped by serverCall)
+                    const data = response;
                     console.log('[Supervision Create] Data object:', data);
                     console.log('[Supervision Create] Data.id:', data.id);
 
-                    // Extract ID - it might be in data.id or the response might contain the full object
-                    const newId = data.id || data[Object.keys(data).find(k => k.toLowerCase() === 'id')];
+                    // Use the ID from response
+                    const newId = data.id;
                     console.log('[Supervision Create] Extracted ID:', newId);
 
                     if (newId) {
@@ -4377,7 +4382,8 @@
                         ComunicadoDetalle.toggleInfo(payload.id);
                     }, 500);
                 } else {
-                    console.error('[Supervision Create] Response was not successful:', response);
+                    console.error('[Supervision Create] Response was not valid:', response);
+                    Swal.fire('Error', 'Respuesta del servidor no válida', 'error');
                 }
             } catch (e) {
                 console.error('[Supervision Create] Error:', e);
