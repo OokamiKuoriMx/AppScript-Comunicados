@@ -4004,10 +4004,10 @@
 
         function _renderTableSupervisionNew(container) {
             const estSupervision = (state.data.estimaciones || [])
-                .filter(e => (e.entidad || 'CONSTRUCTORA').toUpperCase() === 'SUPERVISION' || e._isPlaceholder);
+                .filter(e => String(e.entidad || 'CONSTRUCTORA').trim().toUpperCase() === 'SUPERVISION' || e._isPlaceholder);
 
             const estContratista = (state.data.estimaciones || [])
-                .filter(e => (e.entidad || 'CONSTRUCTORA').toUpperCase() === 'CONSTRUCTORA');
+                .filter(e => String(e.entidad || 'CONSTRUCTORA').trim().toUpperCase() === 'CONSTRUCTORA');
 
             const table = _createTableSkeleton();
             const tbody = table.querySelector('tbody');
