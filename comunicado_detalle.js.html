@@ -4016,10 +4016,17 @@
             const orphans = [];
 
             estSupervision.forEach(child => {
-                const term = child.idRelacionada || child.idEstimacionVinculada;
+                const term = String(child.idRelacionada || child.idEstimacionVinculada || '').trim();
                 if (term) {
-                    if (!groups[term]) groups[term] = [];
-                    groups[term].push(child);
+                    // Verify if parent actually exists in current dataset
+                    const parentExists = estContratista.some(c => String(c.id).trim() === term);
+                    if (parentExists) {
+                        if (!groups[term]) groups[term] = [];
+                        groups[term].push(child);
+                    } else {
+                        // Linked to ID that is not visible/doesn't exist -> Treat as orphan
+                        orphans.push(child);
+                    }
                 } else {
                     orphans.push(child);
                 }
@@ -4029,7 +4036,7 @@
             let hasContent = false;
 
             linkedIds.forEach(parentId => {
-                const parentEst = estContratista.find(e => String(e.id) === String(parentId));
+                const parentEst = estContratista.find(e => String(e.id).trim() === String(parentId).trim());
                 if (parentEst) {
                     hasContent = true;
                     tbody.appendChild(_createParentEstimacionRow(parentEst));
