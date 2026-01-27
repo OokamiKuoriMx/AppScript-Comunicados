@@ -4323,8 +4323,7 @@
                 iva: ivaCalculado,
                 montoTotal: totalCalculado,
                 estatusInterno: 'PENDIENTE',
-                fechaCorte: new Date().toISOString().split('T')[0],
-                facturas: []
+                fechaCorte: new Date().toISOString().split('T')[0]
             };
 
             try {
@@ -4337,6 +4336,8 @@
                         payload.id = data.id;
                         // Force ID Relacionada persistence locally in case backend skeletal response lacked it
                         payload.idRelacionada = placeholder.idRelacionada;
+                        // Add facturas array locally for UI rendering
+                        payload.facturas = [];
 
                         state.data.estimaciones.push(payload);
 
