@@ -634,7 +634,11 @@
             console.log('selectEstimacion', id, entidad);
             state.ui.selectedEstimacionId = id;
             state.ui.selectedEntidad = entidad;
-            if (dom.financiero) _renderFinanciero();
+            // Optimización: Actualizar clases sin re-renderizar todo
+            const rows = document.querySelectorAll('tr[id^="row-"]');
+            rows.forEach(r => r.classList.remove('table-active'));
+            const selectedRow = document.getElementById(`row-${id}`);
+            if (selectedRow) selectedRow.classList.add('table-active');
         }
 
         async function removeEstimacion(id) {
@@ -2328,7 +2332,8 @@
 
             const trDetail = document.createElement('tr');
             trDetail.id = `detail-row-${est.id}`;
-            trDetail.className = 'd-none bg-white border-bottom';
+            const isExpanded = state.ui.expandedEstimations && state.ui.expandedEstimations.has(String(est.id));
+            trDetail.className = isExpanded ? 'bg-white border-bottom' : 'd-none bg-white border-bottom';
             const tdDetail = document.createElement('td');
             tdDetail.colSpan = 12;
             tdDetail.className = 'p-0';
@@ -2873,6 +2878,11 @@
             // Find estimation to ensure it exists and valid
             const est = (state.data.estimaciones || []).find(e => String(e.id) === String(idEstimacion));
             if (!est) return;
+
+            // AUTO-EXPAND: Keep details open
+            if (!state.ui.expandedEstimations) state.ui.expandedEstimations = new Set();
+            state.ui.expandedEstimations.add(String(idEstimacion));
+
             // Prevent adding to temp/unsaved estimation (should be hidden by UI anyway)
             if (String(est.id).startsWith('temp-')) {
                 _showAlert('Estimación no guardada', 'Guarda la estimación antes de agregar facturas.', 'warning');
@@ -3007,13 +3017,17 @@
         }
 
         function toggleInfo(id) {
+            if (!state.ui.expandedEstimations) state.ui.expandedEstimations = new Set();
+
             const row = document.getElementById(`detail-row-${id}`);
-            if (row) {
-                if (row.classList.contains('d-none')) {
-                    row.classList.remove('d-none');
-                } else {
-                    row.classList.add('d-none');
-                }
+            const shouldExpand = row ? row.classList.contains('d-none') : !state.ui.expandedEstimations.has(String(id));
+
+            if (shouldExpand) {
+                if (row) row.classList.remove('d-none');
+                state.ui.expandedEstimations.add(String(id));
+            } else {
+                if (row) row.classList.add('d-none');
+                state.ui.expandedEstimations.delete(String(id));
             }
         }
 
