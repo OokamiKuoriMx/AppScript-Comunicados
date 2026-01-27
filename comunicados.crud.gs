@@ -879,7 +879,7 @@ function enriquecerComunicado(comunicado) {
             equipo: equipo, // Legacy y Supervisores
             relacionContratistas: relacionContratistas, // Nueva Lista
             financiero: financieroCompleto,
-            estimaciones: estimaciones, // Para compatibilidad
+            estimaciones: itemsFinancieros, // Incluye CONSTRUCTORA y SUPERVISION para renderizado
             facturas: facturasLegacy, // Para compatibilidad
             tickets: tickets,
 
