@@ -982,4 +982,20 @@
     .table-modern th {
         padding: 0.45rem 0.5rem !important;
     }
+
+    /* Fixed-layout table input constraints */
+    table[style*="table-layout: fixed"] input.currency-input,
+    table[style*="table-layout: fixed"] input[type="date"],
+    table[style*="table-layout: fixed"] input[type="text"] {
+        width: 100%;
+        max-width: 100%;
+        min-width: 0;
+        box-sizing: border-box;
+    }
+
+    /* Ensure cells don't overflow */
+    table[style*="table-layout: fixed"] td {
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
 </style>
