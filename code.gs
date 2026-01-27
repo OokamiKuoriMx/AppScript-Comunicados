@@ -282,7 +282,8 @@ const TABLE_DEFINITIONS = {
             fechaCorte: ['fechaCorte', 'Fecha Corte', 'Fecha'],
             periodoInicio: ['periodoInicio', 'Periodo Inicio', 'Inicio'],
             periodoFin: ['periodoFin', 'Periodo Fin', 'Fin'],
-            estatusInterno: ['estatusInterno', 'Estatus', 'Estado']
+            estatusInterno: ['estatusInterno', 'Estatus', 'Estado'],
+            idRelacionada: ['idRelacionada', 'ID Relacionada', 'Vinculada', 'Referencia', 'Id Relacionada', 'id_relacionada', 'ID_RELACIONADA'] // Enlace Supervision -> Constructora
         },
         requiredFields: ['idComunicado', 'entidad', 'tipo'],
         uniqueFields: []
@@ -824,4 +825,3 @@ function obtenerMatrizPresupuestoDirecta(idComunicado) {
         return { success: false, message: `Error: ${error.message}` };
     }
 }
-

@@ -125,22 +125,24 @@
                         </div>
 
                         <!-- GRUPO 2: DATOS DEL AJUSTADOR -->
-                        <div class="card shadow-sm border-0 mb-4">
-                            <div class="card-header bg-white py-3 border-start border-4 border-primary">
-                                <h6 class="mb-0 fw-bold"><i class="bi bi-person-badge me-2 text-primary"></i>2. Datos
-                                    del Ajustador</h6>
+                        <div class="card">
+                            <div class="card-modern-header">
+                                <div class="card-modern-title">
+                                    <i class="bi bi-person-badge text-primary me-2"></i>
+                                    2. Datos del Ajustador
+                                </div>
                             </div>
-                            <div class="card-body">
-                                <div class="row g-3">
+                            <div class="card-body p-4">
+                                <div class="row g-4">
                                     <div class="col-md-6">
-                                        <label class="form-label small text-muted">
-                                            <i class="bi bi-building me-1"></i>Referencia
+                                        <label class="form-label">
+                                            Referencia
                                         </label>
-                                        <input type="text" class="form-control bg-light" id="gen-cuenta" readonly>
+                                        <input type="text" class="form-control" id="gen-cuenta" readonly>
                                     </div>
                                     <div class="col-md-6">
-                                        <label class="form-label small text-muted">
-                                            <i class="bi bi-person-badge me-1"></i>Ajustador
+                                        <label class="form-label">
+                                            Ajustador
                                         </label>
                                         <div class="position-relative">
                                             <input type="text" class="form-select fw-bold" id="gen-ajustador"
@@ -382,7 +384,8 @@
                                         <div class="d-flex align-items-center mb-1 text-primary">
                                             <i class="bi bi-cash-stack me-2"></i>
                                             <small class="fw-bold text-uppercase"
-                                                style="font-size: 0.65rem; letter-spacing: 0.5px;">Autorizado</small>
+                                                style="font-size: 0.65rem; letter-spacing: 0.5px;">NUEVO IMPORTE CON
+                                                RECLAMO</small>
                                         </div>
                                         <div class="fs-5 fw-bold text-primary text-truncate" id="fin-autorizado">$0.00
                                         </div>
@@ -472,100 +475,36 @@
                                 </div>
                             </div>
                             <div class="card-body p-0">
-                                <div class="">
-                                    <table class="table table-modern mb-0 w-100" style="table-layout: fixed;">
-                                        <thead>
-                                            <tr>
-                                                <th class="text-center" style="width: 8%;">Tipo</th>
-                                                <th class="text-center" style="width: 5%;">No.</th>
-                                                <th class="text-center" style="width: 10%;">Fechas</th>
-                                                <th class="text-center" style="width: 10%;">Av. Fis ($)</th>
-                                                <th class="text-center" style="width: 10%;">Monto</th>
-                                                <th class="text-center" style="width: 10%;">Amortización</th>
-                                                <th class="text-center" style="width: 10%;">Neto</th>
-                                                <th class="text-center" style="width: 10%;">IVA</th>
-                                                <th class="text-center" style="width: 10%;">Total</th>
-                                                <th class="text-center" style="width: 12%;">Estatus</th>
-                                                <th class="text-center" style="width: 7%;"></th>
-                                            </tr>
-                                        </thead>
-                                        <tbody id="lista-estimaciones-constructora">
-                                            <tr>
-                                                <td colspan="11" class="text-center py-5 text-muted small">
-                                                    <i class="bi bi-inbox fs-3 d-block mb-3 opacity-25"></i>
-                                                    Sin estimaciones registradas
-                                                </td>
-                                            </tr>
-                                        </tbody>
-                                        <tfoot class="bg-light border-top">
-                                            <tr>
-                                                <td colspan="6"
-                                                    class="text-end text-muted small text-uppercase py-2 pe-3 fw-semibold"
-                                                    style="letter-spacing: 0.05em;">TOTALES:
-                                                </td>
-                                                <td class="text-center fw-bold border-start py-2"
-                                                    id="total-neto-constructora"
-                                                    style="font-size: 1rem; white-space: nowrap;">$0.00</td>
-                                                <td class="text-center fw-bold py-2" id="total-iva-constructora"
-                                                    style="font-size: 1rem; white-space: nowrap;">$0.00</td>
-                                                <td class="text-center text-primary fw-bold border-end py-2"
-                                                    id="total-constructora"
-                                                    style="font-size: 1rem; white-space: nowrap;">$0.00</td>
-                                                <td colspan="2"></td>
-                                            </tr>
-                                        </tfoot>
-                                    </table>
-                                    <!-- Hidden trigger button -->
-                                    <button class="d-none" id="btn-add-estimacion-constructora"></button>
-                                </div>
-                            </div>
-                        </div>
+                                <div id="lista-estimaciones-constructora"></div>
 
-                        <!-- PANEL FACTURAS CONSTRUCTORA -->
-                        <div id="panel-facturas-constructora" class="mt-4">
-                            <!-- Placeholder -->
-                            <div id="facturas-placeholder-constructora"
-                                class="card border-dashed p-5 text-center bg-transparent mt-3">
-                                <div class="text-muted">
-                                    <i class="bi bi-receipt-cutoff fs-1 d-block mb-3 opacity-25"></i>
-                                    <h6 class="fw-bold text-secondary">Seleccione una Estimación</h6>
-                                    <p class="small mb-0 text-muted">Haga clic en una fila de la tabla superior para ver
-                                        sus facturas.</p>
-                                </div>
-                            </div>
-
-                            <!-- Contenido -->
-                            <div id="facturas-data-constructora" class="card d-none">
-                                <div class="card-modern-header">
-                                    <div class="card-modern-title" id="titulo-facturas-constructora">
-                                        <i class="bi bi-receipt text-primary me-2"></i>
-                                        Facturas de la Estimación
+                                <!-- Footer Totals -->
+                                <div class="bg-light border border-top-0 rounded-bottom p-2">
+                                    <div class="d-flex justify-content-end align-items-center gap-4 pe-3">
+                                        <span class="text-muted small text-uppercase fw-bold"
+                                            style="letter-spacing: 0.05em;">TOTALES:</span>
+                                        <div class="text-end border-start ps-3">
+                                            <small class="d-block text-muted text-uppercase"
+                                                style="font-size: 0.65rem;">Neto</small>
+                                            <span id="total-neto-constructora" class="fw-bold text-dark">$0.00</span>
+                                        </div>
+                                        <div class="text-end">
+                                            <small class="d-block text-muted text-uppercase"
+                                                style="font-size: 0.65rem;">IVA</small>
+                                            <span id="total-iva-constructora" class="fw-bold text-dark">$0.00</span>
+                                        </div>
+                                        <div class="text-end border-start ps-3">
+                                            <small class="d-block text-primary text-uppercase"
+                                                style="font-size: 0.65rem;">Total</small>
+                                            <span id="total-constructora" class="fw-bold text-primary fs-6">$0.00</span>
+                                        </div>
                                     </div>
                                 </div>
                                 <!-- Hidden trigger button -->
-                                <button class="d-none" id="btn-add-factura-constructora"
-                                    onclick="ComunicadoDetalle.addFactura('CONSTRUCTORA')"></button>
-                                <div class="card-body p-0">
-                                    <div class="table-responsive">
-                                        <table class="table table-modern mb-0">
-                                            <thead>
-                                                <tr>
-                                                    <th class="ps-3 text-center">No. Factura</th>
-                                                    <th class="text-center">Fecha</th>
-                                                    <th class="text-center">Subtotal</th>
-                                                    <th class="text-center">IVA</th>
-                                                    <th class="text-center">Total</th>
-                                                    <th class="text-center">UUID</th>
-                                                    <th class="text-center">Estatus SAT</th>
-                                                    <th class="text-center" style="width: 80px;">Acciones</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody id="lista-facturas-constructora"></tbody>
-                                        </table>
-                                    </div>
-                                </div>
+                                <button class="d-none" id="btn-add-estimacion-constructora"></button>
                             </div>
                         </div>
+
+
                     </div>
 
                     <!-- TAB: ESTIMACIONES SUPERVISION -->
@@ -581,7 +520,8 @@
                                         <div class="d-flex align-items-center mb-1 text-primary">
                                             <i class="bi bi-cash-stack me-2"></i>
                                             <small class="fw-bold text-uppercase"
-                                                style="font-size: 0.65rem; letter-spacing: 0.5px;">Autorizado</small>
+                                                style="font-size: 0.65rem; letter-spacing: 0.5px;">NUEVO IMPORTE CON
+                                                RECLAMO</small>
                                         </div>
                                         <div class="fs-5 fw-bold text-primary text-truncate" id="fin-autorizado-sup">
                                             $0.00</div>
@@ -661,95 +601,35 @@
                                 </div>
                             </div>
                             <div class="card-body p-0">
-                                <div class="">
-                                    <table class="table table-modern mb-0" style="table-layout: fixed;">
-                                        <thead>
-                                            <tr>
-                                                <th style="width: 10%;">Tipo</th>
-                                                <th style="width: 5%;">No.</th>
-                                                <th style="width: 10%;">Fecha Corte</th>
-                                                <th class="text-end" style="width: 15%;">Monto Autorizado</th>
-                                                <th colspan="2" style="width: 40%;">Vinculado a</th>
-                                                <th style="width: 15%;">Estatus</th>
-                                                <th style="width: 5%;"></th>
-                                            </tr>
-                                        </thead>
-                                        <tbody id="lista-estimaciones-supervision">
-                                            <tr>
-                                                <td colspan="9" class="text-center py-5 text-muted small">
-                                                    <i class="bi bi-inbox fs-3 d-block mb-3 opacity-25"></i>
-                                                    Sin estimaciones registradas
-                                                </td>
-                                            </tr>
-                                        </tbody>
-                                        <tfoot class="bg-light border-top">
-                                            <tr>
-                                                <td colspan="4"
-                                                    class="text-end text-muted small text-uppercase py-2 pe-3 fw-semibold"
-                                                    style="letter-spacing: 0.05em;">TOTALES:
-                                                </td>
-                                                <td class="text-center fw-bold border-start py-2"
-                                                    id="total-neto-supervision"
-                                                    style="font-size: 1rem; white-space: nowrap;">$0.00</td>
-                                                <td class="text-center fw-bold py-2" id="total-iva-supervision"
-                                                    style="font-size: 1rem; white-space: nowrap;">$0.00</td>
-                                                <td class="text-center text-info fw-bold border-end py-2"
-                                                    id="total-supervision"
-                                                    style="font-size: 1rem; white-space: nowrap;">$0.00</td>
-                                                <td colspan="2"></td>
-                                            </tr>
-                                        </tfoot>
-                                    </table>
-                                    <!-- Hidden trigger button -->
-                                    <button class="d-none" id="btn-add-estimacion-supervision"></button>
+                                <div id="lista-estimaciones-supervision"></div>
+
+                                <div class="bg-light border border-top-0 rounded-bottom p-2">
+                                    <div class="d-flex justify-content-end align-items-center gap-4 pe-3">
+                                        <span class="text-muted small text-uppercase fw-bold"
+                                            style="letter-spacing: 0.05em;">TOTALES:</span>
+                                        <div class="text-end border-start ps-3">
+                                            <small class="d-block text-muted text-uppercase"
+                                                style="font-size: 0.65rem;">Neto</small>
+                                            <span id="total-neto-supervision" class="fw-bold text-dark">$0.00</span>
+                                        </div>
+                                        <div class="text-end">
+                                            <small class="d-block text-muted text-uppercase"
+                                                style="font-size: 0.65rem;">IVA</small>
+                                            <span id="total-iva-supervision" class="fw-bold text-dark">$0.00</span>
+                                        </div>
+                                        <div class="text-end border-start ps-3">
+                                            <small class="d-block text-info text-uppercase"
+                                                style="font-size: 0.65rem;">Total</small>
+                                            <span id="total-supervision" class="fw-bold text-info fs-6">$0.00</span>
+                                        </div>
+                                    </div>
                                 </div>
+                                <!-- Hidden trigger button -->
+                                <button class="d-none" id="btn-add-estimacion-supervision"></button>
                             </div>
                         </div>
 
-                        <!-- PANEL FACTURAS SUPERVISION (Master-Detail) -->
-                        <div id="panel-facturas-supervision" class="mt-4">
-                            <div id="facturas-placeholder-supervision"
-                                class="card border-dashed p-5 text-center bg-transparent mt-3">
-                                <div class="text-muted">
-                                    <i class="bi bi-receipt-cutoff fs-1 d-block mb-3 opacity-25"></i>
-                                    <h6 class="fw-bold text-secondary">Seleccione Supervisión</h6>
-                                    <p class="small mb-0 text-muted">Seleccione una fila arriba para ver facturas.</p>
-                                </div>
-                            </div>
 
-                            <div id="facturas-data-supervision" class="card d-none">
-                                <div class="card-modern-header">
-                                    <div class="card-modern-title" id="titulo-facturas-supervision">
-                                        <i class="bi bi-receipt text-primary me-2"></i>Facturas de Supervisión
-                                    </div>
-                                    <button
-                                        class="btn btn-sm btn-outline-primary rounded-pill border-0 bg-primary bg-opacity-10 text-primary fw-semibold px-3"
-                                        id="btn-add-factura-supervision"
-                                        onclick="ComunicadoDetalle.addFactura('SUPERVISION')">
-                                        <i class="bi bi-plus-lg me-1"></i> Agregar Factura
-                                    </button>
-                                </div>
-                                <div class="card-body p-0">
-                                    <div class="table-responsive">
-                                        <table class="table table-modern mb-0">
-                                            <thead>
-                                                <tr>
-                                                    <th class="ps-3">No. Factura</th>
-                                                    <th>Fecha</th>
-                                                    <th class="text-end">Subtotal</th>
-                                                    <th class="text-end">IVA</th>
-                                                    <th class="text-end">Total</th>
-                                                    <th>UUID</th>
-                                                    <th>Estatus SAT</th>
-                                                    <th class="text-end" style="width: 80px;">Acciones</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody id="lista-facturas-supervision"></tbody>
-                                        </table>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
 
                     </div>
 
@@ -1069,6 +949,37 @@
                         </div>
                     </div>
                 </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Vincular Estimación (Supervisión) -->
+<div class="modal fade" id="modalVincularEstimacion" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content border-0 shadow-lg" style="border-radius: 1rem; overflow: hidden;">
+            <div class="modal-header bg-primary text-white">
+                <h5 class="modal-title fw-bold"><i class="bi bi-link-45deg me-2"></i>Vincular Estimación Contratista
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"
+                    aria-label="Cerrar"></button>
+            </div>
+            <div class="modal-body p-4 bg-light">
+                <p class="text-muted mb-3 small">Seleccione la estimación o anticipo de la <strong>Contratista</strong>
+                    a la que
+                    desea vincular esta supervisión:</p>
+
+                <div class="list-group shadow-sm" id="lista-vinculacion-estimaciones"
+                    style="max-height: 300px; overflow-y: auto;">
+                    <!-- Dynamic List -->
+                    <div class="text-center py-4 text-muted">Cargando estimaciones...</div>
+                </div>
+            </div>
+            <div class="modal-footer bg-white border-top-0">
+                <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancelar</button>
+                <button type="button" class="btn btn-primary px-4 fw-semibold" id="btn-confirmar-vinculacion" disabled>
+                    <i class="bi bi-check2-circle me-2"></i>Vincular y Crear
+                </button>
             </div>
         </div>
     </div>

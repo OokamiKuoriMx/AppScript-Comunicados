@@ -1369,3 +1369,77 @@ function registrarComplemento(idFactura, datos) {
         return { success: false, message: e.message };
     }
 }
+
+/**
+ * Registra una nueva estimación (wrapper para frontend)
+ * Calcula automáticamente el consecutivo y maneja la vinculación.
+ * 
+ * @param {string} idComunicado - ID del comunicado
+ * @param {string} entidad - 'CONSTRUCTORA' o 'SUPERVISION'
+ * @param {string|null} idRelacionada - ID de la estimación de constructora vinculada (para supervisión)
+ */
+function registrarEstimacion(idComunicado, entidad, idRelacionada) {
+    const contexto = 'registrarEstimacion';
+    try {
+        console.log(`[${contexto}] Iniciando para Comunicado: ${idComunicado}, Entidad: ${entidad}, Rel: ${idRelacionada}`);
+
+        // Verificar dependencias globales (defensivo)
+        if (typeof readAllRows !== 'function') throw new Error('readAllRows no está disponible');
+
+        const todasRes = readAllRows('estimaciones');
+        if (!todasRes.success) throw new Error('Error de lectura: ' + todasRes.message);
+        const todas = todasRes.data || [];
+
+        const stringId = String(idComunicado);
+        const stringEntidad = String(entidad || 'CONSTRUCTORA').toUpperCase();
+
+        const existentes = todas.filter(e =>
+            String(e.idComunicado) === stringId &&
+            String(e.entidad || 'CONSTRUCTORA').toUpperCase() === stringEntidad
+        );
+
+        // Calcular siguiente numero para tipo ESTIMACION
+        // Solo numeramos las regulares (tipo ESTIMACION o sin tipo)
+        const estimacionesNumeradas = existentes.filter(e => {
+            const num = parseInt(e.numero);
+            return (e.tipo === 'ESTIMACION' || !e.tipo) && !isNaN(num);
+        });
+
+        let nuevoNumero = '1';
+        if (estimacionesNumeradas.length > 0) {
+            const maxNum = estimacionesNumeradas.reduce((max, e) => {
+                const num = parseInt(e.numero);
+                return num > max ? num : max;
+            }, 0);
+            nuevoNumero = String(maxNum + 1);
+        }
+
+        const nuevaEstimacion = {
+            idComunicado: idComunicado,
+            entidad: entidad || 'CONSTRUCTORA',
+            tipo: 'ESTIMACION',
+            numero: nuevoNumero,
+            montoAutorizado: 0,
+            monto: 0,
+            iva: 0,
+            montoTotal: 0,
+            amortizacion: 0,
+            montoAvanceFisico: 0,
+            fechaCorte: new Date().toISOString().split('T')[0],
+            estatusInterno: 'PENDIENTE',
+            idRelacionada: idRelacionada || ''
+        };
+
+        // Usar la funcion existente crearEstimacion que maneja bitacora
+        if (typeof crearEstimacion === 'function') {
+            return crearEstimacion(nuevaEstimacion);
+        } else {
+            console.warn(`[${contexto}] crearEstimacion no encontrado, usando createRow directo`);
+            return createRow('estimaciones', nuevaEstimacion);
+        }
+
+    } catch (e) {
+        console.error(`[${contexto}] Error:`, e);
+        return { success: false, message: e.message };
+    }
+}

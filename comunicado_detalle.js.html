@@ -143,14 +143,22 @@
                     estimado: document.getElementById('fin-estimado'),
                     ejercido: document.getElementById('fin-ejercido'),
                     avanceFisico: document.getElementById('fin-avance-fisico'),
-                    porEjercer: document.getElementById('fin-por-ejercer')
+                    porEjercer: document.getElementById('fin-por-ejercer'),
+                    // Footer Totals
+                    neto: document.getElementById('total-neto-constructora'),
+                    iva: document.getElementById('total-iva-constructora'),
+                    total: document.getElementById('total-constructora')
                 },
                 resumenSupervision: {
                     autorizado: document.getElementById('fin-autorizado-sup'),
                     estimado: document.getElementById('fin-estimado-sup'),
                     ejercido: document.getElementById('fin-ejercido-sup'),
                     avanceFisico: document.getElementById('fin-avance-fisico-sup'),
-                    porEjercer: document.getElementById('fin-por-ejercer-sup')
+                    porEjercer: document.getElementById('fin-por-ejercer-sup'),
+                    // Footer Totals
+                    neto: document.getElementById('total-neto-supervision'),
+                    iva: document.getElementById('total-iva-supervision'),
+                    total: document.getElementById('total-supervision')
                 },
                 selectContratista: document.getElementById('select-contratista-main')
             };
@@ -292,11 +300,18 @@
         }
 
         function _sanitizeData(d) {
+            // Aplanar facturas: Extraerlas de las estimaciones para tener un array maestro
+            const facturasAplanadas = (d.estimaciones || []).flatMap(e => e.facturas || []);
+
             return {
                 ...d,
                 presupuesto: d.presupuesto || [],
                 equipo: d.equipo || [],
                 tickets: d.tickets || [],
+                // Asegurar que estimaciones sea un array
+                estimaciones: d.estimaciones || [],
+                // POBLAR facturasEstimaciones para que el renderizador las encuentre
+                facturasEstimaciones: facturasAplanadas,
                 financiero: Array.isArray(d.financiero) ? d.financiero : (d.financiero?.estimaciones || [])
             };
         }
@@ -902,105 +917,7 @@
                 _setGlobalLoader(false);
             }
         }
-        function _renderFinanciero() {
-            // Render Estimaciones Constructora
-            _renderListaEstimaciones('CONSTRUCTORA', dom.financiero.bodyConstructora);
-            // Render Estimaciones Supervision
-            _renderListaEstimaciones('SUPERVISION', dom.financiero.bodySupervision);
 
-            _updateResumenFinanciero();
-        }
-
-        function _renderListaEstimaciones(entidad, container) {
-            if (!container) return;
-            container.innerHTML = '';
-
-            const estimaciones = (state.data.estimaciones || [])
-                .filter(e => (e.entidad || 'CONSTRUCTORA') === entidad)
-                .sort((a, b) => (a.id || 0) - (b.id || 0)); // Sort by ID or creation?
-
-            if (estimaciones.length === 0) {
-                container.innerHTML = '<tr><td colspan="8" class="text-center py-4 text-muted">Sin estimaciones registradas</td></tr>';
-                return;
-            }
-
-            estimaciones.forEach(estimacion => {
-                // 1. Render Linea Estimacion
-                const trEst = document.createElement('tr');
-                trEst.className = 'table-light fw-bold'; // Highlight estimation row
-                trEst.innerHTML = `
-                    <td class="ps-2" style="border-left: 4px solid #0d6efd;">
-                        <i class="bi bi-folder2-open me-2 text-primary"></i>
-                        ${estimacion.tipo} ${estimacion.numero}
-                    </td>
-                    <td colspan="6" class="text-end text-muted small">
-                        ${_formatDateISO(estimacion.fechaCorte)}
-                    </td>
-                     <td class="text-center">
-                        <div class="btn-group">
-                             <button class="btn btn-sm btn-outline-primary" onclick="ComunicadoDetalle.selectEstimacion('${estimacion.id}', '${entidad}')" title="Seleccionar">
-                                <i class="bi bi-eye"></i>
-                            </button>
-                             <button class="btn btn-sm btn-outline-success" onclick="ComunicadoDetalle.addFactura('${estimacion.id}')" title="Agregar Factura">
-                                <i class="bi bi-receipt"></i>
-                            </button>
-                            <button class="btn btn-sm btn-outline-danger" onclick="ComunicadoDetalle.removeEstimacion('${estimacion.id}')">
-                                <i class="bi bi-trash"></i>
-                            </button>
-                        </div>
-                    </td>
-                `;
-                container.appendChild(trEst);
-
-                // 2. Render Facturas (Hierarchical)
-                const facturas = (estimacion.facturas || []);
-                const facturasPrincipales = facturas.filter(f => f.tipo !== 'COMPLEMENTO');
-
-                facturasPrincipales.forEach(factura => {
-                    _renderFacturaRow(container, factura, 1); // Level 1 Indent
-
-                    // 3. Render Complementos (Double Indented)
-                    const complementos = facturas.filter(f => f.tipo === 'COMPLEMENTO' && String(f.idFacturaRelacionada) === String(factura.id));
-                    complementos.forEach(comp => {
-                        _renderFacturaRow(container, comp, 2); // Level 2 Indent
-                    });
-                });
-            });
-        }
-
-        function _renderFacturaRow(container, f, level) {
-            const tr = document.createElement('tr');
-            // Visual indentation logic
-            const paddingLeft = level === 1 ? '40px' : '80px';
-            const icon = level === 1 ? 'bi-file-earmark-text' : 'bi-link-45deg';
-            const badge = f.tipo === 'COMPLEMENTO'
-                ? '<span class="badge bg-info text-dark" style="font-size:0.6rem">COMPLEMENTO</span>'
-                : `<span class="badge bg-secondary" style="font-size:0.6rem">${f.estatusSAT || 'VIGENTE'}</span>`;
-
-            tr.innerHTML = `
-                <td style="padding-left: ${paddingLeft};">
-                     <i class="bi ${icon} me-2 text-secondary"></i>
-                     <span class="small font-monospace">${f.folioFactura || 'S/F'}</span>
-                     ${level === 2 ? badge : ''}
-                </td>
-                <td class="small text-muted">${f.uuid ? f.uuid.substring(0, 8) + '...' : ''}</td>
-                <td class="text-end small">${_formatCurrency(f.montoAvanceFisico)}</td>
-                <td class="text-end small">${_formatCurrency(f.amortizacion)}</td>
-                <td class="text-end font-monospace">${_formatCurrency(f.monto)}</td>
-                <td class="text-end small">${_formatCurrency(f.iva)}</td>
-                <td class="text-end fw-bold font-monospace">${_formatCurrency(f.total)}</td>
-                <td class="text-center">
-                    <button class="btn btn-sm btn-link text-muted p-0" onclick="ComunicadoDetalle.openBitacoraModal('${f.id}')">
-                        <i class="bi bi-chat-left-text"></i>
-                    </button>
-                     ${level === 1 ? `
-                    <button class="btn btn-sm btn-link text-primary p-0 ms-1" onclick="ComunicadoDetalle.registrarComplemento('${f.id}')" title="Agregar Complemento/Pago">
-                        <i class="bi bi-plus-circle"></i>
-                    </button>` : ''}
-                </td>
-            `;
-            container.appendChild(tr);
-        }
         async function _addEstimacion(entidad) {
             // Determinar tipos disponibles según entidad
             // FINIQUITO se elimina de la selección manual para Constructora
@@ -1869,7 +1786,7 @@
             document.querySelectorAll('.currency-input').forEach(input => {
                 input.addEventListener('blur', (e) => {
                     const val = parseFloat(e.target.value.replace(/[^0-9.-]/g, '')) || 0;
-                    e.target.value = _formatCurrency(val, false);
+                    e.target.value = _formatCurrency(val, true);
                 });
                 input.addEventListener('focus', (e) => {
                     e.target.value = e.target.value.replace(/,/g, '').replace('$', '');
@@ -1901,11 +1818,239 @@
             return `<span class="badge ${colorClass} border-0">${s.replace('_', ' ')}</span>`;
         }
 
+        function _updateResumenFinanciero() {
+            // Helper de seguridad para numeros
+            const safeFloat = (val) => parseFloat(String(val).replace(/[^0-9.-]+/g, '')) || 0;
+
+            // 1. OBTENER DATOS BASE
+            const estAll = state.data.estimaciones || [];
+            const facturasAll = state.data.facturasEstimaciones || [];
+            const presAll = state.data.presupuesto || [];
+            const ultPres = presAll.length > 0 ? presAll[presAll.length - 1] : null;
+
+            // 2. FUNCIÓN DE CÁLCULO POR ENTIDAD
+            const calculateEntity = (entidad) => {
+                const est = estAll.filter(e => (e.entidad || 'CONSTRUCTORA') === entidad && e.estatusInterno !== 'CANCELADO');
+                const idsEst = est.map(e => String(e.id));
+                const facturas = facturasAll.filter(f => idsEst.includes(String(f.idEstimacion)) && f.estatusSAT !== 'CANCELADO' && (f.tipo == 1 || f.tipo === 'FACTURA'));
+
+                // A. Totales Tabla (Footer)
+                // Neto = Monto - Amortizacion
+                const totalMonto = est.reduce((acc, e) => acc + safeFloat(e.monto), 0);
+                const totalAmort = est.reduce((acc, e) => acc + safeFloat(e.amortizacion), 0);
+                const totalNeto = totalMonto - totalAmort;
+                const totalIva = est.reduce((acc, e) => acc + safeFloat(e.iva), 0);
+                const totalTotal = est.reduce((acc, e) => acc + safeFloat(e.montoTotal), 0);
+
+                // B. Totales Tarjetas (Reglas Específicas)
+
+                // AUTORIZADO: Presupuesto
+                let autorizado = 0;
+                if (ultPres) {
+                    const field = entidad === 'CONSTRUCTORA' ? 'montoCapturado' : 'montoSupervision';
+                    const fallbackField = entidad === 'CONSTRUCTORA' ? 'monto' : 'montoSupervision';
+
+                    if (entidad === 'CONSTRUCTORA') {
+                        autorizado = (ultPres.montoCapturado !== null && !isNaN(parseFloat(ultPres.montoCapturado)))
+                            ? parseFloat(ultPres.montoCapturado)
+                            : safeFloat(ultPres.monto);
+                    } else {
+                        autorizado = safeFloat(ultPres.montoSupervision);
+                    }
+                }
+
+                // ESTIMADO: Suma del NETO de estimaciones (EXCEPTO ANTICIPO)
+                // Regla: Solo sumar Neto si tipo != 'ANTICIPO'
+                const estimado = est
+                    .filter(e => (e.tipo || '').toUpperCase() !== 'ANTICIPO')
+                    .reduce((acc, e) => acc + (safeFloat(e.monto) - safeFloat(e.amortizacion)), 0);
+
+                // EJERCIDO: Suma de todas las facturas vigentes (Total/Gross)
+                // Regla: "Tanto de anticipo y estimaciones (NETO)".
+                // Interpretación: Suma de importes de facturas. Usaremos Total Factura.
+                const ejercido = facturas.reduce((acc, f) => acc + safeFloat(f.monto), 0);
+
+                // AVANCE FISICO: Suma de todos los avances fisicos
+                const avFisico = est.reduce((acc, e) => acc + safeFloat(e.montoAvanceFisico), 0);
+
+                // POR EJERCER: Autorizado - Ejercido
+                const porEjercer = autorizado - ejercido;
+
+                return {
+                    totalNeto, totalIva, totalTotal,
+                    autorizado, estimado, ejercido, avFisico, porEjercer
+                };
+            };
+
+            const dataConst = calculateEntity('CONSTRUCTORA');
+            const dataSup = calculateEntity('SUPERVISION');
+
+            // --- C. ACTUALIZACION DOM (TABLAS FOOTER) ---
+            const updateFooter = (prefix, data) => {
+                if (dom.financiero[prefix].neto) dom.financiero[prefix].neto.textContent = _formatCurrency(data.totalNeto);
+                if (dom.financiero[prefix].iva) dom.financiero[prefix].iva.textContent = _formatCurrency(data.totalIva);
+                if (dom.financiero[prefix].total) dom.financiero[prefix].total.textContent = _formatCurrency(data.totalTotal);
+            };
+            updateFooter('resumen', dataConst);
+            updateFooter('resumenSupervision', dataSup);
+
+
+            // --- D. ACTUALIZACION DOM (TARJETAS + PROGRES BAR) ---
+            const updateCard = (elId, val, baseRef, colorClass) => {
+                const el = document.getElementById(elId);
+                if (!el) return;
+                el.textContent = _formatCurrency(val);
+
+                const cardBody = el.closest('.card-body');
+                if (!cardBody) return;
+
+                // 1. Porcentaje (Badge)
+                let badge = cardBody.querySelector('.pct-badge');
+                if (!badge) {
+                    badge = document.createElement('span');
+                    badge.className = 'pct-badge position-absolute top-0 end-0 m-2 badge bg-light text-dark border';
+                    badge.style.fontSize = '0.75rem';
+                    const card = el.closest('.card');
+                    if (card) {
+                        card.classList.add('position-relative');
+                        card.appendChild(badge);
+                    }
+                }
+
+                if (baseRef > 0 && val !== 0) {
+                    const pct = (val / baseRef) * 100;
+                    badge.textContent = pct.toFixed(1) + '%';
+                    badge.classList.remove('d-none');
+                } else {
+                    badge.classList.add('d-none');
+                }
+
+                // 2. Línea de Progreso (Bar)
+                let progressContainer = cardBody.querySelector('.card-progress-container');
+                if (!progressContainer) {
+                    progressContainer = document.createElement('div');
+                    progressContainer.className = 'card-progress-container mt-2';
+                    progressContainer.style.height = '4px';
+                    progressContainer.style.backgroundColor = '#e9ecef';
+                    progressContainer.style.borderRadius = '2px';
+                    progressContainer.style.overflow = 'hidden';
+
+                    const bar = document.createElement('div');
+                    bar.className = 'card-progress-bar h-100';
+                    bar.style.width = '0%';
+                    bar.style.transition = 'width 0.5s ease';
+
+                    progressContainer.appendChild(bar);
+                    cardBody.appendChild(progressContainer);
+                }
+
+                const bar = progressContainer.querySelector('.card-progress-bar');
+                if (bar) {
+                    // Set color based on passed class or inherit from card
+                    const mapColor = {
+                        'primary': '#0d6efd',
+                        'warning': '#ffc107',
+                        'success': '#198754',
+                        'secondary': '#6c757d',
+                        'info': '#0dcaf0',
+                        'purple': '#6f42c1'
+                    };
+                    bar.style.backgroundColor = mapColor[colorClass] || '#0d6efd';
+
+                    // Calc width
+                    let w = 0;
+                    // Logic: Autorizado is 100% of itself. Others relative to Autorizado.
+                    // Except Avance Fisico? Usually relative to Autorizado or logic.
+                    if (elId.includes('autorizado')) w = 100;
+                    else if (baseRef > 0) w = (val / baseRef) * 100;
+
+                    // Limit visual width to 100? or allow overflow? usually capped at 100 for visual bar
+                    if (w > 100) w = 100;
+                    if (w < 0) w = 0;
+
+                    bar.style.width = w + '%';
+                }
+            };
+
+            // Cards Constructora
+            const autoC = dataConst.autorizado;
+            updateCard('fin-autorizado', autoC, autoC, 'primary');
+            updateCard('fin-estimado', dataConst.estimado, autoC, 'warning');
+            updateCard('fin-ejercido', dataConst.ejercido, autoC, 'success');
+            updateCard('fin-avance-fisico', dataConst.avFisico, autoC, 'secondary');
+            updateCard('fin-por-ejercer', dataConst.porEjercer, autoC, 'purple');
+
+            // Cards Supervision
+            const autoS = dataSup.autorizado;
+            updateCard('fin-autorizado-sup', autoS, autoS, 'primary');
+            updateCard('fin-estimado-sup', dataSup.estimado, autoS, 'warning');
+            updateCard('fin-ejercido-sup', dataSup.ejercido, autoS, 'success');
+            updateCard('fin-avance-fisico-sup', dataSup.avFisico, autoS, 'secondary');
+            updateCard('fin-por-ejercer-sup', dataSup.porEjercer, autoS, 'purple');
+        }
+
+        function _renderContratistasSelector() {
+            const select = document.getElementById('select-contratista-main');
+            // Guardar valor actual si existe para persistir tras reload
+            const currentVal = select.value || (state.ui && state.ui.filterContratistaId) || '';
+
+            select.innerHTML = '';
+
+            // Opción "Todos"
+            const optAll = document.createElement('option');
+            optAll.value = '';
+            optAll.textContent = 'Todos los Contratistas';
+            select.appendChild(optAll);
+
+            // Usar 'state.data.relacionContratistas' 
+            const contratistas = state.data.relacionContratistas || [];
+
+            if (contratistas.length === 0) {
+                // Fallback si no hay relaciones explicitas? 
+                // Mejor mostrar placeholder
+                const optNone = document.createElement('option');
+                optNone.value = '';
+                optNone.textContent = 'Sin Contratistas Asignados';
+                optNone.disabled = true;
+                if (select.options.length > 0) select.options[0].textContent = 'Sin Contratistas Asignados';
+            } else {
+                contratistas.forEach(rel => {
+                    const opt = document.createElement('option');
+                    opt.value = rel.idEmpresa; // Usamos ID Empresa como filtro
+                    opt.textContent = `${rel.nombreEmpresa} ${rel.esVigente ? '(Vigente)' : '(Histórico)'}`;
+                    select.appendChild(opt);
+                });
+            }
+
+            // Restore selection
+            select.value = currentVal;
+
+            // Bind Event
+            select.onchange = (e) => {
+                _onContratistaFilterChange(e.target.value);
+            };
+        }
+
+        function _onContratistaFilterChange(idEmpresa) {
+            if (!state.ui) state.ui = {};
+            state.ui.filterContratistaId = idEmpresa;
+
+            // Re-renderizar solo tablas
+            _renderEntidadTable('CONSTRUCTORA', dom.financiero.bodyConstructora, dom.financiero.resumen);
+            // Supervision tambien? El user solo mostro la tabla constructora, pero tiene sentido filtrar todo si es por contratista?
+            // Normalmente supervision es interna, pero si esta vinculada a estimaciones de contratista... 
+            // Mejor aplicamos filtro a Constructora que es lo pedido.
+            // _renderEntidadTable('SUPERVISION', dom.financiero.bodySupervision, dom.financiero.resumenSupervision);
+        }
+
         function _renderFinanciero() {
+            // Populate selector first
+            _renderContratistasSelector();
+
             // Render CONSTRUCTORA
-            _renderEntidadTable('CONSTRUCTORA', dom.financiero.list, dom.financiero.resumen);
+            _renderEntidadTable('CONSTRUCTORA', dom.financiero.bodyConstructora, dom.financiero.resumen);
             // Render SUPERVISION
-            _renderEntidadTable('SUPERVISION', dom.financiero.listSupervision, dom.financiero.resumenSupervision);
+            _renderEntidadTable('SUPERVISION', dom.financiero.bodySupervision, dom.financiero.resumenSupervision);
 
             // Update Totals/Summaries
             _updateResumenFinanciero();
@@ -1915,121 +2060,500 @@
             if (!container) return;
             container.innerHTML = '';
 
+            // LOGICA DIFERENCIADA: SUPERVISION VS CONSTRUCTORA
+            if (entidad === 'SUPERVISION') {
+                _renderTableSupervisionNew(container);
+            } else {
+                _renderTableConstructora(container);
+            }
+
+            // BOTÓN "AGREGAR ESTIMACIÓN"
+            // Para Supervision, el boton abre el modal de vinculacion.
+            // Para Constructora, agrega directo.
+            // Validar presupuesto...
             const estimaciones = (state.data.estimaciones || [])
-                .filter(e => (e.entidad || 'CONSTRUCTORA').toUpperCase() === entidad)
+                .filter(e => (e.entidad || 'CONSTRUCTORA').toUpperCase() === entidad && e.estatusInterno !== 'CANCELADO');
+
+            const totalEstimado = estimaciones.reduce((sum, e) => sum + (parseFloat(e.montoTotal) || 0), 0);
+
+            let limitePresupuesto = 0;
+            if (entidad === 'CONSTRUCTORA') {
+                const ultPres = state.data.presupuesto ? state.data.presupuesto[state.data.presupuesto.length - 1] : null;
+                if (ultPres) {
+                    const mCapturado = parseFloat(ultPres.montoCapturado);
+                    limitePresupuesto = (!isNaN(mCapturado) && ultPres.montoCapturado !== null) ? mCapturado : (parseFloat(ultPres.monto) || 0);
+                }
+            } else {
+                const ultPres = state.data.presupuesto ? state.data.presupuesto[state.data.presupuesto.length - 1] : null;
+                limitePresupuesto = ultPres ? (parseFloat(ultPres.montoSupervision) || 0) : 0;
+            }
+            const presupuestoCubierto = limitePresupuesto > 0 && totalEstimado >= (limitePresupuesto - 1);
+
+            if (!presupuestoCubierto) {
+                const divAdd = document.createElement('div');
+                divAdd.className = 'mt-3 mb-4';
+                divAdd.innerHTML = `
+                    <button class="btn btn-outline-primary w-100 py-2 border-dashed shadow-sm d-flex align-items-center justify-content-center gap-2" 
+                        onclick="${entidad === 'SUPERVISION' ? 'ComunicadoDetalle._openModalVinculacion()' : `ComunicadoDetalle._addEstimacion('${entidad}')`}" 
+                        style="border-style: dashed !important; border-width: 2px;">
+                        <i class="bi bi-plus-circle-fill fs-5"></i>
+                        <span class="fw-bold">${entidad === 'SUPERVISION' ? 'VINCULAR UNA NUEVA ESTIMACION DEL CONTRATISTA' : 'AGREGAR NUEVA ESTIMACIÓN'}</span>
+                    </button>
+                `;
+                container.appendChild(divAdd);
+            }
+        }
+
+        async function _addEstimacion(entidad, idRelacionada = null) {
+            _setGlobalLoader(true, 'Creando nueva estimación...');
+            try {
+                const result = await serverCall('registrarEstimacion', state.id, entidad, idRelacionada);
+                // serverCall unwraps the response.data if success is true.
+                // So result IS the data (the created estimation object).
+                // If it failed, serverCall would have rejected.
+                if (result) {
+                    await _loadData(); // Recargar todo
+                    globalThis.showToast?.('Estimación creada correctamente', 'success');
+                } else {
+                    throw new Error('La respuesta del servidor fue vacía.');
+                }
+            } catch (e) {
+                console.error(e);
+                Swal.fire('Error', 'No se pudo crear la estimación: ' + e.message, 'error');
+            } finally {
+                _setGlobalLoader(false);
+            }
+        }
+
+        function _renderTableConstructora(container) {
+            let estimaciones = (state.data.estimaciones || [])
+                .filter(e => (e.entidad || 'CONSTRUCTORA').toUpperCase() === 'CONSTRUCTORA')
                 .sort((a, b) => {
                     const mapType = { 'ANTICIPO': 1, 'ESTIMACION': 2, 'FINIQUITO': 3 };
                     return (mapType[a.tipo] || 99) - (mapType[b.tipo] || 99) || (parseInt(a.numero) - parseInt(b.numero));
                 });
 
-            if (estimaciones.length === 0) {
-                container.innerHTML = `
-                    <div class="text-center text-muted py-5 border rounded bg-light mb-3">
-                        <i class="bi bi-folder2-open display-4 opacity-25"></i>
-                        <p class="mt-2 text-secondary">Sin estimaciones registradas</p>
-                    </div>`;
-            } else {
-                const table = document.createElement('table');
-                table.className = 'table table-hover align-middle mb-0 shadow-sm border rounded overflow-hidden';
-                table.style.fontSize = '0.85rem';
-
-                // HEADER
-                table.innerHTML = `
-                    <thead class="bg-light text-secondary small text-uppercase">
-                        <tr>
-                            <th style="width: 40px;"></th>
-                            <th style="width: 80px;">Tipo</th>
-                            <th style="width: 60px;">No.</th>
-                            <th>Fechas</th>
-                            <th class="text-end" style="width: 100px;">Av. Fis ($)</th>
-                            <th class="text-end" style="width: 110px;">Monto</th>
-                            <th class="text-end" style="width: 100px;">Amort.</th>
-                            <th class="text-end" style="width: 110px;">Neto</th>
-                            <th class="text-end" style="width: 100px;">IVA</th>
-                            <th class="text-end" style="width: 120px;">Total</th>
-                            <th class="text-center" style="width: 100px;">Estatus</th>
-                            <th class="text-end" style="width: 80px;">Acciones</th>
-                        </tr>
-                    </thead>
-                    <tbody class="bg-white"></tbody>
-                `;
-
-                const tbody = table.querySelector('tbody');
-                estimaciones.forEach(est => {
-                    // MAIN ROW (Estimacion)
-                    const trMain = _createEstimacionRow(est);
-                    tbody.appendChild(trMain);
-
-                    // DETAIL ROW (Container for Facturas)
-                    // Always created, toggled visible
-                    const trDetail = document.createElement('tr');
-                    trDetail.id = `detail-row-${est.id}`;
-                    trDetail.className = 'd-none bg-light bg-opacity-25 shadow-inner';
-
-                    const tdDetail = document.createElement('td');
-                    tdDetail.colSpan = 12;
-                    tdDetail.className = 'p-3 border-bottom';
-
-                    // Render Nested Facturas Table
-                    tdDetail.appendChild(_createNestedFacturasTable(est));
-
-                    trDetail.appendChild(tdDetail);
-                    tbody.appendChild(trDetail);
+            // APLICAR FILTRO DE CONTRATISTA
+            if (state.ui && state.ui.filterContratistaId) {
+                estimaciones = estimaciones.filter(e => {
+                    // Si no tiene idEmpresa, se asume huerfano o global. 
+                    // Pero si tiene, debe coincidir.
+                    if (!e.idEmpresa) return true;
+                    return String(e.idEmpresa) === String(state.ui.filterContratistaId);
                 });
-
-                const divWrapper = document.createElement('div');
-                divWrapper.appendChild(table);
-                container.appendChild(divWrapper);
             }
 
-            // ADD BUTTON (Organic)
-            const divAdd = document.createElement('div');
-            divAdd.className = 'text-center mt-2 pb-4';
-            divAdd.innerHTML = `
-                <button class="btn btn-link text-primary text-decoration-none" onclick="ComunicadoDetalle._addEstimacion('${entidad}')">
-                    <i class="bi bi-plus-circle me-1"></i> Agregar ${entidad === 'SUPERVISION' ? 'Supervisión' : 'Estimación'}
-                </button>
-            `;
-            container.appendChild(divAdd);
+            if (estimaciones.length === 0) {
+                container.innerHTML = `<div class="text-center text-muted py-5 border rounded bg-light mb-3">Sin estimaciones registradas</div>`;
+                return;
+            }
+
+            const table = _createTableSkeleton();
+            const tbody = table.querySelector('tbody');
+
+            estimaciones.forEach(est => {
+                _appendEstimacionRowPair(tbody, est);
+            });
+            container.appendChild(table);
         }
 
-        function _createEstimacionRow(est) {
+        function _renderTableSupervision(container) {
+            // 1. Obtener estimaciones SUPERVISION
+            const estSupervision = (state.data.estimaciones || [])
+                .filter(e => (e.entidad || 'CONSTRUCTORA').toUpperCase() === 'SUPERVISION');
+
+            // 2. Obtener estimaciones CONSTRUCTORA (Parents)
+            const estContratista = (state.data.estimaciones || [])
+                .filter(e => (e.entidad || 'CONSTRUCTORA').toUpperCase() === 'CONSTRUCTORA')
+                .sort((a, b) => {
+                    const mapType = { 'ANTICIPO': 1, 'ESTIMACION': 2, 'FINIQUITO': 3 };
+                    return (mapType[a.tipo] || 99) - (mapType[b.tipo] || 99) || (parseInt(a.numero) - parseInt(b.numero));
+                });
+
+            // 3. Crear Estructura de Tabla
+            const table = _createTableSkeleton();
+            const tbody = table.querySelector('tbody');
+
+            // 4. Renderizar por cada Contratista (Parent)
+            // Si la contratista NO tiene supervision, aun asi la mostramos para permitir agregarle una.
+            // Asi que iteramos sobre TODAS las contratistas disponibles.
+
+            // OJO: El usuario dice "mostrar datos de la estimacion de la contratista... Debajo un boton".
+            // Y si ya existe supervision? Mostrar la existente.
+
+            if (estContratista.length === 0 && estSupervision.length === 0) {
+                container.innerHTML = `<div class="text-center text-muted py-5 border rounded bg-light mb-3">Sin estimaciones registradas</div>`;
+                return;
+            }
+
+            estContratista.forEach(parentEst => {
+                // Render Parent Row (Readonly visual context)
+                const trParent = _createParentEstimacionRow(parentEst);
+                tbody.appendChild(trParent);
+
+                // Check for existing Supervision Children
+                const children = estSupervision.filter(s => String(s.idRelacionada || '') === String(parentEst.id));
+
+                // Si existe, mostrar
+                if (children.length > 0) {
+                    children.forEach(child => {
+                        _appendEstimacionRowPair(tbody, child, true); // true = indented
+                    });
+                } else {
+                    // Si NO existe, mostrar Boton "Agregar"
+                    // (O si queremos permitir multiples?) -> El usuario dijo "Agregar estimacion" debajor.
+                    // Asumiremos 1:1 por logica comun, pero el boton permite crear nueva.
+                    // Si ya hay una, quizas no queremos boton?
+                    // "Al dar click... se inserta el registro".
+                    // Mostraremos el boton SIEMPRE si queremos permitir N, o solo si children=0 si es 1:1.
+                    // Por ahora mostremos el boton SOLO si no hay hijos, para forzar 1:1 logico visual, 
+                    // a menos que sean estimaciones parciales.
+                    // Dejaremos el boton disponible siempre debajo para consistencia.
+
+                    const trBtnObj = document.createElement('tr');
+                    trBtnObj.className = 'border-bottom border-light';
+                    trBtnObj.innerHTML = `
+                       <td colspan="12" class="p-0">
+                           <div class="d-flex" style="background-color: #fcfcfc;">
+                                <div style="width: 40px;" class="border-end text-center pt-2">
+                                   <i class="bi bi-arrow-return-right text-muted opacity-50"></i>
+                                </div>
+                                <div class="flex-grow-1 p-2">
+                                   <button class="btn btn-sm btn-light text-primary border-dashed w-100 text-start ps-3"
+                                       onclick="ComunicadoDetalle._openModalCreacionSupervision('${parentEst.id}', '${parentEst.tipo}', '${parentEst.numero}')"
+                                       title="Agregar estimación de supervisión vinculada a esta estimación">
+                                       <i class="bi bi-plus-lg me-2"></i>Agregar Estimación de Supervisión
+                                   </button>
+                                </div>
+                           </div>
+                       </td>
+                    `;
+                    tbody.appendChild(trBtnObj);
+                }
+            });
+
+            // 5. Renderizar Huerfanas (Supervision sin idVinculada o con id invalido)
+            const orphans = estSupervision.filter(s => !s.idRelacionada || !estContratista.find(c => String(c.id) === String(s.idRelacionada)));
+            if (orphans.length > 0) {
+                // Header o separador para huerfanas
+                const trSep = document.createElement('tr');
+                trSep.className = 'table-warning';
+                trSep.innerHTML = `<td colspan="12" class="text-center small fw-bold text-dark">ESTIMACIONES DE SUPERVISIÓN SIN VINCULAR</td>`;
+                tbody.appendChild(trSep);
+
+                orphans.forEach(child => {
+                    _appendEstimacionRowPair(tbody, child, false);
+                });
+            }
+
+            container.appendChild(table);
+        }
+
+        function _createTableSkeleton() {
+            const table = document.createElement('table');
+            table.className = 'table table-hover align-middle mb-0 shadow-sm border rounded overflow-hidden';
+            table.style.fontSize = '0.85rem';
+            table.innerHTML = `
+                <thead class="bg-light text-secondary small text-uppercase">
+                    <tr>
+                        <th style="width: 40px;"></th>
+                        <th style="width: 80px;">Tipo</th>
+                        <th style="width: 60px;">No.</th>
+                        <th style="width: 140px;">Fecha Corte</th>
+                        <th class="text-end" style="width: 140px;">Av. Fis ($)</th>
+                        <th class="text-end" style="width: 140px;">Monto</th>
+                        <th class="text-end" style="width: 140px;">Amort.</th>
+                        <th class="text-end" style="width: 140px;">Neto</th>
+                        <th class="text-end" style="width: 140px;">IVA</th>
+                        <th class="text-end" style="width: 150px;">Total</th>
+                        <th class="text-center" style="width: 100px;">Estatus</th>
+                        <th class="text-end" style="width: 80px;">Acciones</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white"></tbody>
+            `;
+            return table;
+        }
+
+        function _appendEstimacionRowPair(tbody, est, isIndented = false) {
+            const facturasAsociadas = (state.data.facturasEstimaciones || [])
+                .filter(f => String(f.idEstimacion) === String(est.id) && f.estatusSAT !== 'CANCELADO');
+            const tieneFacturas = facturasAsociadas.length > 0;
+
+            const trMain = _createEstimacionRow(est, tieneFacturas, isIndented);
+            tbody.appendChild(trMain);
+
+            const trDetail = document.createElement('tr');
+            trDetail.id = `detail-row-${est.id}`;
+            trDetail.className = 'd-none bg-white border-bottom';
+            const tdDetail = document.createElement('td');
+            tdDetail.colSpan = 12;
+            tdDetail.className = 'p-0';
+            tdDetail.appendChild(_createNestedFacturasTable(est));
+            trDetail.appendChild(tdDetail);
+            tbody.appendChild(trDetail);
+        }
+
+        function _createParentEstimacionRow(est) {
             const tr = document.createElement('tr');
+            tr.className = 'table-light border-bottom border-2';
+            tr.style.backgroundColor = '#f8f9fa';
+
+            // Un row de solo lectura que actua como header
+            // Mostramos datos basicos
+            const badgeResult = _getStatusBadge(est.estatusInterno);
+
+            tr.innerHTML = `
+                <td class="text-center text-muted"><i class="bi bi-link-45deg fs-5" title="Estimación Contratista Vinculada"></i></td>
+                <td><span class="badge bg-secondary bg-opacity-10 text-secondary border border-secondary border-opacity-25">${est.tipo}</span></td>
+                <td class="fw-bold text-muted text-center">${est.numero}</td>
+                <td class="text-muted small">${_formatDateISO(est.fechaCorte)}</td>
+                <td class="text-end font-monospace text-muted">${_formatCurrency(est.montoAvanceFisico)}</td>
+                <td class="text-end font-monospace fw-bold text-muted">${_formatCurrency(est.monto)}</td>
+                <td class="text-end font-monospace text-muted">${_formatCurrency(est.amortizacion)}</td>
+                <td class="text-end font-monospace text-muted">${_formatCurrency((parseFloat(est.monto) || 0) - (parseFloat(est.amortizacion) || 0))}</td>
+                <td class="text-end font-monospace text-muted">${_formatCurrency(est.iva)}</td>
+                <td class="text-end font-monospace fw-bold text-muted">${_formatCurrency(est.montoTotal)}</td>
+                <td class="text-center opacity-50 text-scale-75">${badgeResult}</td>
+                <td class="text-end text-muted small fst-italic">Contratista</td>
+            `;
+            return tr;
+        }
+
+        async function _openModalVinculacion() {
+            // 1. Obtener estimaciones de contratista disponibles (que no esten canceladas)
+            // Opcional: Filtrar las que ya estan vinculadas? El usuario no especifico 1:1 estricto, pero asumiremos que pueden reutilizarse o no.
+            // Para "Agregar nueva linea indentada", sugiere que seleccionas una contratista y le creas una supervision.
+
+            const estimacionesContratista = (state.data.estimaciones || [])
+                .filter(e => (e.entidad || 'CONSTRUCTORA') === 'CONSTRUCTORA' && e.estatusInterno !== 'CANCELADO')
+                .sort((a, b) => {
+                    // Ordenar mas recientes primero
+                    const mapType = { 'ANTICIPO': 1, 'ESTIMACION': 2, 'FINIQUITO': 3 };
+                    return (mapType[a.tipo] || 99) - (mapType[b.tipo] || 99) || (parseInt(a.numero) - parseInt(b.numero));
+                });
+
+            const container = document.getElementById('lista-vinculacion-estimaciones');
+            const btnConfirm = document.getElementById('btn-confirmar-vinculacion');
+
+            container.innerHTML = '';
+            btnConfirm.disabled = true;
+            btnConfirm.onclick = () => _confirmarVinculacion();
+
+            if (estimacionesContratista.length === 0) {
+                container.innerHTML = `<div class="p-3 text-center text-muted">No hay estimaciones de contratista disponibles.</div>`;
+                return;
+            }
+
+            estimacionesContratista.forEach(est => {
+                const item = document.createElement('label');
+                item.className = 'list-group-item list-group-item-action d-flex gap-3 align-items-center cursor-pointer';
+                item.style.borderLeft = '4px solid transparent';
+
+                // Logic visual selected
+                item.onclick = () => {
+                    document.querySelectorAll('#lista-vinculacion-estimaciones .list-group-item').forEach(el => {
+                        el.classList.remove('active', 'border-primary');
+                        el.style.borderLeftColor = 'transparent';
+                    });
+                    item.classList.add('active', 'border-primary');
+                    item.style.borderLeftColor = '#0d6efd';
+                    btnConfirm.disabled = false;
+                    btnConfirm.dataset.id = est.id;
+                };
+
+                const neto = (parseFloat(est.monto) || 0) - (parseFloat(est.amortizacion) || 0);
+
+                item.innerHTML = `
+                    <input class="form-check-input flex-shrink-0" type="radio" name="radioVinculacion" value="${est.id}" style="display:none;">
+                    <div class="d-flex w-100 justify-content-between align-items-center">
+                        <div>
+                            <div class="mb-1 d-flex align-items-center gap-2">
+                                <span class="badge bg-light text-dark border">${est.tipo} ${est.numero}</span>
+                                <small class="text-muted">${_formatDateISO(est.fechaCorte)}</small>
+                            </div>
+                            <small class="text-muted d-block">Monto Neto: <span class="fw-bold text-dark">${_formatCurrency(neto)}</span></small>
+                        </div>
+                        <i class="bi bi-chevron-right text-muted"></i>
+                    </div>
+                `;
+                container.appendChild(item);
+            });
+
+            const modal = new bootstrap.Modal(document.getElementById('modalVincularEstimacion'));
+            modal.show();
+        }
+
+        function _openModalCreacionSupervision(idParent, typeParent, numParent) {
+            const btn = document.getElementById('btn-confirmar-vinculacion');
+            btn.dataset.id = idParent;
+
+            // Setup Modal UI for distinct feel or just reuse
+            // For "Agregar" logic, we really just need to set the parent ID and confirm creation.
+            // But the user asked for a modal to choose "Anticipo / Estimacion / Finiquito".
+
+            // We can reuse the "Vincular" modal structure OR create a simpler one.
+            // The user said: "Se abre un modal para elegir tipo: Anticipo / Estimacion / Finiquito".
+            // Currently _openModalVinculacion lists *existing* contractor estimates.
+
+            // This needs a NEW modal or a repurposed one?
+            // "Al dar click... Se abre un modal para elegir tipo... En ese momento se inserta".
+
+            // Let's invoke a Swal with inputs or use a custom modal.
+            // For consistency with "new" features, Swal is easier if we don't have a template.
+            // Or we can repurpose the existing "modalVincularEstimacion" if we modify it?? No, that is for selecting a *contractor* estimate.
+
+            // We'll use Swal for the Type Selection as it's cleaner than injecting a whole new modal HTML if none exists.
+            // Or better: Use the "Agregar Estimacion" logic but force the Type.
+
+            // BUT wait, "registrarEstimacion" uses defaults.
+            // We should ask the user for the Type.
+
+            Swal.fire({
+                title: `Nueva Estimación de Supervisión`,
+                html: `
+                    <p class="text-muted small">Vinculada a Contratista: <b>${typeParent} ${numParent}</b></p>
+                    <div class="d-grid gap-2 mt-3">
+                         <button class="btn btn-outline-primary" onclick="Swal.clickConfirm(); globalThis._tempType='ANTICIPO'">ANTICIPO</button>
+                         <button class="btn btn-outline-primary" onclick="Swal.clickConfirm(); globalThis._tempType='ESTIMACION'">ESTIMACIÓN</button>
+                         <button class="btn btn-outline-primary" onclick="Swal.clickConfirm(); globalThis._tempType='FINIQUITO'">FINIQUITO</button>
+                    </div>
+                 `,
+                showConfirmButton: false,
+                showCancelButton: true,
+                cancelButtonText: 'Cancelar'
+            }).then((result) => {
+                if (result.isConfirmed && globalThis._tempType) {
+                    // Call register with explicit type if supported, OR register then update.
+                    // registrarEstimacion(idComunicado, entidad, idRelacionada) -> creates "ESTIMACION" by default.
+                    // IMPORTANT: The current registrarEstimacion sets 'tipo' = 'ESTIMACION'.
+                    // We need to update it immediately or allow passing type.
+                    // Backend signature: registrarEstimacion(idComunicado, entidad, idRelacionada)
+                    // It does NOT take type.
+
+                    // Workaround: Create then Update.
+                    _createSupervisionWithType(idParent, globalThis._tempType);
+                }
+            });
+        }
+
+        async function _createSupervisionWithType(idRelacionada, tipo) {
+            _setGlobalLoader(true, 'Creando nueva estimación...');
+            try {
+                // 1. Create default
+                const result = await serverCall('registrarEstimacion', state.id, 'SUPERVISION', idRelacionada);
+                if (result) {
+                    // 2. Update Type if different from default
+                    // Default is ESTIMACION. If user chose ANTICIPO or FINIQUITO, update.
+                    if (tipo !== 'ESTIMACION') {
+                        const updatePayload = { tipo: tipo };
+                        // We can also reset numbering if needed? 
+                        // "registrarEstimacion" calculated number based on "ESTIMACION".
+                        // If we change to ANTICIPO, maybe number should be A?
+
+                        // For now just update type.
+                        await serverCall('actualizarRegistro', 'estimaciones', result.id, updatePayload);
+                    }
+
+                    await _loadData();
+                    globalThis.showToast?.('Estimación de supervisión creada correctamente', 'success');
+                } else {
+                    throw new Error('La respuesta del servidor fue vacía.');
+                }
+            } catch (e) {
+                console.error(e);
+                Swal.fire('Error', 'No se pudo crear: ' + e.message, 'error');
+            } finally {
+                _setGlobalLoader(false);
+            }
+        }
+
+        async function _confirmarVinculacion() {
+            const btn = document.getElementById('btn-confirmar-vinculacion');
+            const idRelacionada = btn.dataset.id;
+            if (!idRelacionada) return;
+
+            // Cerrar modal
+            const modalEl = document.getElementById('modalVincularEstimacion');
+            const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+            modal.hide();
+
+            // Crear Estimacion de Supervision vinculada
+            // Reutilizamos _addEstimacionLogic
+            await _addEstimacion('SUPERVISION', idRelacionada);
+        }
+
+        function _createEstimacionRow(est, isReadOnly = false, isIndented = false) {
+            const tr = document.createElement('tr');
+            tr.id = `row-${est.id}`;
             if (est._isNew) tr.classList.add('table-warning');
 
+            // Allow clicking row to select (Master-Detail), excluding interactive elements
+            tr.style.cursor = 'pointer';
+            tr.onclick = (e) => {
+                if (['INPUT', 'BUTTON', 'A', 'I'].includes(e.target.tagName)) return;
+                ComunicadoDetalle.selectEstimacion(est.id, est.entidad);
+                // For nested/indented rows (Supervision), also toggle details automatically
+                if (isIndented) {
+                    ComunicadoDetalle.toggleInfo(est.id);
+                }
+            };
+
+            if (state.ui.selectedEstimacionId === est.id) {
+                tr.classList.add('table-active'); // Add active class if selected
+            }
+
             // Validation Logic for Inputs
-            // Strict workflow: Temp -> Editable. Saved -> Editable if active.
+            // Strict workflow: Temp -> Editable. Saved -> Editable if active AND not readOnly (e.g. has invoices).
             const isSaved = !String(est.id).startsWith('temp-');
+
+            // Si hay facturas (isReadOnly = true), se bloquea CASI todo excepto quizás cosas no críticas.
+            // Pero la regla usual es: Si tiene facturas, bloquear montos.
+
             const canEdit = isSaved && est.estatusInterno !== 'PAGADO' && est.estatusInterno !== 'CANCELADO';
-            const editableClass = (est.estatusInterno === 'PENDIENTE' || String(est.id).startsWith('temp-')) ? 'form-control-ghost' : 'form-control-plaintext';
-            const readonlyAttr = (est.estatusInterno === 'PENDIENTE' || String(est.id).startsWith('temp-')) ? '' : 'readonly';
+
+            // Definir si está readonly basado en estatus O si isReadOnly (flag externo) es true
+            const isLocked = isReadOnly || (!canEdit && !String(est.id).startsWith('temp-')); // Simplificación
+
+            // Clases
+            const editableClass = (isLocked && isSaved) ? 'form-control-plaintext' : 'form-control-ghost';
+            const readonlyAttr = (isLocked && isSaved) ? 'readonly' : '';
+
+            // Función helper para atributos especificos (por si queremos ser granulares)
+            const getAttr = (isRead) => isRead ? 'readonly' : '';
+            // Si llamamos con isReadOnly=true, forzamos bloqueo. Si no, usamos logica de estatus.
+            const forceRead = isReadOnly || (!String(est.id).startsWith('temp-') && est.estatusInterno !== 'PENDIENTE');
 
             const badgeResult = _getStatusBadge(est.estatusInterno);
 
             tr.innerHTML = `
                 <td class="text-center text-muted">
-                    <i class="bi bi-caret-right custom-caret cursor-pointer" onclick="ComunicadoDetalle.toggleInfo('${est.id}')" title="Ver Facturas"></i>
+                   ${isIndented
+                    ? `<i class="bi bi-arrow-return-right text-primary me-1"></i>
+                        <i class="bi bi-caret-right custom-caret cursor-pointer" onclick="ComunicadoDetalle.toggleInfo('${est.id}')" title="Ver Facturas"></i>`
+                    : `<i class="bi bi-caret-right custom-caret cursor-pointer" onclick="ComunicadoDetalle.toggleInfo('${est.id}')" title="Ver Facturas"></i>`
+                }
                 </td>
                 <td><span class="badge bg-primary bg-opacity-10 text-primary border border-primary border-opacity-25">${est.tipo}</span></td>
                 <td class="fw-bold text-dark text-center">${est.numero}</td>
                 <td>
-                    <input type="date" class="${editableClass} small p-1" value="${est.fechaCorte}" ${readonlyAttr} 
+                    <input type="date" class="${editableClass} small p-1" value="${_formatDateISO(est.fechaCorte)}" ${readonlyAttr} 
                         onchange="ComunicadoDetalle.updateEstimacion('${est.id}', 'fechaCorte', this.value)">
                 </td>
                 <td>
-                    <input type="text" class="${editableClass} text-end font-monospace currency-input" value="${_formatCurrency(est.montoAvanceFisico, false)}" ${readonlyAttr}
-                        onchange="ComunicadoDetalle.updateEstimacion('${est.id}', 'montoAvanceFisico', this.value)" placeholder="0.00">
+                    <input type="text" class="${editableClass} text-end font-monospace currency-input text-muted" value="${_formatCurrency(est.montoAvanceFisico)}" ${readonlyAttr}
+                        onchange="ComunicadoDetalle.updateEstimacion('${est.id}', 'montoAvanceFisico', this.value)" placeholder="$0.00">
                 </td>
                 <td>
-                    <input type="text" class="${editableClass} text-end font-monospace currency-input fw-bold" value="${_formatCurrency(est.monto, false)}" ${readonlyAttr}
-                        onchange="ComunicadoDetalle.updateEstimacion('${est.id}', 'monto', this.value)" placeholder="0.00">
+                    <input type="text" class="${editableClass} text-end font-monospace currency-input fw-bold" value="${_formatCurrency(est.monto)}" ${readonlyAttr}
+                        onchange="ComunicadoDetalle.updateEstimacion('${est.id}', 'monto', this.value)" placeholder="$0.00">
                 </td>
                 <td>
-                    <input type="text" class="${editableClass} text-end font-monospace currency-input text-danger" value="${_formatCurrency(est.amortizacion, false)}" ${readonlyAttr}
-                        onchange="ComunicadoDetalle.updateEstimacion('${est.id}', 'amortizacion', this.value)" placeholder="0.00">
+                    <input type="text" class="${editableClass} text-end font-monospace currency-input text-danger" value="${_formatCurrency(est.amortizacion)}" ${readonlyAttr}
+                        onchange="ComunicadoDetalle.updateEstimacion('${est.id}', 'amortizacion', this.value)" placeholder="$0.00">
                 </td>
-                <td class="text-end font-monospace" id="input-neto-${est.id}">${_formatCurrency(parseFloat(est.montoNeto))}</td>
-                <td class="text-end font-monospace text-muted small" id="input-iva-${est.id}">${_formatCurrency(est.iva)}</td>
+                <td class="text-end font-monospace" id="input-neto-${est.id}">${_formatCurrency((parseFloat(est.monto) || 0) - (parseFloat(est.amortizacion) || 0))}</td>
+                <td class="text-end font-monospace" id="input-iva-${est.id}">${_formatCurrency(est.iva)}</td>
                 <td class="text-end font-monospace fw-bold text-primary" id="input-total-${est.id}">${_formatCurrency(est.montoTotal)}</td>
                 <td class="text-center">${badgeResult}</td>
                 <td class="text-end">
@@ -2048,107 +2572,255 @@
             return tr;
         }
 
+        /**
+         * Renderiza la tabla de facturas anidada dentro de una estimación.
+         * Estructura: Estimación > Factura (Tipo 1) > Complemento (Tipo 2)
+         */
         function _createNestedFacturasTable(est) {
             const container = document.createElement('div');
-            container.className = 'ps-4 border-start border-3 border-primary border-opacity-25 ms-2';
+            container.className = 'ms-3 mt-2 mb-3 border-start border-3 border-secondary border-opacity-25 ps-2 pe-2';
 
-            // Logic: Can add facturas?
             const isTemp = String(est.id).startsWith('temp-');
             const totalEst = parseFloat(est.montoTotal) || 0;
-            const facturas = (state.data.facturasEstimaciones || []).filter(f => String(f.idEstimacion) === String(est.id));
 
-            // Filter out complements for the base list
-            const facturasBase = facturas.filter(f => String(f.tipo) !== '2');
-            const totalFacturado = facturasBase.filter(f => f.estatusSAT !== 'CANCELADO').reduce((sum, f) => sum + (parseFloat(f.total) || 0), 0);
+            const allRecords = (state.data.facturasEstimaciones || [])
+                .filter(f => String(f.idEstimacion) === String(est.id));
 
-            // Limit Rule: If full coverage, no more facturas
-            const isLiquidada = totalEst > 0 && totalFacturado >= (totalEst - 0.01);
+            const facturasPadre = allRecords.filter(f => f.tipo == 1 || f.tipo === 'FACTURA');
+            const complementosTotal = allRecords.filter(f => f.tipo == 2 || f.tipo === 'COMPLEMENTO');
 
-            let html = `
-                <h6 class="text-uppercase text-secondary fs-8 fw-bold mb-2">
-                    <i class="bi bi-receipt-cutoff me-1"></i> Facturas Asociadas
-                </h6>
+            const totalFacturadoVigente = facturasPadre
+                .filter(f => f.estatusSAT !== 'CANCELADO')
+                .reduce((sum, f) => sum + (parseFloat(f.total) || 0), 0);
+
+            const isLiquidada = totalEst > 0 && totalFacturadoVigente >= (totalEst - 1.00);
+
+            // Header simple
+            let htmlHeader = `
+                <div class="d-flex align-items-center mb-2">
+                    <span class="badge bg-light text-dark border me-2" style="font-size: 0.7rem;">FACTURACIÓN</span>
+                    <hr class="flex-grow-1 my-0 border-secondary opacity-25">
+                </div>
             `;
 
-            if (facturasBase.length > 0) {
-                html += `<table class="table table-sm table-borderless align-middle mb-2">
-                    <thead class="text-muted small border-bottom">
+            if (facturasPadre.length > 0) {
+                const table = document.createElement('table');
+                table.className = 'table table-sm table-hover mb-0';
+                table.style.fontSize = '0.8rem';
+
+                table.innerHTML = `
+                    <thead class="text-secondary bg-light bg-opacity-50" style="font-size: 0.7rem;">
                         <tr>
-                            <th width="30"></th>
-                            <th width="100">Folio</th>
-                            <th width="100">Fecha</th>
-                            <th class="text-end">Monto</th>
-                            <th class="text-end">IVA</th>
-                            <th class="text-end">Total</th>
-                            <th width="100" class="text-center">Estatus</th>
-                            <th width="80"></th>
+                            <th style="width: 30px;" class="text-center"></th>
+                            <th style="width: 200px;">Folio</th>
+                            <th style="width: 100px;">Fecha</th>
+                            <th class="text-end" style="width: 140px;">Monto</th>
+                            <th class="text-end" style="width: 140px;">IVA</th>
+                            <th class="text-end" style="width: 140px;">Total</th>
+                            <th class="text-center" style="width: 90px;">Estatus</th>
+                            <th class="text-end" style="width: 80px;">Acciones</th>
                         </tr>
                     </thead>
-                    <tbody id="tbody-facturas-${est.id}">`;
-            } else {
-                html += `<div class="text-muted small fst-italic mb-2 ps-2">No hay facturas registradas.</div>`;
-            }
-
-            container.innerHTML = html;
-
-            const table = container.querySelector('table');
-            if (table) {
+                    <tbody></tbody>
+                `;
                 const tbody = table.querySelector('tbody');
-                facturasBase.forEach(f => {
-                    tbody.appendChild(_createFacturaRow(f));
-                    // Append complements container logic here if needed (e.g. indented complements)
+
+                facturasPadre.forEach(f => {
+                    // Hijos directos
+                    const misComplementos = complementosTotal
+                        .filter(c => String(c.idFacturaRelacionada) === String(f.id))
+                        .sort((a, b) => parseInt(a.id) - parseInt(b.id)); // Ordenar por ID para saber cual es el ultimo
+
+                    const tieneHijos = misComplementos.length > 0;
+
+                    // 1. RENDERIZAR FACTURA (PADRE)
+                    // Lógica bloqueo: Si tiene hijos (complementos), se bloquean importes.
+                    tbody.appendChild(_createFacturaRow(f, misComplementos, false, tieneHijos));
+
+                    // 2. RENDERIZAR COMPLEMENTOS (HIJOS)
+                    misComplementos.forEach((comp, index) => {
+                        // Lógica bloqueo: Solo el ÚLTIMO complemento es editable
+                        const isLast = index === misComplementos.length - 1;
+
+                        const trHijo = _createFacturaRow(comp, [], true, false, isLast);
+                        trHijo.classList.add(`child-row-${f.id}`);
+                        trHijo.style.display = 'none';
+                        tbody.appendChild(trHijo);
+                    });
+
+                    // 3. BOTÓN "AGREGAR COMPLEMENTO" (Dentro del acordeón, al final de la lista)
+                    if (f.estatusSAT !== 'CANCELADO' && !String(f.id).startsWith('temp-')) {
+                        const pagado = misComplementos
+                            .filter(c => c.estatusSAT !== 'CANCELADO')
+                            .reduce((sum, c) => sum + (parseFloat(c.total) || 0), 0);
+                        const saldo = (parseFloat(f.total) || 0) - pagado;
+
+                        if (saldo > 0.01) {
+                            const trBtn = document.createElement('tr');
+                            trBtn.className = `child-row-${f.id}`; // Se oculta/muestra con el padre
+                            trBtn.style.display = 'none';
+                            trBtn.innerHTML = `
+                                <td colspan="8" class="p-0 border-0">
+                                    <button class="btn btn-sm btn-link w-100 text-decoration-none text-info py-2 bg-light border-bottom border-light" 
+                                        onclick="ComunicadoDetalle.registrarComplemento('${f.id}')"
+                                        style="font-size: 0.75rem; border-radius: 0;">
+                                        <i class="bi bi-plus-lg me-1"></i>Agregar Complemento de Pago (Saldo: $${_formatCurrency(saldo)})
+                                    </button>
+                                </td>
+                             `;
+                            tbody.appendChild(trBtn);
+                        }
+                    }
                 });
+
+                const cardTable = document.createElement('div');
+                cardTable.className = 'card border-0 shadow-sm';
+                cardTable.appendChild(table);
+
+                const wrapper = document.createElement('div');
+                wrapper.innerHTML = htmlHeader;
+                wrapper.appendChild(cardTable);
+
+                container.innerHTML = '';
+                container.appendChild(wrapper);
+
+            } else {
+                container.innerHTML = htmlHeader + `<div class="text-muted small fst-italic ps-2 py-2">Sin facturas registradas.</div>`;
             }
 
-            // ADD BUTTON LOGIC
+            // BOTÓN "REGISTRAR FACTURA" ESTÉTICO Y FULL-WIDTH
             if (!isLiquidada && !isTemp) {
-                const btnAdd = document.createElement('button');
-                btnAdd.className = 'btn btn-sm btn-outline-primary border-dashed w-100 mt-1';
-                btnAdd.innerHTML = `<i class="bi bi-plus-lg me-1"></i> Agregar Factura`;
-                btnAdd.onclick = () => addFactura(est.id); // Passing ID explicitly
-                container.appendChild(btnAdd);
-            } else if (isTemp) {
-                const alert = document.createElement('div');
-                alert.className = 'text-warning small fst-italic mt-1';
-                alert.innerHTML = `<i class="bi bi-lock me-1"></i> Guarda la estimación para agregar facturas.`;
-                container.appendChild(alert);
+                const btnContainer = document.createElement('div');
+                btnContainer.className = 'mt-3';
+                btnContainer.innerHTML = `
+                    <button class="btn btn-outline-secondary w-100 py-2 border-dashed d-flex align-items-center justify-content-center gap-2" 
+                        onclick="ComunicadoDetalle.addFactura('${est.id}')"
+                        style="border-style: dashed !important;">
+                        <i class="bi bi-receipt me-1"></i>
+                        <span class="fw-bold small">REGISTRAR FACTURA</span>
+                    </button>
+                `;
+                container.appendChild(btnContainer);
             }
-
             return container;
         }
 
-        function _createFacturaRow(f) {
+        /**
+         * @param {Object} f - Objeto Factura o Complemento
+         * @param {Array} hijosContext - Lista de hijos (para facturas)
+         * @param {Boolean} isComplemento - Si es tipo Complemento
+         * @param {Boolean} hasChildren - Si tiene hijos (para mostrar acordeón)
+         * @param {Boolean} isLastComplemento - Si es el último complemento (para permitir edición)
+         */
+        function _createFacturaRow(f, hijosContext = [], isComplemento = false, hasChildren = false, isLastComplemento = false) {
             const tr = document.createElement('tr');
             const isTemp = String(f.id).startsWith('temp-');
-            const editableClass = isTemp ? 'form-control-sm border-bottom border-0 bg-transparent' : 'form-control-plaintext form-control-sm';
+
+            // --- ESTILOS VISUALES MEJORADOS ---
+            // Distribuir mejor: Complemento debe verse indentado pero alineado en columnas
+            tr.className = isComplemento ? 'table-light' : ''; // Background suave
+
+            let iconHtml = '';
+            let paddingLeft = isComplemento ? '35px' : '5px';
+
+            if (isComplemento) {
+                // Icono flecha "enter" para indicar anidación
+                iconHtml = `<i class="bi bi-arrow-return-right text-info fs-6"></i>`;
+            } else {
+                if (!isTemp && f.estatusSAT !== 'CANCELADO') {
+                    // Botón toggle más limpio
+                    iconHtml = `
+                        <a href="javascript:void(0)" class="text-decoration-none text-primary toggle-btn d-inline-block transition-transform" 
+                           onclick="toggleChildRows('${f.id}', this)" style="transition: transform 0.2s;">
+                           <i class="bi bi-${hasChildren ? 'plus-square-fill' : 'plus-square'} fs-6"></i>
+                        </a>`;
+                } else {
+                    iconHtml = `<i class="bi bi-file-earmark-text text-muted opacity-50"></i>`;
+                }
+            }
+
+            // --- LÓGICA DE EDICIÓN (READONLY) ---
+            // Regla 1: Factura (Importes) -> Solo editable si NO tiene complementos.
+            // Regla 2: Complemento -> Solo editable si ES el último.
+
+            let isReadOnlyAmount = false;
+            let isReadOnlyData = false; // Para folio/fecha
+
+            if (!isTemp) {
+                if (isComplemento) {
+                    // Si NO es el último complemento, todo bloqueado
+                    if (!isLastComplemento) {
+                        isReadOnlyAmount = true;
+                        isReadOnlyData = true;
+                    }
+                } else {
+                    // Es Factura. Si TIENE complementos (hijos), importes bloqueados.
+                    if (hasChildren) {
+                        isReadOnlyAmount = true;
+                        // Folio y Fecha suelen poder editarse (corregir error de dedo) aunque tenga pagos, 
+                        // pero si quieres estricto: isReadOnlyData = true;
+                    }
+                }
+            }
+
+            const classBase = 'form-control-plaintext form-control-sm px-1 shadow-none';
+            const classEdit = 'form-control form-control-sm border-bottom border-0 rounded-0 bg-transparent px-1 shadow-none';
+
+            // Función helper para clases
+            const getCls = (isRead) => isRead ? classBase : classEdit;
+            const getAttr = (isRead) => isRead ? 'readonly' : '';
 
             tr.innerHTML = `
-                <td class="text-center">
-                    <i class="bi bi-caret-right text-muted cursor-pointer small" style="opacity:0.3"></i>
+                <td class="text-center align-middle">
+                    ${iconHtml}
                 </td>
-                <td>
-                    <input type="text" class="${editableClass} fw-bold text-dark" value="${f.folioFactura || ''}" 
-                        onchange="ComunicadoDetalle.updateFactura('${f.id}', 'folioFactura', this.value)" placeholder="Folio">
+                <td class="align-middle">
+                    <div class="d-flex align-items-center" style="padding-left: ${isComplemento ? '25px' : '0'};">
+                        <input type="text" class="${getCls(isReadOnlyData)} fw-bold ${isComplemento ? 'text-secondary font-italic' : 'text-dark'}" 
+                            value="${f.folioFactura || ''}" 
+                            onchange="ComunicadoDetalle.updateFactura('${f.id}', 'folioFactura', this.value)" 
+                            placeholder="Folio" ${getAttr(isReadOnlyData)}>
+                    </div>
                 </td>
-                <td>
-                    <input type="date" class="${editableClass} text-muted" value="${_formatDateISO(f.fecha)}" 
-                        onchange="ComunicadoDetalle.updateFactura('${f.id}', 'fecha', this.value)">
+                <td class="align-middle">
+                    <input type="date" class="${getCls(isReadOnlyData)} text-muted small" value="${_formatDateISO(f.fecha)}" 
+                        onchange="ComunicadoDetalle.updateFactura('${f.id}', 'fecha', this.value)" ${getAttr(isReadOnlyData)}>
                 </td>
-                <td>
-                    <input type="text" class="${editableClass} text-end currency-input" value="${_formatCurrency(f.monto, false)}" 
-                        onchange="ComunicadoDetalle.updateFactura('${f.id}', 'monto', this.value)">
+                <td class="align-middle">
+                    <input type="text" class="${getCls(isReadOnlyAmount)} text-end currency-input font-monospace text-dark" 
+                        value="${_formatCurrency(f.monto)}" 
+                        onchange="ComunicadoDetalle.updateFactura('${f.id}', 'monto', this.value)" ${getAttr(isReadOnlyAmount)}>
                 </td>
-                <td class="text-end small text-muted">${_formatCurrency(f.iva)}</td>
-                <td class="text-end fw-bold">${_formatCurrency(f.total)}</td>
-                <td class="text-center"><span class="badge ${f.estatusSAT === 'CANCELADO' ? 'bg-danger' : 'bg-success'} bg-opacity-75" style="font-size:0.7em">${f.estatusSAT}</span></td>
-                <td class="text-end">
-                    <button class="btn-icon text-success small me-1" onclick="ComunicadoDetalle.saveFactura('${f.id}')" ${isTemp || f._modified ? '' : 'disabled'}>
-                        <i class="bi bi-check-lg"></i>
-                    </button>
-                    ${isTemp ? `
-                    <button class="btn-icon text-danger small" onclick="ComunicadoDetalle.removeFactura('${f.id}')">
-                        <i class="bi bi-x"></i>
-                    </button>` : ''}
+                <td class="align-middle">
+                    <input type="text" class="form-control-plaintext form-control-sm px-1 text-end font-monospace text-dark" 
+                        value="${_formatCurrency(f.iva)}" readonly>
+                </td>
+                <td class="align-middle">
+                     <input type="text" class="form-control-plaintext form-control-sm px-1 text-end font-monospace text-dark" 
+                        value="${_formatCurrency(f.total)}" readonly>
+                </td>
+                <td class="text-center align-middle">
+                    <span class="badge ${f.estatusSAT === 'CANCELADO' ? 'bg-danger' : (f.estatusSAT === 'PAGADO' ? 'bg-success' : 'bg-secondary')} bg-opacity-75 rounded-pill" 
+                          style="font-size:0.65em; padding: 4px 8px;">
+                        ${f.estatusSAT || 'VIGENTE'}
+                    </span>
+                </td>
+                <td class="text-end align-middle">
+                     <div class="d-flex justify-content-end align-items-center">
+                        <button class="btn btn-sm btn-link text-muted p-0 me-2 opacity-50 hover-opacity-100" 
+                                onclick="ComunicadoDetalle.openBitacoraModal('${f.id}')">
+                            <i class="bi bi-chat-left-text"></i>
+                        </button>
+                        ${isTemp ? `
+                            <button class="btn-icon text-success small me-1" onclick="ComunicadoDetalle.saveFactura('${f.id}')"><i class="bi bi-check-lg"></i></button>
+                            <button class="btn-icon text-danger small" onclick="ComunicadoDetalle.removeFactura('${f.id}')"><i class="bi bi-x"></i></button>
+                        ` : `
+                            <button class="btn btn-sm btn-link text-danger p-0 ms-2 opacity-50 hover-opacity-100" 
+                                    onclick="ComunicadoDetalle.cancelFactura('${f.id}')" title="Cancelar">
+                                <i class="bi bi-slash-circle"></i>
+                            </button>
+                        `}
+                    </div>
                 </td>
             `;
             return tr;
@@ -3323,7 +3995,277 @@
             if (inputTotal) inputTotal.value = _formatCurrency(total);
         }
 
+        // --- SUPERVISION VINCULACION & PLACEHOLDERS ---
+
+        function _renderTableSupervisionNew(container) {
+            const estSupervision = (state.data.estimaciones || [])
+                .filter(e => (e.entidad || 'CONSTRUCTORA').toUpperCase() === 'SUPERVISION' || e._isPlaceholder);
+
+            const estContratista = (state.data.estimaciones || [])
+                .filter(e => (e.entidad || 'CONSTRUCTORA').toUpperCase() === 'CONSTRUCTORA');
+
+            const table = _createTableSkeleton();
+            const tbody = table.querySelector('tbody');
+
+            const groups = {};
+            const orphans = [];
+
+            estSupervision.forEach(child => {
+                const term = child.idRelacionada || child.idEstimacionVinculada;
+                if (term) {
+                    if (!groups[term]) groups[term] = [];
+                    groups[term].push(child);
+                } else {
+                    orphans.push(child);
+                }
+            });
+
+            const linkedIds = Object.keys(groups);
+            let hasContent = false;
+
+            linkedIds.forEach(parentId => {
+                const parentEst = estContratista.find(e => String(e.id) === String(parentId));
+                if (parentEst) {
+                    hasContent = true;
+                    tbody.appendChild(_createParentEstimacionRow(parentEst));
+                    groups[parentId].forEach(child => {
+                        if (child._isPlaceholder) {
+                            _renderPlaceholderRow(tbody, child);
+                        } else {
+                            _appendEstimacionRowPair(tbody, child, true);
+                        }
+                    });
+                }
+            });
+
+            if (orphans.length > 0) {
+                hasContent = true;
+                const trSep = document.createElement('tr');
+                trSep.className = 'table-warning';
+                trSep.innerHTML = `<td colspan="12" class="text-center small fw-bold text-dark">ESTIMACIONES DE SUPERVISIÓN SIN VINCULAR</td>`;
+                tbody.appendChild(trSep);
+                orphans.forEach(child => _appendEstimacionRowPair(tbody, child, false));
+            }
+
+            if (!hasContent) {
+                container.innerHTML = `<div class="text-center text-muted py-5 border rounded bg-light mb-3">
+                    <i class="bi bi-link-45deg fs-2 d-block mb-2 opacity-50"></i>
+                    Sin estimaciones de supervisión vinculadas.<br>
+                    <small>Utilice el botón inferior para vincular una referencia.</small>
+                </div>`;
+            } else {
+                container.appendChild(table);
+            }
+        }
+
+        function _openModalVinculacion() {
+            const candidates = (state.data.estimaciones || [])
+                .filter(e => (e.entidad || 'CONSTRUCTORA').toUpperCase() === 'CONSTRUCTORA')
+                .sort((a, b) => {
+                    const typeOrder = { 'ANTICIPO': 1, 'ESTIMACION': 2, 'FINIQUITO': 3 };
+                    return (typeOrder[a.tipo] - typeOrder[b.tipo]) || (parseInt(a.numero) - parseInt(b.numero));
+                });
+
+            if (candidates.length === 0) {
+                Swal.fire('Atención', 'No hay estimaciones del Contratista disponibles para vincular.', 'warning');
+                return;
+            }
+
+            let listHtml = '<div class="list-group text-start" style="max-height: 400px; overflow-y: auto;">';
+            candidates.forEach(c => {
+                const monto = _formatCurrency(c.montoTotal || c.montoAutorizado || c.monto || 0);
+                const date = c.fechaCorte ? new Date(c.fechaCorte).toLocaleDateString() : 'S/F';
+                const icon = c.tipo === 'ANTICIPO' ? 'bi-cash-stack' : c.tipo === 'FINIQUITO' ? 'bi-flag-fill' : 'bi-bricks';
+                const color = c.tipo === 'ANTICIPO' ? 'text-warning' : c.tipo === 'FINIQUITO' ? 'text-success' : 'text-primary';
+
+                listHtml += `
+                    <button type="button" class="list-group-item list-group-item-action p-3 mb-2 border rounded shadow-sm d-flex justify-content-between align-items-center"
+                        onclick="ComunicadoDetalle._confirmarVinculacion('${c.id}')">
+                        <div class="d-flex align-items-center gap-3">
+                            <div class="rounded-circle bg-light p-2 d-flex align-items-center justify-content-center" style="width: 45px; height: 45px;">
+                                <i class="bi ${icon} ${color} fs-4"></i>
+                            </div>
+                            <div>
+                                <h6 class="mb-0 fw-bold text-dark">${c.tipo} No. ${c.numero}</h6>
+                                <small class="text-muted"><i class="bi bi-calendar3 me-1"></i> ${date} &bull; <span class="badge bg-light text-dark border">${c.estatusInterno || 'N/A'}</span></small>
+                            </div>
+                        </div>
+                        <div class="text-end">
+                            <div class="fw-bold text-dark fs-6">${monto}</div>
+                            <small class="text-primary fw-bold" style="font-size: 0.75rem;">Seleccionar <i class="bi bi-chevron-right"></i></small>
+                        </div>
+                    </button>
+                 `;
+            });
+            listHtml += '</div>';
+
+            Swal.fire({
+                title: 'Vincular Referencia',
+                html: `
+                    <p class="text-muted mb-4">Seleccione la estimación del Contratista a la que desea vincular el nuevo movimiento de Supervisión:</p>
+                    ${listHtml}
+                `,
+                showConfirmButton: false,
+                showCloseButton: true,
+                width: '650px',
+                padding: '2em'
+            });
+        }
+
+        function _confirmarVinculacion(parentId) {
+            Swal.close();
+            // Small delay to allow modal to close smoothly
+            setTimeout(() => _addPlaceholderSupervision(parentId), 200);
+        }
+
+        function _addPlaceholderSupervision(parentId) {
+            const parent = state.data.estimaciones.find(e => String(e.id) === String(parentId));
+            if (!parent) return;
+
+            const exists = state.data.estimaciones.some(e =>
+                e._isPlaceholder && String(e.idRelacionada) === String(parentId)
+            );
+            if (exists) {
+                Swal.fire('Aviso', 'Ya existe un placeholder pendiente.', 'info');
+                return;
+            }
+
+            const placeholder = {
+                id: 'PLACEHOLDER-' + Date.now(),
+                entidad: 'SUPERVISION',
+                _isPlaceholder: true,
+                idRelacionada: parent.id,
+                tipo: 'NUEVA',
+                numero: '?',
+                montoTotal: 0,
+                estatusInterno: 'BORRADOR'
+            };
+
+            state.data.estimaciones.push(placeholder);
+            _renderFinanciero();
+        }
+
+        function _renderPlaceholderRow(tbody, placeholder) {
+            const tr = document.createElement('tr');
+            tr.className = 'bg-light';
+            tr.style.backgroundColor = '#f8fbfc';
+            tr.innerHTML = `
+                <td colspan="12" class="py-2 border-0">
+                    <div class="d-flex align-items-center" style="margin-left: 40px; border-left: 3px solid #dee2e6; padding-left: 15px;">
+                        <i class="bi bi-arrow-return-right text-muted me-3"></i>
+                        <button class="btn btn-sm btn-outline-primary border-dashed fw-bold shadow-sm d-flex align-items-center gap-2 px-3 py-2" 
+                            onclick="ComunicadoDetalle._createSupervisionFromPlaceholder('${placeholder.id}')">
+                            <i class="bi bi-plus-lg"></i> + Agregar movimiento de Supervisión
+                        </button>
+                    </div>
+                </td>
+            `;
+            tbody.appendChild(tr);
+        }
+
+        function _createSupervisionFromPlaceholder(placeholderId) {
+            const html = `
+                <div class="row g-3">
+                    <div class="col-4">
+                        <button class="btn btn-outline-warning w-100 h-100 py-3 d-flex flex-column align-items-center gap-2 shadow-sm"
+                            onclick="ComunicadoDetalle._confirmarCreacionSupervision('${placeholderId}', 'ANTICIPO')">
+                            <i class="bi bi-percent fs-1"></i>
+                            <span class="fw-bold">Anticipo</span>
+                        </button>
+                    </div>
+                    <div class="col-4">
+                        <button class="btn btn-outline-primary w-100 h-100 py-3 d-flex flex-column align-items-center gap-2 shadow-sm"
+                            onclick="ComunicadoDetalle._confirmarCreacionSupervision('${placeholderId}', 'ESTIMACION')">
+                            <i class="bi bi-bricks fs-1"></i>
+                            <span class="fw-bold">Estimación</span>
+                        </button>
+                    </div>
+                    <div class="col-4">
+                        <button class="btn btn-outline-success w-100 h-100 py-3 d-flex flex-column align-items-center gap-2 shadow-sm"
+                            onclick="ComunicadoDetalle._confirmarCreacionSupervision('${placeholderId}', 'FINIQUITO')">
+                            <i class="bi bi-flag-fill fs-1"></i>
+                            <span class="fw-bold">Finiquito</span>
+                        </button>
+                    </div>
+                </div>
+                <div class="mt-3 text-muted small text-center">Seleccione el tipo de movimiento de supervisión a crear.</div>
+             `;
+
+            Swal.fire({
+                title: 'Crear Movimiento',
+                html: html,
+                showConfirmButton: false,
+                showCloseButton: true,
+                width: '600px',
+                padding: '2em'
+            });
+        }
+
+        async function _confirmarCreacionSupervision(placeholderId, tipo) {
+            Swal.close(); // Close selection modal
+
+            // Wait a tick
+            await new Promise(r => setTimeout(r, 100));
+
+            const placeholder = state.data.estimaciones.find(e => e.id === placeholderId);
+            if (!placeholder) return;
+
+            const existentes = (state.data.estimaciones || [])
+                .filter(e => (e.entidad || 'CONSTRUCTORA') === 'SUPERVISION' && e.tipo === tipo && !e._isPlaceholder);
+
+            let numero = tipo === 'ANTICIPO' ? 'A' : tipo === 'FINIQUITO' ? 'F' : String(existentes.length + 1);
+
+            const payload = {
+                idComunicado: state.id,
+                entidad: 'SUPERVISION',
+                idEmpresa: state.data.contrato?.idEmpresa || '',
+                tipo: tipo,
+                numero: numero,
+                idRelacionada: placeholder.idRelacionada,
+                monto: 0,
+                montoTotal: 0,
+                estatusInterno: 'PENDIENTE',
+                fechaCorte: new Date().toISOString().split('T')[0],
+                facturas: []
+            };
+
+            try {
+                _setGlobalLoader(true, 'Creando...');
+                const response = await serverCall('crearEstimacion', payload);
+                if (response && (response.success || response.data)) {
+                    state.data.estimaciones = state.data.estimaciones.filter(e => e.id !== placeholderId);
+                    const data = response.data || response;
+                    if (data.id) {
+                        payload.id = data.id;
+                        // Force ID Relacionada persistence locally in case backend skeletal response lacked it
+                        payload.idRelacionada = placeholder.idRelacionada;
+
+                        state.data.estimaciones.push(payload);
+
+                        // Set as selected
+                        state.ui.selectedEstimacionId = payload.id;
+
+                        _renderFinanciero();
+                        globalThis.showToast?.('Creado exitosamente', 'success');
+
+                        // Auto expand
+                        setTimeout(() => {
+                            ComunicadoDetalle.toggleInfo(payload.id);
+                        }, 500);
+                    }
+                }
+            } catch (e) {
+                console.error(e);
+                Swal.fire('Error', e.message, 'error');
+            } finally {
+                _setGlobalLoader(false);
+            }
+        }
+
         return {
+            _createSupervisionFromPlaceholder,
+            _confirmarVinculacion,
+            _confirmarCreacionSupervision,
             init,
             mount: (container) => init(container), // Alias para mount
             render: () => '<div id="comunicado-detalle-container"></div>', // Método render requerido
@@ -3357,7 +4299,10 @@
             toggleManualInput,
             // NUEVO: Función para modal de tipo
             crearActualizacionConTipo,
-            calculateTaxForComplemento // Export helper
+            calculateTaxForComplemento, // Export helper
+            _openModalVinculacion,
+            _confirmarVinculacion,
+            _onContratistaFilterChange
         };
 
     })();
@@ -3367,4 +4312,27 @@
     window.ComunicadoDetalle = Componente;
     console.log('✅ ComunicadoDetalle registrado globalmente como:', globalThis.ComunicadoDetalle);
 
+    // Función global para manejar el acordeón de facturas
+    function toggleChildRows(parentId, btnElement) {
+        const icon = btnElement.querySelector('i');
+        const rows = document.querySelectorAll(`.child-row-${parentId}`);
+
+        // Determinar estado actual basado en si la primera fila está visible
+        const isHidden = rows.length > 0 && rows[0].style.display === 'none';
+
+        rows.forEach(row => {
+            row.style.display = isHidden ? 'table-row' : 'none';
+        });
+
+        // Cambiar icono
+        if (isHidden) {
+            // Ahora está abierto -> mostrar icono MENOS
+            icon.classList.remove('bi-plus-square-fill');
+            icon.classList.add('bi-dash-square-fill');
+        } else {
+            // Ahora está cerrado -> mostrar icono MAS
+            icon.classList.remove('bi-dash-square-fill');
+            icon.classList.add('bi-plus-square-fill');
+        }
+    }
 </script>
