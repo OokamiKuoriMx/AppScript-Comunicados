@@ -4047,6 +4047,10 @@
             const estContratista = (state.data.estimaciones || [])
                 .filter(e => String(e.entidad || 'CONSTRUCTORA').trim().toUpperCase() === 'CONSTRUCTORA');
 
+            console.log('[Supervision Render] Total estimaciones:', state.data.estimaciones?.length);
+            console.log('[Supervision Render] Supervision items:', estSupervision.length, estSupervision.map(e => ({ id: e.id, entidad: e.entidad, idRelacionada: e.idRelacionada, _isPlaceholder: e._isPlaceholder })));
+            console.log('[Supervision Render] Contratista items:', estContratista.length, estContratista.map(e => ({ id: e.id, tipo: e.tipo })));
+
             const table = _createTableSkeleton();
             const tbody = table.querySelector('tbody');
 
