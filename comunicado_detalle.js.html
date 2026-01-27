@@ -1088,6 +1088,28 @@
                         // payload._isNew = false; // Ya está guardado
 
                         state.data.estimaciones.push(payload);
+
+                        // ================================================
+                        // AUTO-AGREGAR PLACEHOLDER DE SUPERVISIÓN VINCULADA
+                        // ================================================
+                        if (entidad === 'CONSTRUCTORA') {
+                            const placeholderId = `placeholder-sup-${payload.id}-${Date.now()}`;
+                            const supervisionPlaceholder = {
+                                id: placeholderId,
+                                _isPlaceholder: true,
+                                idRelacionada: payload.id,
+                                idEstimacionVinculada: payload.id,
+                                entidad: 'SUPERVISION',
+                                tipo: tipo, // Mismo tipo que la constructora
+                                numero: payload.numero,
+                                monto: 0,
+                                montoTotal: 0,
+                                estatusInterno: 'POR_CREAR'
+                            };
+                            state.data.estimaciones.push(supervisionPlaceholder);
+                            console.log(`[Supervisión] Placeholder creado automáticamente vinculado a CONSTRUCTORA ${payload.id}`);
+                        }
+
                         _renderFinanciero();
 
                         globalThis.showToast?.(`${entidad} - ${tipo} creada correctamente. ID: ${payload.id}`, 'success');
