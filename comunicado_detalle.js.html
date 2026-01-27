@@ -4243,6 +4243,53 @@
 
             let numero = tipo === 'ANTICIPO' ? 'A' : tipo === 'FINIQUITO' ? 'F' : String(existentes.length + 1);
 
+            // ========================================
+            // CÁLCULO AUTOMÁTICO DEL MONTO SUPERVISIÓN
+            // ========================================
+            let montoCalculado = 0;
+
+            // 1. Buscar la estimación CONSTRUCTORA vinculada
+            const idVinculada = placeholder.idRelacionada;
+            if (idVinculada) {
+                const estimacionContratista = (state.data.estimaciones || [])
+                    .find(e => String(e.id).trim() === String(idVinculada).trim() &&
+                        String(e.entidad || 'CONSTRUCTORA').toUpperCase() === 'CONSTRUCTORA');
+
+                if (estimacionContratista && estimacionContratista.monto) {
+                    // Opción 1: 5% del monto del contratista
+                    const montoContratista = parseFloat(estimacionContratista.monto) || 0;
+                    montoCalculado = Math.round(montoContratista * 0.05 * 100) / 100;
+                    console.log(`[Supervisión] Monto calculado: 5% de $${montoContratista} = $${montoCalculado}`);
+                }
+            }
+
+            // 2. Si no hay monto del contratista, usar 50% del presupuesto de supervisión
+            if (montoCalculado === 0) {
+                // Buscar presupuesto de supervisión en la actualización vigente
+                const presupuestoVigente = state.data.presupuestoVigente || state.data.actualizacionVigente;
+                const presupuestoArray = state.data.presupuesto || [];
+
+                let montoSupervisionPresupuesto = 0;
+
+                if (presupuestoVigente && presupuestoVigente.montoSupervision) {
+                    montoSupervisionPresupuesto = parseFloat(presupuestoVigente.montoSupervision) || 0;
+                } else if (presupuestoArray.length > 0) {
+                    // Buscar la última actualización
+                    const ultima = presupuestoArray[presupuestoArray.length - 1];
+                    montoSupervisionPresupuesto = parseFloat(ultima.montoSupervision) || 0;
+                }
+
+                if (montoSupervisionPresupuesto > 0) {
+                    // 50% del presupuesto de supervisión
+                    montoCalculado = Math.round(montoSupervisionPresupuesto * 0.50 * 100) / 100;
+                    console.log(`[Supervisión] Monto calculado: 50% de presupuesto supervisión $${montoSupervisionPresupuesto} = $${montoCalculado}`);
+                }
+            }
+
+            // Calcular IVA y Total
+            const ivaCalculado = Math.round(montoCalculado * IVA_RATE * 100) / 100;
+            const totalCalculado = montoCalculado + ivaCalculado;
+
             const payload = {
                 idComunicado: state.id,
                 entidad: 'SUPERVISION',
@@ -4250,8 +4297,9 @@
                 tipo: tipo,
                 numero: numero,
                 idRelacionada: placeholder.idRelacionada,
-                monto: 0,
-                montoTotal: 0,
+                monto: montoCalculado,
+                iva: ivaCalculado,
+                montoTotal: totalCalculado,
                 estatusInterno: 'PENDIENTE',
                 fechaCorte: new Date().toISOString().split('T')[0],
                 facturas: []
