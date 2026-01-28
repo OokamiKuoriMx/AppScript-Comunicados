@@ -2710,7 +2710,7 @@
                             trBtn.innerHTML = `
                                 <td colspan="8" class="p-0 border-0">
                                     <button class="btn btn-sm btn-link w-100 text-decoration-none text-info py-2 bg-light border-bottom border-light" 
-                                        onclick="ComunicadoDetalle.registrarComplemento('${f.id}')"
+                                        onclick="ComunicadoDetalle.addComplemento('${f.id}')"
                                         style="font-size: 0.75rem; border-radius: 0;">
                                         <i class="bi bi-plus-lg me-1"></i>Agregar Complemento de Pago (Saldo: $${_formatCurrency(saldo)})
                                     </button>
@@ -2860,7 +2860,9 @@
                             <i class="bi bi-chat-left-text"></i>
                         </button>
                         ${isTemp ? `
-                            <button class="btn-icon text-success small me-1" onclick="ComunicadoDetalle.saveFactura('${f.id}')"><i class="bi bi-check-lg"></i></button>
+                            <button class="btn btn-sm btn-success d-flex align-items-center gap-1 shadow-sm px-2 py-0 me-2" onclick="ComunicadoDetalle.saveFactura('${f.id}')" title="Guardar">
+                                <i class="bi bi-save"></i> Guardar
+                            </button>
                             <button class="btn-icon text-danger small" onclick="ComunicadoDetalle.removeFactura('${f.id}')"><i class="bi bi-x"></i></button>
                         ` : `
                             <button class="btn btn-sm btn-link text-danger p-0 ms-2 opacity-50 hover-opacity-100" 
@@ -2904,7 +2906,7 @@
                 iva: preFillIva,
                 total: preFillTotal,
                 estatusSAT: 'VIGENTE',
-                tipo: 'FACTURA', // Default type
+                tipo: 1, // 1 = Factura, 2 = Complemento
                 _modified: true, // Mark as modified for save button
                 _isNew: true
             };
@@ -3003,6 +3005,35 @@
                 // Ensure re-render to reset UI state
                 _renderFinanciero();
             }
+        }
+
+        // NUEVO: Función para agregar complemento (tipo 2)
+        function addComplemento(idFacturaPadre) {
+            const parent = (state.data.facturasEstimaciones || []).find(f => String(f.id) === String(idFacturaPadre));
+            if (!parent) return;
+
+            const newComp = {
+                id: 'temp-comp-' + Date.now(),
+                idEstimacion: parent.idEstimacion,
+                idFacturaRelacionada: parent.id,
+                folioFactura: '',
+                fecha: new Date().toISOString().split('T')[0],
+                monto: 0,
+                iva: 0,
+                total: 0,
+                estatusSAT: 'VIGENTE',
+                tipo: 2, // 2 = COMPLEMENTO
+                _modified: true,
+                _isNew: true
+            };
+
+            if (!state.data.facturasEstimaciones) state.data.facturasEstimaciones = [];
+            state.data.facturasEstimaciones.push(newComp);
+
+            if (!state.ui.expandedEstimations) state.ui.expandedEstimations = new Set();
+            if (parent.idEstimacion) state.ui.expandedEstimations.add(String(parent.idEstimacion));
+
+            _renderFinanciero();
         }
 
         async function removeFactura(id) {
@@ -4445,7 +4476,7 @@
             saveFactura,
             removeFactura,
             addBitacora,
-            registrarComplemento, // NUEVO: Funcion exportada
+            addComplemento,
             // Exportar funciones del modal
             abrirEditorPresupuesto,
             addLineaPresupuesto,
