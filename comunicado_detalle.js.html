@@ -1272,7 +1272,7 @@
             const estConst = estimaciones.filter(e => (e.entidad || 'CONSTRUCTORA') === 'CONSTRUCTORA' && e.estatusInterno !== 'CANCELADO');
 
             // Filter strictly for ESTIMACION type (exclude ANTICIPO, FINIQUITO)
-            const estimacionesOnly = estConst.filter(e => e.tipo === 'ESTIMACION');
+            const estimacionesOnly = estConst.filter(e => e.tipo == 1 || e.tipo == 3 || e.tipo === 'ESTIMACION' || e.tipo === 'FINIQUITO');
 
             // FIXED: Use 'monto' for 'Estimado' to match the "MONTO" column in the table.
             const estimadoConstNeto = estimacionesOnly.reduce((sum, e) => sum + (parseFloat(e.monto) || 0), 0);
@@ -1366,7 +1366,10 @@
             // Dual display for Ejercido Sup
             _renderDualAmount(uiS.ejercido, ejercidoSupNeto, ejercidoSupTotal, 'text-success');
 
-            if (uiS && uiS.avanceFisico) uiS.avanceFisico.textContent = _formatCurrency(avFisicoSup);
+            if (uiS && uiS.avanceFisico) {
+                const card = uiS.avanceFisico.closest('.card') || uiS.avanceFisico.parentElement;
+                if (card) card.style.display = 'none';
+            }
 
             if (uiS && uiS.porEjercer) {
                 uiS.porEjercer.textContent = _formatCurrency(porEjercerSupNeto);
@@ -2307,7 +2310,7 @@
                         <th>Tipo</th>
                         <th class="text-center">No.</th>
                         <th>Fecha Corte</th>
-                        <th class="text-end">Av. Fis ($)</th>
+                        <th class="text-end">Pagado</th>
                         <th class="text-end">Monto</th>
                         <th class="text-end">Amort.</th>
                         <th class="text-end">Neto</th>
@@ -2582,15 +2585,15 @@
                     : `<i class="bi bi-caret-right custom-caret cursor-pointer" onclick="ComunicadoDetalle.toggleInfo('${est.id}')" title="Ver Facturas"></i>`
                 }
                 </td>
-                <td><span class="badge bg-primary bg-opacity-10 text-primary border border-primary border-opacity-25" style="font-size: 0.7rem;">${est.tipo}</span></td>
+                <td><span class="badge bg-primary bg-opacity-10 text-primary border border-primary border-opacity-25" style="font-size: 0.7rem;">${({ 1: 'ESTIMACION', 2: 'ANTICIPO', 3: 'FINIQUITO' }[est.tipo] || est.tipo)}</span></td>
                 <td class="fw-bold text-dark text-center">${est.numero}</td>
                 <td>
                     <input type="date" class="${editableClass} p-1" style="font-size: 0.8rem;" value="${_formatDateISO(est.fechaCorte)}" ${readonlyAttr} 
                         onchange="ComunicadoDetalle.updateEstimacion('${est.id}', 'fechaCorte', this.value)">
                 </td>
                 <td>
-                    <input type="text" class="${editableClass} text-end font-monospace currency-input text-muted" style="font-size: 0.8rem;" value="${_formatCurrency(est.montoAvanceFisico)}" ${readonlyAttr}
-                        onchange="ComunicadoDetalle.updateEstimacion('${est.id}', 'montoAvanceFisico', this.value)" placeholder="$0.00">
+                    <input type="text" class="form-control-plaintext text-end font-monospace text-success fw-bold p-1" style="font-size: 0.8rem;" 
+                        value="${_formatCurrency((state.data.facturasEstimaciones || []).filter(f => String(f.idEstimacion) == String(est.id) && f.estatusSAT == 'PAGADO').reduce((a, b) => a + (parseFloat(b.total) || 0), 0))}" readonly>
                 </td>
                 <td>
                     <input type="text" class="${editableClass} text-end font-monospace currency-input fw-semibold" style="font-size: 0.8rem;" value="${_formatCurrency(est.monto)}" ${readonlyAttr}
@@ -2602,7 +2605,7 @@
                 </td>
                 <td class="text-end font-monospace" id="input-neto-${est.id}">${_formatCurrency((parseFloat(est.monto) || 0) - (parseFloat(est.amortizacion) || 0))}</td>
                 <td class="text-end font-monospace" id="input-iva-${est.id}">${_formatCurrency(est.iva)}</td>
-                <td class="text-end font-monospace fw-bold text-primary" id="input-total-${est.id}">${_formatCurrency(est.montoTotal)}</td>
+                <td class="text-end font-monospace fw-bold text-dark" id="input-total-${est.id}">${_formatCurrency(est.montoTotal)}</td>
                 <td class="text-center">${badgeResult}</td>
                 <td class="text-end">
                     <div class="d-flex justify-content-end gap-1">
@@ -2709,7 +2712,7 @@
                             trBtn.style.display = 'none';
                             trBtn.innerHTML = `
                                 <td colspan="8" class="p-0 border-0">
-                                    <button class="btn btn-sm btn-link w-100 text-decoration-none text-info py-2 bg-light border-bottom border-light" 
+                                    <button class="btn btn-sm btn-link w-100 text-decoration-none text-primary py-2 bg-light border-bottom border-light" 
                                         onclick="ComunicadoDetalle.addComplemento('${f.id}')"
                                         style="font-size: 0.75rem; border-radius: 0;">
                                         <i class="bi bi-plus-lg me-1"></i>Agregar Complemento de Pago (Saldo: $${_formatCurrency(saldo)})
@@ -4376,7 +4379,7 @@
                 idComunicado: state.id,
                 entidad: 'SUPERVISION',
                 idEmpresa: state.data.contrato?.idEmpresa || '',
-                tipo: tipo,
+                tipo: ({ 'ESTIMACION': 1, 'ANTICIPO': 2, 'FINIQUITO': 3 }[tipo] || tipo),
                 numero: numero,
                 idRelacionada: placeholder.idRelacionada,
                 monto: montoCalculado,
