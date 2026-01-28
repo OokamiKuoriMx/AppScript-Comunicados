@@ -2889,15 +2889,20 @@
                 return;
             }
 
+            // Pre-fill amounts from estimation for user convenience
+            const preFillMonto = parseFloat(est.monto) || 0;
+            const preFillIva = parseFloat(est.iva) || 0;
+            const preFillTotal = parseFloat(est.montoTotal) || 0;
+
             // Create new temp invoice
             const newFactura = {
                 id: 'temp-' + Date.now(),
                 idEstimacion: est.id,
                 folioFactura: '',
                 fecha: new Date().toISOString().split('T')[0],
-                monto: 0,
-                iva: 0,
-                total: 0,
+                monto: preFillMonto,
+                iva: preFillIva,
+                total: preFillTotal,
                 estatusSAT: 'VIGENTE',
                 tipo: 'FACTURA', // Default type
                 _modified: true, // Mark as modified for save button
