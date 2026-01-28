@@ -2949,53 +2949,59 @@
             }
 
             // Prepare Payload
-            // If new (temp-), create. If existing, update.
             const isTemp = String(item.id).startsWith('temp-');
-            const method = isTemp ? 'crearFactura' : 'actualizarFactura';
             const payload = { ...item };
-
-            // Clean payload for server
             delete payload._modified;
             delete payload._isNew;
-            if (isTemp) delete payload.id; // Server assigns ID
+
+            // Clean ID for server new creation
+            if (isTemp) {
+                delete payload.id;
+            }
 
             try {
-                const btn = event ? event.target.closest('button') : null; // Hacky access to button
-                if (btn) btn.disabled = true;
-
-                const response = await serverCall(method, isTemp ? payload : item.id, isTemp ? null : payload); // Signature varies?
-                // Wrapper usually handles (method, id, payload) or (method, payload).
-                // Let's assume standard wrapper signature:
-                // If create: serverCall('crearFactura', payload)
-                // If update: serverCall('actualizarFactura', id, payload)
+                // UI Feedback
+                // Use btn reference if event available, or global loader
+                _setGlobalLoader(true, isTemp ? 'Registrando...' : 'Actualizando...');
 
                 let result;
                 if (isTemp) {
-                    result = await serverCall('registrarFactura', payload); // Assuming 'registrarFactura' is the name for create
+                    // Backend: agregarFactura(idEstimacion, datosFactura)
+                    // We pass idEstimacion as first arg, payload as second
+                    result = await serverCall('agregarFactura', item.idEstimacion, payload);
                 } else {
+                    // Backend: actualizarFactura(idFactura, datosFactura)
                     result = await serverCall('actualizarFactura', item.id, payload);
                 }
 
-                if (result && (result.success || result.id)) {
-                    // Update local state with real ID if created
-                    if (isTemp && (result.id || result.data?.id)) {
-                        item.id = result.id || result.data.id;
+                if (result && (result.success || result.data || result.id)) {
+                    // Handle success
+                    const data = result.data || result;
+
+                    if (isTemp && data.id) {
+                        item.id = data.id;
                     }
                     delete item._modified;
                     delete item._isNew;
-                    globalThis.showToast?.('Factura guardada', 'success');
-                    _renderFinanciero();
 
-                    // Reload data to be safe?
-                    // await _loadData(); 
+                    globalThis.showToast?.('Factura guardada exitosamente', 'success');
+
+                    // Force state update to expanded (just in case)
+                    if (state.ui.expandedEstimations && item.idEstimacion) {
+                        state.ui.expandedEstimations.add(String(item.idEstimacion));
+                    }
+
+                    _renderFinanciero();
                 } else {
-                    throw new Error(result?.message || 'Error al guardar');
+                    throw new Error(result?.message || 'La respuesta del servidor no fue exitosa.');
                 }
             } catch (e) {
                 console.error(e);
                 _showAlert('Error', 'No se pudo guardar la factura: ' + e.message, 'error');
             } finally {
-                _renderFinanciero(); // Restore button state via re-render
+                _setGlobalLoader(false);
+                // Ensure re-render to reset UI state
+                _renderFinanciero();
             }
         }
 
