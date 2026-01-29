@@ -511,7 +511,7 @@
                     <div class="tab-pane fade" id="tab-estimaciones-supervision" role="tabpanel">
 
                         <!-- Resumen Financiero Supervision -->
-                        <div class="row row-cols-1 row-cols-md-5 g-2 mb-3">
+                        <div class="row row-cols-1 row-cols-md-4 g-2 mb-3">
                             <!-- 1. Autorizado -->
                             <div class="col">
                                 <div
@@ -528,15 +528,15 @@
                                     </div>
                                 </div>
                             </div>
-                            <!-- 2. Estimado -->
+                            <!-- 2. PAGADO (Antes Estimado) -->
                             <div class="col">
                                 <div
                                     class="card shadow-sm border-0 border-start border-4 border-warning bg-white h-100">
                                     <div class="card-body p-2">
                                         <div class="d-flex align-items-center mb-1 text-warning">
-                                            <i class="bi bi-calculator me-2"></i>
+                                            <i class="bi bi-check-circle-fill me-2"></i>
                                             <small class="fw-bold text-uppercase"
-                                                style="font-size: 0.65rem; letter-spacing: 0.5px;">Estimado</small>
+                                                style="font-size: 0.65rem; letter-spacing: 0.5px;">PAGADO</small>
                                         </div>
                                         <div class="fs-5 fw-bold text-warning text-truncate" id="fin-estimado-sup">$0.00
                                         </div>
@@ -551,30 +551,14 @@
                                         <div class="d-flex align-items-center mb-1 text-success">
                                             <i class="bi bi-receipt me-2"></i>
                                             <small class="fw-bold text-uppercase"
-                                                style="font-size: 0.65rem; letter-spacing: 0.5px;">Ejercido</small>
+                                                style="font-size: 0.65rem; letter-spacing: 0.5px;">EJERCIDO</small>
                                         </div>
                                         <div class="fs-5 fw-bold text-success text-truncate" id="fin-ejercido-sup">$0.00
                                         </div>
                                     </div>
                                 </div>
                             </div>
-                            <!-- 4. Avance Físico -->
-                            <div class="col">
-                                <div
-                                    class="card shadow-sm border-0 border-start border-4 border-secondary bg-white h-100">
-                                    <div class="card-body p-2">
-                                        <div class="d-flex align-items-center mb-1 text-secondary">
-                                            <i class="bi bi-bar-chart-line me-2"></i>
-                                            <small class="fw-bold text-uppercase"
-                                                style="font-size: 0.65rem; letter-spacing: 0.5px;">Av. Físico</small>
-                                        </div>
-                                        <div class="fs-5 fw-bold text-secondary text-truncate"
-                                            id="fin-avance-fisico-sup">
-                                            $0.00</div>
-                                    </div>
-                                </div>
-                            </div>
-                            <!-- 5. Por Ejercer -->
+                            <!-- 4. Por Ejercer -->
                             <div class="col">
                                 <div class="card shadow-sm border-0 border-start border-4 bg-white h-100"
                                     style="border-left-color: #6f42c1 !important;">
@@ -582,7 +566,7 @@
                                         <div class="d-flex align-items-center mb-1" style="color: #6f42c1 !important;">
                                             <i class="bi bi-piggy-bank me-2"></i>
                                             <small class="fw-bold text-uppercase"
-                                                style="font-size: 0.65rem; letter-spacing: 0.5px;">Por Ejercer</small>
+                                                style="font-size: 0.65rem; letter-spacing: 0.5px;">POR EJERCER</small>
                                         </div>
                                         <div class="fs-5 fw-bold text-truncate" style="color: #6f42c1 !important;"
                                             id="fin-por-ejercer-sup">$0.00
@@ -984,3 +968,170 @@
         </div>
     </div>
 </div>
+
+<!-- Generic Delete Confirmation Modal -->
+<div class="modal fade" id="modalDeleteGeneric" tabindex="-1" aria-hidden="true" data-bs-backdrop="static">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content border-0 shadow-lg" style="border-radius: 1rem; overflow: hidden;">
+            <div class="modal-header bg-danger text-white border-bottom-0">
+                <h5 class="modal-title fw-bold" id="modalDeleteGenericTitle">
+                    <i class="bi bi-exclamation-triangle-fill me-2"></i>Confirmar Eliminación
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"
+                    aria-label="Close"></button>
+            </div>
+            <div class="modal-body p-4 text-center">
+                <div class="mb-3">
+                    <i class="bi bi-trash3 text-danger" style="font-size: 3rem;"></i>
+                </div>
+                <h5 class="fw-bold text-dark mb-2">¿Está seguro de eliminar este registro?</h5>
+                <p class="text-muted mb-0" id="modalDeleteGenericMessage">
+                    Esta acción no se puede deshacer.
+                </p>
+                <div id="modalDeleteGenericExtraWarning" class="alert alert-warning mt-3 mb-0 d-none text-start small">
+                    <!-- Dynamic Warning -->
+                </div>
+            </div>
+            <div class="modal-footer bg-light border-top-0 justify-content-center pb-4">
+                <button type="button" class="btn btn-outline-secondary px-4 fw-medium" data-bs-dismiss="modal">
+                    Cancelar
+                </button>
+                <button type="button" class="btn btn-danger px-4 fw-bold d-flex align-items-center gap-2"
+                    id="btnConfirmDeleteGeneric">
+                    <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
+                    <span>Sí, Eliminar</span>
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Selección Tipo Movimiento -->
+<div class="modal fade" id="modalSeleccionMovimiento" tabindex="-1" aria-hidden="true" data-bs-backdrop="static">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content border-0 shadow-lg" style="border-radius: 1rem;">
+            <div class="modal-header border-bottom-0 pb-0">
+                <h5 class="modal-title fw-bold text-dark ps-2">Seleccionar Tipo de Movimiento</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body p-4">
+                <p class="text-muted small mb-4 px-2">¿Qué tipo de registro desea agregar al historial del contratista?
+                </p>
+
+                <div class="d-grid gap-3">
+                    <!-- Anticipo -->
+                    <button onclick="ComunicadoDetalle.crearMovimiento('ANTICIPO')"
+                        class="btn btn-outline-primary py-3 px-4 text-start border-2 d-flex align-items-center gap-3 hover-shadow transition-all">
+                        <div class="bg-primary bg-opacity-10 p-3 rounded-circle text-primary">
+                            <i class="bi bi-cash-coin fs-4"></i>
+                        </div>
+                        <div>
+                            <h6 class="fw-bold mb-1">Anticipo</h6>
+                            <span class="small text-muted d-block" style="font-size: 0.75rem;">Registro de pago inicial
+                                (Amortizable)</span>
+                        </div>
+                        <i class="bi bi-chevron-right ms-auto text-muted"></i>
+                    </button>
+
+                    <!-- Estimación (Standard) -->
+                    <button onclick="ComunicadoDetalle.crearMovimiento('ESTIMACION')"
+                        class="btn btn-outline-primary py-3 px-4 text-start border-2 d-flex align-items-center gap-3 hover-shadow transition-all">
+                        <div class="bg-primary bg-opacity-10 p-3 rounded-circle text-primary">
+                            <i class="bi bi-file-earmark-text fs-4"></i>
+                        </div>
+                        <div>
+                            <h6 class="fw-bold mb-1">Estimación</h6>
+                            <span class="small text-muted d-block" style="font-size: 0.75rem;">Avance de obra
+                                regular</span>
+                        </div>
+                        <i class="bi bi-chevron-right ms-auto text-muted"></i>
+                    </button>
+
+                    <!-- Finiquito -->
+                    <button onclick="ComunicadoDetalle.crearMovimiento('FINIQUITO')"
+                        class="btn btn-outline-primary py-3 px-4 text-start border-2 d-flex align-items-center gap-3 hover-shadow transition-all">
+                        <div class="bg-primary bg-opacity-10 p-3 rounded-circle text-primary">
+                            <i class="bi bi-flag-fill fs-4"></i>
+                        </div>
+                        <div>
+                            <h6 class="fw-bold mb-1">Finiquito</h6>
+                            <span class="small text-muted d-block" style="font-size: 0.75rem;">Cierre de contrato y
+                                balance final</span>
+                        </div>
+                        <i class="bi bi-chevron-right ms-auto text-muted"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    /* Custom Table Inputs - Enhanced Visual Style */
+    .input-editable {
+        background-color: #fff;
+        border: 1px solid #dee2e6;
+        border-radius: 4px;
+        padding: 4px 8px;
+        transition: all 0.2s ease-in-out;
+        box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.05);
+        font-weight: 500;
+        width: 100%;
+    }
+
+    .input-editable:focus {
+        border-color: #86b7fe;
+        box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.15);
+        outline: 0;
+        background-color: #fff;
+    }
+
+    .input-editable::placeholder {
+        color: #adb5bd;
+        font-weight: 400;
+        font-size: 0.75rem;
+    }
+
+    /* Readonly Inputs - Clear distinction from editable */
+    .input-readonly {
+        background-color: transparent;
+        border: 1px solid transparent;
+        /* Keeps sizing consistent with editable */
+        border-bottom: 1px dashed #e9ecef;
+        /* Subtle guide line */
+        color: #6c757d;
+        font-weight: 500;
+        padding: 4px 8px;
+        cursor: default;
+        width: 100%;
+        box-shadow: none;
+    }
+
+    .input-readonly:focus {
+        outline: none;
+        box-shadow: none;
+        border-color: transparent;
+    }
+
+    /* Currency inputs specific alignment */
+    .currency-input {
+        text-align: right;
+        font-family: var(--bs-font-monospace);
+    }
+
+    /* Highlight for calculated/special readonly fields */
+    .input-readonly.text-success {
+        background-color: rgba(25, 135, 84, 0.05);
+        border-radius: 4px;
+        border-bottom: none;
+    }
+
+    .input-readonly.text-muted {
+        opacity: 0.7;
+    }
+
+    /* Table row hover effect to highlight active row */
+    tr:hover .input-readonly {
+        border-bottom-color: #dee2e6;
+    }
+</style>
