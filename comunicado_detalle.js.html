@@ -449,6 +449,28 @@
             const content = document.getElementById('detalle-content');
             if (content) content.classList.remove('d-none');
         }
+
+        function _renderFinanciero() {
+            // Render Table Constructora
+            if (dom.estimacionesList) {
+                dom.estimacionesList.innerHTML = '';
+                _renderTableConstructora(dom.estimacionesList);
+            }
+            // Render Table Supervision
+            if (dom.estimacionesListSupervision) {
+                dom.estimacionesListSupervision.innerHTML = '';
+                // Prefer NEW renderer if available (handles placeholders)
+                if (typeof _renderTableSupervisionNew === 'function') {
+                    _renderTableSupervisionNew(dom.estimacionesListSupervision);
+                } else if (typeof _renderTableSupervision === 'function') {
+                    _renderTableSupervision(dom.estimacionesListSupervision);
+                }
+            }
+            // Update Summary Cards
+            if (typeof _updateResumenFinanciero === 'function') {
+                _updateResumenFinanciero();
+            }
+        }
         async function _addEstimacion(entidad, tipoManual = null) {
             const tiposDisponibles = entidad === 'SUPERVISION'
                 ? ['ANTICIPO', 'ESTIMACION', 'FINIQUITO']
@@ -1235,194 +1257,110 @@
         }
 
         function _updateResumenFinanciero() {
-            const presItems = state.data.presupuesto || [];
-            const estimaciones = state.data.estimaciones || [];
+            try {
+                // Helper de seguridad para numeros (quita $ y ,)
+                const safeFloat = (val) => parseFloat(String(val).replace(/[^0-9.-]+/g, '')) || 0;
 
-            // Deduplicate facturas to prevent double counting
-            const rawFacturas = state.data.facturasEstimaciones || [];
-            const facturas = [...new Map(rawFacturas.map(f => [f.id, f])).values()];
+                // 1. OBTENER DATOS BASE
+                const estAll = state.data.estimaciones || [];
+                const presAll = state.data.presupuesto || [];
+                const ultPres = presAll.length > 0 ? presAll[presAll.length - 1] : null;
 
-            // --- 1. CONSTRUCTORA CALCULATION ---
-            // A. Autorizado (Importe Obra from Budget)
-            let autorizadoConst = 0;
-            let autorizadoSup = 0;
+                // Debug para verificar datos
+                console.log('FinanceUpdate: Total Estimaciones encontradas:', estAll.length);
 
-            // Define Estimations Groups (Case Insensitive)
-            const estConst = estimaciones.filter(e => (e.entidad || 'CONSTRUCTORA').toUpperCase() === 'CONSTRUCTORA' && e.estatusInterno !== 'CANCELADO');
-            const estSup = estimaciones.filter(e => (e.entidad || 'CONSTRUCTORA').toUpperCase() === 'SUPERVISION' && e.estatusInterno !== 'CANCELADO');
+                // 2. FUNCIÓN DE CÁLCULO POR ENTIDAD
+                const calculateEntity = (entidad) => {
+                    // Filtrar solo las estimaciones de esta entidad activas
+                    const est = estAll.filter(e => (e.entidad || 'CONSTRUCTORA') === entidad && e.estatusInterno !== 'CANCELADO');
 
-            if (presItems.length > 0) {
-                const last = presItems[presItems.length - 1]; // Presupuesto Vigente
-                // Importe Obra
-                const mCapturado = parseFloat(last.montoCapturado);
-                const hasCapturado = !isNaN(mCapturado) && last.montoCapturado !== '' && last.montoCapturado !== null;
-                autorizadoConst = hasCapturado ? mCapturado : (parseFloat(last.monto) || 0);
+                    // AUTORIZADO (Presupuesto)
+                    let autorizado = 0;
+                    if (ultPres) {
+                        if (entidad === 'CONSTRUCTORA') {
+                            autorizado = (ultPres.montoCapturado !== null && !isNaN(parseFloat(ultPres.montoCapturado)))
+                                ? parseFloat(ultPres.montoCapturado)
+                                : safeFloat(ultPres.monto);
+                        } else {
+                            autorizado = safeFloat(ultPres.montoSupervision);
+                        }
+                    }
 
-                // Supervision
-                autorizadoSup = parseFloat(last.montoSupervision) || 0;
+                    // ESTIMADO: Suma del MONTO de estimaciones y finiquitos (Excluye Anticipos)
+                    // LOGICA CORREGIDA: Prioridad montoAutorizado > monto
+                    const estimado = est
+                        .filter(e => {
+                            const t = String(e.tipo || '').toUpperCase().trim();
+                            // Sumar si es Estimación (2) o Finiquito (3)
+                            return ['2', 'ESTIMACION', '3', 'FINIQUITO'].includes(t);
+                        })
+                        .reduce((acc, e) => {
+                            // AQUÍ ESTABA EL ERROR EN FRONTEND:
+                            // Debemos checar si existe montoAutorizado primero, igual que el backend
+                            const valor = safeFloat(e.montoAutorizado) || safeFloat(e.monto) || 0;
+                            return acc + valor;
+                        }, 0);
 
-                // Update Header Budget Label
-                if (dom.presupuesto.totalLabel) {
-                    dom.presupuesto.totalLabel.textContent = _formatCurrency(autorizadoConst + autorizadoSup);
+                    // EJERCIDO: Suma de montos de estimaciones/finiquitos con estatus PAGADO
+                    // EJERCIDO: Suma de Facturas VIGENTES (No canceladas, excluye complementos)
+                    // Filtramos facturas que pertenecen a las estimaciones de esta entidad
+                    const idsEstimacionesEntidad = est.map(e => String(e.id));
+                    const facturasVigentes = (state.data.facturasEstimaciones || [])
+                        .filter(f =>
+                            idsEstimacionesEntidad.includes(String(f.idEstimacion)) &&
+                            f.estatusSAT !== 'CANCELADO' &&
+                            (f.tipo != 2 && String(f.tipo).toUpperCase() !== 'COMPLEMENTO')
+                        );
+
+                    // User Req: "Suma de netos (monto - amortizacion)". 
+                    // Asumimos que f.monto ya es el Neto (por la logica de addFactura) o el valor nominal.
+                    const ejercido = facturasVigentes.reduce((acc, f) => acc + (parseFloat(f.monto) || 0), 0);
+
+                    // AVANCE FISICO
+                    const avFisico = est.reduce((acc, e) => acc + safeFloat(e.montoAvanceFisico), 0);
+
+                    // POR EJERCER: Importe (Autorizado) - Ejercido (Pagado)
+                    const porEjercer = autorizado - ejercido;
+
+                    return { autorizado, estimado, ejercido, avFisico, porEjercer };
+                };
+
+                const dataConst = calculateEntity('CONSTRUCTORA');
+                console.log('FinanceUpdate: CONSTRUCTORA Calc:', dataConst); // Log para debug
+
+                const dataSup = calculateEntity('SUPERVISION');
+                console.log('FinanceUpdate: SUPERVISION Calc:', dataSup);   // Log para debug
+
+                // --- ACTUALIZACION DOM CONSTRUCTORA ---
+                const uiC = dom.financiero.resumen;
+
+                // Re-usemos _renderDualAmount si está disponible para mantener estilo
+                if (typeof _renderDualAmount === 'function') {
+                    // Helper Percentage
+                    const getPct = (val, total) => total > 0 ? (val / total) * 100 : 0;
+
+                    // CONSTRUCTORA
+                    if (uiC.autorizado) uiC.autorizado.textContent = typeof _formatCurrency === 'function' ? _formatCurrency(dataConst.autorizado) : dataConst.autorizado;
+                    _renderDualAmount(uiC.estimado, dataConst.estimado, getPct(dataConst.estimado, dataConst.autorizado), 'text-warning', dataConst.autorizado, 'ESTIMADO');
+                    _renderDualAmount(uiC.ejercido, dataConst.ejercido, getPct(dataConst.ejercido, dataConst.autorizado), 'text-success', dataConst.autorizado, 'EJERCIDO');
+                    _renderDualAmount(uiC.avanceFisico, dataConst.avFisico, getPct(dataConst.avFisico, dataConst.autorizado), 'text-secondary', dataConst.autorizado, 'AV. FISICO');
+                    if (uiC.porEjercer) _renderDualAmount(uiC.porEjercer, dataConst.porEjercer, 0, '', dataConst.autorizado, 'POR EJERCER');
+
+                    // SUPERVISION
+                    const uiS = dom.financiero.resumenSupervision;
+                    if (uiS && uiS.autorizado) uiS.autorizado.textContent = typeof _formatCurrency === 'function' ? _formatCurrency(dataSup.autorizado) : dataSup.autorizado;
+                    _renderDualAmount(uiS.estimado, dataSup.estimado, getPct(dataSup.estimado, dataSup.autorizado), 'text-warning');
+                    _renderDualAmount(uiS.ejercido, dataSup.ejercido, getPct(dataSup.ejercido, dataSup.autorizado), 'text-success');
+                    if (uiS.porEjercer) {
+                        uiS.porEjercer.textContent = typeof _formatCurrency === 'function' ? _formatCurrency(dataSup.porEjercer) : `$${dataSup.porEjercer}`;
+                        uiS.porEjercer.style.color = dataSup.porEjercer < 0 ? '#dc3545' : '#6f42c1';
+                    }
                 }
-            } else {
-                if (dom.presupuesto.totalLabel) dom.presupuesto.totalLabel.textContent = _formatCurrency(0);
+            } catch (err) {
+                console.error('CRITICAL ERROR in _updateResumenFinanciero:', err);
             }
-
-            // B. Estimado (Constructora) [PATCHED]
-
-            // --- FIXED LOGIC START ---
-            const cleanNumFixed = (val) => parseFloat(String(val).replace(/[^0-9.-]+/g, '')) || 0;
-            const sourceEstsFixed = state.data.estimaciones || [];
-            const estOnlyFixed = sourceEstsFixed.filter(e => {
-                const ent = String(e.entidad || 'CONSTRUCTORA').toUpperCase().trim();
-                if (ent !== 'CONSTRUCTORA') return false;
-                if (e.estatusInterno === 'CANCELADO') return false;
-                const t = String(e.tipo || '').toUpperCase();
-                return t === '2' || t === '3' || t.includes('ESTIM') || t.includes('FINIQ');
-            });
-            const estNetoFixed = estOnlyFixed.reduce((sum, e) => sum + (cleanNumFixed(e.monto) - cleanNumFixed(e.amortizacion)), 0);
-            const estTotalFixed = estOnlyFixed.reduce((sum, e) => sum + cleanNumFixed(e.montoTotal), 0);
-
-            if (uiC.estimado) {
-                const percentage = autorizadoConst > 0 ? ((estNetoFixed / autorizadoConst) * 100).toFixed(1) + '%' : '0.0%';
-                uiC.estimado.innerHTML = `
-                    <div class="d-flex justify-content-between align-items-center mb-1">
-                        <span class="text-secondary small fw-semibold"><i class="bi bi-calculator me-1"></i>ESTIMADO</span>
-                        <span class="badge bg-light text-dark border">${percentage}</span>
-                    </div>
-                    <div class="fs-4 fw-bold text-warning">${_formatCurrency(estNetoFixed)}</div>
-                    <div class="small text-muted border-top mt-1 pt-1 ${estTotalFixed > 0 ? '' : 'd-none'}">
-                        <span>Con IVA: </span><span class="fw-semibold text-dark">${_formatCurrency(estTotalFixed)}</span>
-                    </div>
-                 `;
-            }
-            // --- FIXED LOGIC END ---
-            // User Rule: ESTIMADO = SUMA DE IMPORTES NETOS DE ESTIMACIONES + FINIQUITO (EXCLUDE ANTICIPO)
-
-            const cleanNum = (val) => parseFloat(String(val).replace(/[^0-9.-]+/g, '')) || 0;
-
-            const estimacionesOnly = estConst.filter(e => {
-                const t = String(e.tipo || '').toUpperCase().trim();
-                // Include: 2, ESTIMACION, 3, FINIQUITO
-                return ['2', 'ESTIMACION', '3', 'FINIQUITO'].includes(t);
-            });
-
-            // Sum 'Importe Neto' = (Monto - Amortizacion)
-            const estimadoConstNeto = estimacionesOnly.reduce((sum, e) => {
-                const m = cleanNum(e.monto);
-                const a = cleanNum(e.amortizacion);
-                return sum + (m - a);
-            }, 0);
-
-            // Calculate Estimate Total (Sum of stored Totals)
-            const estimadoConstTotal = estimacionesOnly.reduce((sum, e) => sum + cleanNum(e.montoTotal), 0);
-
-            // C. Ejercido (Constructora)
-            // User Rule: EJERCIDO = SUMA DE MONTOS FACTURADOS (INCLUYE ANTICIPOS)
-            // Sum of 'monto' (Net) and 'total' (Gross) from ALL Facturas belonging to Constructora Estimaciones
-            const idsEstConst = estConst.map(e => e.id); // All Constructora estimations (Anticipo, Est, Finiquito)
-
-            // Filter facturas linked to these estimations
-            const factConst = facturas.filter(f => idsEstConst.includes(f.idEstimacion)
-                && (f.estatusSAT === 'PAGADO' || f.estatusSAT === 'VIGENTE')
-                && (f.tipo == 1 || String(f.tipo || '').toUpperCase() === 'FACTURA' || String(f.tipo || '').toUpperCase() === 'COMPLEMENTO'));
-
-            const ejercidoConstNeto = factConst.reduce((sum, f) => sum + cleanNum(f.monto), 0);
-            const ejercidoConstTotal = factConst.reduce((sum, f) => sum + cleanNum(f.total), 0);
-
-            // D. Por Ejercer
-            // Autorizado - Ejercido (Net based)
-            const porEjercerConstNeto = autorizadoConst - ejercidoConstNeto;
-
-            // E. Avance Fisico
-            // User Rule: AV FISICO = SUMA DE AVANCES FISICOS (SOLO ESTIMACIONES)
-            // Use the already filtered 'estimacionesOnly' array
-            const avFisicoConst = estimacionesOnly.reduce((sum, e) => sum + (parseFloat(e.montoAvanceFisico) || 0), 0);
-
-
-            // --- UPDATE UI CONSTRUCTORA ---
-            const uiC = dom.financiero.resumen;
-            if (uiC.autorizado) uiC.autorizado.textContent = _formatCurrency(autorizadoConst);
-
-            // Dual display for Estimado
-            // _renderDualAmount(uiC.estimado, estimadoConstNeto, estimadoConstTotal, 'text-warning', autorizadoConst, 'ESTIMADO');
-
-            // Dual display for Ejercido
-            _renderDualAmount(uiC.ejercido, ejercidoConstNeto, ejercidoConstTotal, 'text-success', autorizadoConst, 'EJERCIDO');
-
-            // Avance Fisico with Progress Bar
-            _renderDualAmount(uiC.avanceFisico, avFisicoConst, 0, 'text-secondary', autorizadoConst, 'AV. FISICO');
-
-            if (uiC.porEjercer) {
-                // For "Por Ejercer", use _renderDualAmount to show percentage and purple progress bar
-                _renderDualAmount(uiC.porEjercer, porEjercerConstNeto, 0, '', autorizadoConst, 'POR EJERCER');
-            }
-            // NOTE: Total footer is correctly calculated in _renderFinanciero() - removed duplicate update that was overwriting with wrong value
-
-
-            // --- 2. SUPERVISION CALCULATION ---
-            // A. Autorizado (Calculated above)
-
-            // B. PAGADO (Antes Estimado) (Supervision)
-            // Logic: Sum of all COMPLEMENTS (Type 2) linked to Supervision Estimations
-            // B. PAGADO (Antes Estimado) (Supervision)
-            // Logic: Sum of all COMPLEMENTS (Type 2) linked to Supervision Estimations
-            const idsEstSup = estSup.map(e => String(e.id));
-            const complementsSup = facturas.filter(f =>
-                idsEstSup.includes(String(f.idEstimacion)) &&
-                (f.tipo == 2 || String(f.tipo).toUpperCase() === 'COMPLEMENTO') &&
-                f.estatusSAT !== 'CANCELADO'
-            );
-
-            const pagadoSupNeto = complementsSup.reduce((sum, f) => sum + (parseFloat(f.monto) || 0), 0);
-            const pagadoSupTotal = complementsSup.reduce((sum, f) => sum + (parseFloat(f.total) || 0), 0);
-
-            // Keep 'estimadoSup' vars for UI mapping, but assigning Pagado values
-            const estimadoSupNeto = pagadoSupNeto;
-            const estimadoSupTotal = pagadoSupTotal;
-
-            // C. Ejercido (Supervision)
-            // idsEstSup already defined above
-            // STRICT FILTER: Only 'FACTURA' type
-            const factSup = facturas.filter(f => idsEstSup.includes(f.idEstimacion)
-                && (f.estatusSAT === 'PAGADO' || f.estatusSAT === 'VIGENTE')
-                && (f.tipo || '').toUpperCase() === 'FACTURA');
-
-            // FIXED: Use 'monto' instead of 'subtotal'
-            const ejercidoSupNeto = factSup.reduce((sum, f) => sum + (parseFloat(f.monto) || 0), 0);
-            const ejercidoSupTotal = factSup.reduce((sum, f) => sum + (parseFloat(f.total) || 0), 0);
-
-            // D. Por Ejercer
-            const porEjercerSupNeto = autorizadoSup - ejercidoSupNeto;
-
-            // E. Avance Fisico
-            const avFisicoSup = estSup.reduce((sum, e) => sum + (parseFloat(e.montoAvanceFisico) || 0), 0);
-
-            // --- UPDATE UI SUPERVISION ---
-            const uiS = dom.financiero.resumenSupervision;
-            if (uiS && uiS.autorizado) uiS.autorizado.textContent = _formatCurrency(autorizadoSup);
-
-            // Dual display for Estimado Sup
-            _renderDualAmount(uiS.estimado, estimadoSupNeto, estimadoSupTotal, 'text-warning');
-
-            // Dual display for Ejercido Sup
-            _renderDualAmount(uiS.ejercido, ejercidoSupNeto, ejercidoSupTotal, 'text-success');
-
-            if (uiS && uiS.avanceFisico) {
-                const card = uiS.avanceFisico.closest('.card') || uiS.avanceFisico.parentElement;
-                if (card) card.style.display = 'none';
-            }
-
-            if (uiS && uiS.porEjercer) {
-                uiS.porEjercer.textContent = _formatCurrency(porEjercerSupNeto);
-                // FIX: Remove text-success
-                uiS.porEjercer.className = `fs-5 fw-bold ${porEjercerSupNeto < 0 ? 'text-danger' : ''}`;
-                uiS.porEjercer.style.color = porEjercerSupNeto < 0 ? '#dc3545' : '#6f42c1';
-            }
-            if (dom.financiero.totalSupervision) dom.financiero.totalSupervision.textContent = _formatCurrency(estimadoSupTotal);
-
         }
+
 
         // --- EQUIPO & CONTRATISTAS ---
         function _renderEquipo() {
@@ -1799,7 +1737,7 @@
             }
             // Recálculo del Total Facturado
             const sub = (parseFloat(item.montoEjecutado) || 0) - (parseFloat(item.amortizacion) || 0);
-            item.totalFacturado = sub * (1 + IVA_RATE);
+            item.totalFacturado = sub * 1.16;
             _renderFinanciero();
         }
 
@@ -1891,240 +1829,7 @@
             return `<span class="badge ${colorClass} border-0">${s.replace('_', ' ')}</span>`;
         }
 
-        function _updateResumenFinanciero() {
-            // Helper de seguridad para numeros
-            const safeFloat = (val) => parseFloat(String(val).replace(/[^0-9.-]+/g, '')) || 0;
 
-            // 1. OBTENER DATOS BASE
-            const estAll = state.data.estimaciones || [];
-            const facturasAll = state.data.facturasEstimaciones || [];
-            const presAll = state.data.presupuesto || [];
-            const ultPres = presAll.length > 0 ? presAll[presAll.length - 1] : null;
-
-            // 2. FUNCIÓN DE CÁLCULO POR ENTIDAD
-            const calculateEntity = (entidad) => {
-                const est = estAll.filter(e => (e.entidad || 'CONSTRUCTORA') === entidad && e.estatusInterno !== 'CANCELADO');
-                const idsEst = est.map(e => String(e.id));
-                const facturas = facturasAll.filter(f => idsEst.includes(String(f.idEstimacion)) && f.estatusSAT !== 'CANCELADO' && (f.tipo == 1 || f.tipo === 'FACTURA'));
-
-                // A. Totales Tabla (Footer)
-                // Neto = Monto - Amortizacion
-                const totalMonto = est.reduce((acc, e) => acc + safeFloat(e.monto), 0);
-                const totalAmort = est.reduce((acc, e) => acc + safeFloat(e.amortizacion), 0);
-                const totalNeto = totalMonto - totalAmort;
-                const totalIva = est.reduce((acc, e) => acc + safeFloat(e.iva), 0);
-                const totalTotal = est.reduce((acc, e) => acc + safeFloat(e.montoTotal), 0);
-
-                // B. Totales Tarjetas (Reglas Específicas)
-
-                // AUTORIZADO: Presupuesto
-                let autorizado = 0;
-                if (ultPres) {
-                    const field = entidad === 'CONSTRUCTORA' ? 'montoCapturado' : 'montoSupervision';
-                    const fallbackField = entidad === 'CONSTRUCTORA' ? 'monto' : 'montoSupervision';
-
-                    if (entidad === 'CONSTRUCTORA') {
-                        autorizado = (ultPres.montoCapturado !== null && !isNaN(parseFloat(ultPres.montoCapturado)))
-                            ? parseFloat(ultPres.montoCapturado)
-                            : safeFloat(ultPres.monto);
-                    } else {
-                        autorizado = safeFloat(ultPres.montoSupervision);
-                    }
-                }
-
-                // ESTIMADO: Suma del NETO de estimaciones (EXCEPTO ANTICIPO)
-                // Regla: Solo sumar Neto si tipo != 'ANTICIPO'
-                // ESTIMADO: Suma del NETO de estimaciones (EXCEPTO ANTICIPO)
-                // Regla: Solo sumar Neto si tipo != 'ANTICIPO' (o tipo != 2)
-                const estimado = est
-                    .filter(e => {
-                        const t = String(e.tipo || '').toUpperCase();
-                        // Exclude Anticipos (String 'ANTICIPO' or Type ID 1)
-                        return t !== 'ANTICIPO' && t !== '1';
-                    })
-                    .reduce((acc, e) => acc + (safeFloat(e.monto) - safeFloat(e.amortizacion)), 0);
-
-                // EJERCIDO: Suma de todas las facturas vigentes (Total/Gross)
-                // Regla: "Tanto de anticipo y estimaciones (NETO)".
-                // Interpretación: Suma de importes de facturas. Usaremos Total Factura.
-                const ejercido = facturas.reduce((acc, f) => acc + safeFloat(f.monto), 0);
-
-                // AVANCE FISICO: Suma de todos los avances fisicos
-                const avFisico = est.reduce((acc, e) => acc + safeFloat(e.montoAvanceFisico), 0);
-
-                // POR EJERCER: Autorizado - Ejercido
-                const porEjercer = autorizado - ejercido;
-
-                return {
-                    totalNeto, totalIva, totalTotal,
-                    autorizado, estimado, ejercido, avFisico, porEjercer
-                };
-            };
-
-            const dataConst = calculateEntity('CONSTRUCTORA');
-            const dataSup = calculateEntity('SUPERVISION');
-
-            // --- AJUSTE LOGICA GLOBAL (User Request: Misma lógica Constructora y Supervisión) ---
-            // "Las tarjetas deberán ser: Nuevo Importe con Reclamo (Autorizado), Ejercido (Facturado), Pagado (Estimado) y Por Ejercer"
-
-            // Función helper para calcular PAGADO (Facturas estatus 'PAGADO')
-            const calculatePagado = (entidad) => {
-                const estEntidad = state.data.estimaciones.filter(e => {
-                    const t = String(e.tipo || '').toUpperCase();
-                    const isConstructora = (e.entidad || 'CONSTRUCTORA') === 'CONSTRUCTORA';
-
-                    // Filter:
-                    // 1. Must belong to the entity.
-                    if ((e.entidad || 'CONSTRUCTORA') !== entidad) return false;
-
-                    // 2. If 'CONSTRUCTORA', Exclude Anticipos (Estimado Logic)
-                    // 3. If 'SUPERVISION', Include Everything (Total Paid Logic)
-                    if (entidad === 'CONSTRUCTORA') {
-                        return t !== 'ANTICIPO' && t !== '1';
-                    }
-
-                    return true;
-                });
-                const ids = estEntidad.map(e => String(e.id));
-                const facturasPagadas = (state.data.facturasEstimaciones || [])
-                    .filter(f => ids.includes(String(f.idEstimacion)) && f.estatusSAT === 'PAGADO');
-                // Sumamos MONTO (Subtotal) NO Total con IVA, por requerimiento de usuario.
-                return facturasPagadas.reduce((acc, f) => acc + (parseFloat(f.monto) || 0), 0);
-            };
-
-            // Recalcular 'estimado' como 'Pagado' para AMBAS entidades
-            const pagadoSup = calculatePagado('SUPERVISION');
-            dataSup.estimado = pagadoSup;
-
-            const pagadoConst = calculatePagado('CONSTRUCTORA');
-            dataConst.estimado = pagadoConst;
-
-            // 'Ejercido' se mantiene (Suma de Facturacion Vigente/Pagada/Todas menos canceladas)
-            // 'Por Ejercer' se mantiene (Autorizado - Ejercido)
-
-            // Ocultar Avance Fisico para Supervision (lo haremos en updateCard o via CSS, aqui preparamos datos)
-            // dataSup.avFisico se ignora.
-
-            // --- C. ACTUALIZACION DOM (TABLAS FOOTER) ---
-            const updateFooter = (prefix, data) => {
-                if (dom.financiero[prefix].neto) dom.financiero[prefix].neto.textContent = _formatCurrency(data.totalNeto);
-                if (dom.financiero[prefix].iva) dom.financiero[prefix].iva.textContent = _formatCurrency(data.totalIva);
-                if (dom.financiero[prefix].total) dom.financiero[prefix].total.textContent = _formatCurrency(data.totalTotal);
-            };
-            updateFooter('resumen', dataConst);
-            updateFooter('resumenSupervision', dataSup);
-
-
-            // --- D. ACTUALIZACION DOM (TARJETAS + PROGRES BAR) ---
-            const updateCard = (elId, val, baseRef, colorClass) => {
-                const el = document.getElementById(elId);
-                if (!el) return;
-                el.textContent = _formatCurrency(val);
-
-                const cardBody = el.closest('.card-body');
-                if (!cardBody) return;
-
-                // 1. Porcentaje (Badge)
-                let badge = cardBody.querySelector('.pct-badge');
-                if (!badge) {
-                    badge = document.createElement('span');
-                    badge.className = 'pct-badge position-absolute top-0 end-0 m-2 badge bg-light text-dark border';
-                    badge.style.fontSize = '0.75rem';
-                    const card = el.closest('.card');
-                    if (card) {
-                        card.classList.add('position-relative');
-                        card.appendChild(badge);
-                    }
-                }
-
-                if (baseRef > 0 && val !== 0) {
-                    const pct = (val / baseRef) * 100;
-                    badge.textContent = pct.toFixed(1) + '%';
-                    badge.classList.remove('d-none');
-                } else {
-                    badge.classList.add('d-none');
-                }
-
-                // 2. Línea de Progreso (Bar)
-                let progressContainer = cardBody.querySelector('.card-progress-container');
-                if (!progressContainer) {
-                    progressContainer = document.createElement('div');
-                    progressContainer.className = 'card-progress-container mt-2';
-                    progressContainer.style.height = '4px';
-                    progressContainer.style.backgroundColor = '#e9ecef';
-                    progressContainer.style.borderRadius = '2px';
-                    progressContainer.style.overflow = 'hidden';
-
-                    const bar = document.createElement('div');
-                    bar.className = 'card-progress-bar h-100';
-                    bar.style.width = '0%';
-                    bar.style.transition = 'width 0.5s ease';
-
-                    progressContainer.appendChild(bar);
-                    cardBody.appendChild(progressContainer);
-                }
-
-                const bar = progressContainer.querySelector('.card-progress-bar');
-                if (bar) {
-                    // Set color based on passed class or inherit from card
-                    const mapColor = {
-                        'primary': '#0d6efd',
-                        'warning': '#ffc107',
-                        'success': '#198754',
-                        'secondary': '#6c757d',
-                        'info': '#0dcaf0',
-                        'purple': '#6f42c1'
-                    };
-                    bar.style.backgroundColor = mapColor[colorClass] || '#0d6efd';
-
-                    // Calc width
-                    let w = 0;
-                    // Logic: Autorizado is 100% of itself. Others relative to Autorizado.
-                    // Except Avance Fisico? Usually relative to Autorizado or logic.
-                    if (elId.includes('autorizado')) w = 100;
-                    else if (baseRef > 0) w = (val / baseRef) * 100;
-
-                    // Limit visual width to 100? or allow overflow? usually capped at 100 for visual bar
-                    if (w > 100) w = 100;
-                    if (w < 0) w = 0;
-
-                    bar.style.width = w + '%';
-                }
-            };
-
-            // Cards Constructora
-            const autoC = dataConst.autorizado;
-            updateCard('fin-autorizado', autoC, autoC, 'primary');
-            updateCard('fin-estimado', dataConst.estimado, autoC, 'warning');
-            updateCard('fin-ejercido', dataConst.ejercido, autoC, 'success');
-            updateCard('fin-avance-fisico', dataConst.avFisico, autoC, 'secondary');
-            updateCard('fin-por-ejercer', dataConst.porEjercer, autoC, 'purple');
-
-            // Cards Supervision
-            const autoS = dataSup.autorizado;
-            // Card 1: Nuevo Importe / Autorizado (Blue)
-            updateCard('fin-autorizado-sup', autoS, autoS, 'primary');
-
-            // Card 2: PAGADO (Mapped to 'estimado' slot - Yellow)
-            // Label visual en HTML debería decir "PAGADO" (User responsibility or we update text content if accesssible)
-            const elEstLabel = document.getElementById('fin-estimado-sup-label'); // Hypothetical ID, or we assume user understands the slot changes value.
-            // Update value:
-            updateCard('fin-estimado-sup', dataSup.estimado, autoS, 'warning');
-            // Update Label if possible (try-catch implicit)
-            const cardTitleEst = document.getElementById('fin-estimado-sup')?.closest('.card')?.querySelector('.card-header-title'); // Generic guess
-            // Since we dont have the HTML structure for labels, we rely on the user check or generic slot usage.
-            // BUT, we can try to find the label by traversing up.
-
-            // Card 3: Ejercido (Green)
-            updateCard('fin-ejercido-sup', dataSup.ejercido, autoS, 'success');
-
-            // Card 4: Avance Fisico (Grey) -> REMOVE / HIDE
-            const cardAvFis = document.getElementById('fin-avance-fisico-sup')?.closest('.card');
-            if (cardAvFis) cardAvFis.style.display = 'none';
-
-            // Card 5: Por Ejercer (Purple)
-            updateCard('fin-por-ejercer-sup', dataSup.porEjercer, autoS, 'purple');
-        }
 
         function _renderContratistasSelector() {
             const select = document.getElementById('select-contratista-main');
@@ -2210,7 +1915,9 @@
             _renderEntidadTable('SUPERVISION', dom.financiero.bodySupervision, dom.financiero.resumenSupervision);
 
             // Update Totals/Summaries
+            // Update Totals/Summaries
             _updateResumenFinanciero();
+            _updateTableTotals('CONSTRUCTORA');
         }
 
         function _renderEntidadTable(entidad, container, resumenUI) {
@@ -2479,6 +2186,7 @@
                 _appendEstimacionRowPair(tbody, est);
             });
             container.appendChild(table);
+            _updateTableTotals('CONSTRUCTORA');
         }
 
         function _renderTableSupervision(container) {
@@ -2661,7 +2369,7 @@
 
             tr.innerHTML = `
                 <td class="text-center text-muted"><i class="bi bi-link-45deg" title="Estimación Contratista Vinculada"></i></td>
-                <td><span class="badge bg-secondary bg-opacity-10 text-secondary border border-secondary border-opacity-25" style="font-size: 0.7rem;">${est.tipo}</span></td>
+                <td><span class="badge bg-secondary bg-opacity-10 text-secondary border border-secondary border-opacity-25" style="font-size: 0.7rem;">${({ 1: 'ANTICIPO', 2: 'ESTIMACION', 3: 'FINIQUITO' }[est.tipo] || est.tipo)}</span></td>
                 <td class="fw-bold text-muted text-center">${est.numero}</td>
                 <td class="text-muted">${_formatDateISO(est.fechaCorte)}</td>
                 <td class="text-end font-monospace text-muted text-truncate">${_formatCurrency(est.montoAvanceFisico)}</td>
@@ -2730,7 +2438,7 @@
                     <div class="d-flex w-100 justify-content-between align-items-center">
                         <div>
                             <div class="mb-1 d-flex align-items-center gap-2">
-                                <span class="badge bg-light text-dark border">${est.tipo} ${est.numero}</span>
+                                <span class="badge bg-light text-dark border">${({ '1': 'ANTICIPO', '2': 'ESTIMACION', '3': 'FINIQUITO' }[String(est.tipo)] || est.tipo)} ${est.numero}</span>
                                 <small class="text-muted">${_formatDateISO(est.fechaCorte)}</small>
                             </div>
                             <small class="text-muted d-block">Monto Neto: <span class="fw-bold text-dark">${_formatCurrency(neto)}</span></small>
@@ -2808,11 +2516,32 @@
                     // Default is ESTIMACION. If user chose ANTICIPO or FINIQUITO, update.
                     if (tipo !== 'ESTIMACION') {
                         const updatePayload = { tipo: tipo };
-                        // We can also reset numbering if needed? 
-                        // "registrarEstimacion" calculated number based on "ESTIMACION".
-                        // If we change to ANTICIPO, maybe number should be A?
 
-                        // For now just update type.
+                        // --- NUEVO: CALCULO AMORTIZACION FINIQUITO ---
+                        // "Amortización del finiquito debe ser del monto neto del anticipo menos la suma de todas las amortizaciones"
+                        if (tipo === 'FINIQUITO' || tipo === 3) {
+                            const supervisionEsts = (state.data.estimaciones || [])
+                                .filter(e => (e.entidad || 'CONSTRUCTORA') === 'SUPERVISION' && e.estatusInterno !== 'CANCELADO');
+
+                            const totalAnticipo = supervisionEsts
+                                .filter(e => String(e.tipo) === 'ANTICIPO' || String(e.tipo) === '1')
+                                .reduce((sum, e) => sum + (parseFloat(e.monto) || 0), 0);
+
+                            const totalAmortizado = supervisionEsts
+                                .filter(e => String(e.tipo) === 'ESTIMACION' || String(e.tipo) === '2')
+                                .reduce((sum, e) => sum + (parseFloat(e.amortizacion) || 0), 0);
+
+                            // Amortización Faltante
+                            const amortizacionFaltante = Math.max(0, totalAnticipo - totalAmortizado);
+
+                            if (amortizacionFaltante > 0) {
+                                updatePayload.amortizacion = parseFloat(amortizacionFaltante.toFixed(2));
+                                console.log(`[Finiquito Supervisión] Amortización calculada: ${totalAnticipo} (Anticipos) - ${totalAmortizado} (Amortizado) = ${updatePayload.amortizacion}`);
+                            }
+                        }
+                        // ----------------------------------------------
+
+                        // For now just update type and potentially amortization.
                         await serverCall('actualizarRegistro', 'estimaciones', result.id, updatePayload);
                     }
 
@@ -2988,13 +2717,17 @@
                     const isLinked = (state.data.estimaciones || [])
                         .some(e => String(e.idRelacionada) === String(est.id) && e.estatusInterno !== 'CANCELADO');
 
-                    const canDelete = isLast && !hasDeps && !isPaid && !isLinked && !isAmortized;
+                    const isPendiente = est.estatusInterno === 'PENDIENTE';
+                    // Relaxed Rule for Supervision: Allow delete if PENDIENTE even if not last (to fix date errors)
+                    const ignoreLifo = isSupervision && isPendiente;
+
+                    const canDelete = (isLast || ignoreLifo) && !hasDeps && !isPaid && !isLinked && !isAmortized;
 
                     let reason = 'Eliminar';
                     if (isPaid) reason = 'Estimación PAGADA';
                     else if (hasDeps) reason = 'Tiene facturas asociadas (Regla Jerárquica)';
                     else if (isLinked) reason = 'Vinculada a Supervisión';
-                    else if (!isLast) reason = 'Existe una estimación posterior (Regla Secuencial LIFO)';
+                    else if (!isLast && !ignoreLifo) reason = 'Existe una estimación posterior (Regla Secuencial LIFO)';
                     else if (isAmortized) reason = 'Anticipo ya amortizado (Regla de Flujo)';
 
                     return `
@@ -3232,7 +2965,8 @@
                     <div class="d-flex align-items-center" style="padding-left: ${isComplemento ? '25px' : '0'};">
                         <input id="input-factura-folio-${f.id}" type="text" class="${getCls(isReadOnlyData)} fw-bold ${isComplemento ? 'text-secondary font-italic' : 'text-dark'}" 
                             value="${f.folioFactura || ''}" 
-                            onchange="ComunicadoDetalle.updateFactura('${f.id}', 'folioFactura', this.value)" 
+                            aria-label="Folio Fiscal"
+                            oninput="ComunicadoDetalle.updateFactura('${f.id}', 'folioFactura', this.value)"  
                             placeholder="Folio" ${getAttr(isReadOnlyData)}>
                     </div>
                 </td>
@@ -3321,9 +3055,12 @@
             }
 
             // Pre-fill amounts from estimation for user convenience
-            const preFillMonto = parseFloat(est.monto) || 0;
-            const preFillIva = parseFloat(est.iva) || 0;
-            const preFillTotal = parseFloat(est.montoTotal) || 0;
+            // LOGICA REQUERIDA: Si hay amortización, se factura el NETO (Monto - Amortización)
+            const montoSiniestro = parseFloat(est.monto) || 0;
+            const amortizacion = parseFloat(est.amortizacion) || 0;
+            const preFillMonto = Math.max(0, montoSiniestro - amortizacion);
+            const preFillIva = preFillMonto * 0.16;
+            const preFillTotal = preFillMonto + preFillIva;
 
             // Create new temp invoice
             const newFactura = {
@@ -3356,7 +3093,7 @@
             if (field === 'monto') {
                 const monto = parseFloat(val.replace(/[^0-9.-]+/g, '')) || 0;
                 item.monto = monto;
-                item.iva = monto * IVA_RATE;
+                item.iva = monto * 0.16;
                 item.total = monto + item.iva;
 
                 // Smart Update DOM without re-rendering to prevent focus loss (Date inputs etc)
@@ -3384,6 +3121,15 @@
         async function saveFactura(id) {
             const item = (state.data.facturasEstimaciones || []).find(f => String(f.id) === String(id));
             if (!item) return;
+
+            // Defensive Check: Recargar valor desde DOM si falta en state (por si onchange no disparó)
+            if (!item.folioFactura || !item.folioFactura.trim()) {
+                const elFolio = document.getElementById(`input-factura-folio-${id}`);
+                if (elFolio && elFolio.value) {
+                    item.folioFactura = elFolio.value;
+                    console.log('Recuperado folio desde DOM:', item.folioFactura);
+                }
+            }
 
             // Validation
             if (!item.folioFactura || !item.folioFactura.trim()) {
@@ -3648,6 +3394,10 @@
 
                 item.estatusSAT = 'CANCELADO';
                 globalThis.showToast?.('Registro cancelado', 'info');
+
+                // Trigger Status Reversion Check
+                if (item.idEstimacion) await _updateEstimationPaymentStatus(item.idEstimacion);
+
             } catch (e) {
                 console.error(e);
                 _showAlert('Error', 'Error al cancelar: ' + e.message, 'error');
@@ -3658,9 +3408,38 @@
             }
         }
 
+        async function _updateEstimationPaymentStatus(idEstimacion) {
+            const est = (state.data.estimaciones || []).find(e => String(e.id) === String(idEstimacion));
+            if (!est) return;
+
+            const allInvoices = (state.data.facturasEstimaciones || []).filter(f =>
+                String(f.idEstimacion) === String(idEstimacion) &&
+                f.estatusSAT !== 'CANCELADO' &&
+                (f.tipo == 1 || String(f.tipo).toUpperCase() === 'FACTURA')
+            );
+
+            // Logic: If NO invoices, or ANY invoice is NOT PAGADO -> PENDIENTE
+            // If ALL invoices are PAGADO (and >0 active invoices) -> PAGADO
+            const allPaid = allInvoices.length > 0 && allInvoices.every(inv => inv.estatusSAT === 'PAGADO');
+            const newStatus = allPaid ? 'PAGADO' : 'PENDIENTE';
+
+            if (est.estatusInterno !== newStatus) {
+                console.log(`AutoStatus: Reverting Estimacion ${est.numero} to ${newStatus}`);
+                est.estatusInterno = newStatus;
+                est.estatus = newStatus;
+                try {
+                    await serverCall('actualizarRegistro', 'estimaciones', est.id, {
+                        estatusInterno: newStatus,
+                        estatus: newStatus
+                    });
+                } catch (e) { console.error('Error auto-updating est status:', e); }
+            }
+        }
+
         async function removeFactura(id) {
             // Check for dependencies (Complements)
             const item = (state.data.facturasEstimaciones || []).find(f => String(f.id) === String(id));
+            if (!item) return;
 
             // Check dependency
             if (item && (item.tipo == 1 || String(item.tipo).toUpperCase() === 'FACTURA')) {
@@ -3678,10 +3457,14 @@
                 'Eliminar Factura',
                 `¿Desea eliminar la factura <strong>${item ? (item.folioFactura || 'S/N') : ''}</strong>?`,
                 async () => {
+                    const idEstimacion = item.idEstimacion;
+
                     // If temp, just remove from array
                     if (String(id).startsWith('temp-')) {
                         state.data.facturasEstimaciones = state.data.facturasEstimaciones.filter(f => String(f.id) !== String(id));
-                        _renderFinanciero();
+                        _renderFinanciero(); // Re-render first
+                        if (idEstimacion) await _updateEstimationPaymentStatus(idEstimacion);
+                        _renderFinanciero(); // Re-render again with new status
                         return;
                     }
 
@@ -3689,6 +3472,10 @@
                     try {
                         await serverCall('eliminarFactura', id);
                         state.data.facturasEstimaciones = state.data.facturasEstimaciones.filter(f => String(f.id) !== String(id));
+
+                        // Check Status Reversion
+                        if (idEstimacion) await _updateEstimationPaymentStatus(idEstimacion);
+
                         _renderFinanciero();
                         globalThis.showToast?.('Factura eliminada', 'success');
                     } catch (e) {
@@ -4530,7 +4317,7 @@
             const estimacion = (state.data.estimaciones || []).find(e => String(e.id) === String(id));
             if (!estimacion) return;
 
-            // RESTRICTION 0: Chronological LIFO Audit (Rule A)
+            // RESTRICTION 0: Chronological LIFO Audit
             const activeEsts = (state.data.estimaciones || [])
                 .filter(e => e.estatusInterno !== 'CANCELADO' && (e.entidad || 'CONSTRUCTORA') === (estimacion.entidad || 'CONSTRUCTORA')) // Filter by same Entity!
                 .sort((a, b) => {
@@ -4543,8 +4330,14 @@
 
             // Check if last
             const isLast = activeEsts.length > 0 && activeEsts[activeEsts.length - 1].id === estimacion.id;
-            if (!isLast) {
-                _showAlert('Acción Bloqueada (Regla A)', 'Imposible eliminar: Existe una estimación o movimiento posterior. Debe eliminar ese primero (Secuencia LIFO).', 'warning');
+
+            // Relaxed Rule for Supervision: Allow delete if PENDIENTE even if not last (to fix date errors)
+            const isSupervision = (estimacion.entidad || 'CONSTRUCTORA') === 'SUPERVISION';
+            const isPendiente = estimacion.estatusInterno === 'PENDIENTE';
+            const ignoreLifo = isSupervision && isPendiente;
+
+            if (!isLast && !ignoreLifo) {
+                _showAlert('Acción Bloqueada', 'No se puede eliminar porque existe un registro posterior. Elimine el más reciente primero.', 'warning');
                 return;
             }
 
@@ -4552,7 +4345,7 @@
             if (estimacion.tipo === 'ANTICIPO') {
                 const isAmortized = activeEsts.some(e => (parseFloat(e.amortizacion) || 0) > 0);
                 if (isAmortized) {
-                    _showAlert('Acción Bloqueada (Regla A)', 'Este Anticipo ya ha sido amortizado en estimaciones posteriores. No puede eliminarse.', 'warning');
+                    _showAlert('Acción Bloqueada', 'Este Anticipo ya ha sido amortizado en estimaciones posteriores. No puede eliminarse.', 'warning');
                     return;
                 }
             }
@@ -4582,7 +4375,7 @@
             // Confirmación con Modal Genérico (Doble confirmación + Spin)
             _showDeleteModal(
                 'Eliminar Estimación',
-                `¿Está seguro de eliminar <strong>${estimacion.tipo} ${estimacion.numero}</strong> por <strong>${_formatCurrency(estimacion.monto)}</strong>?`,
+                `¿Está seguro de eliminar <strong>${({ '1': 'ANTICIPO', '2': 'ESTIMACION', '3': 'FINIQUITO' }[String(estimacion.tipo)] || estimacion.tipo)} ${estimacion.numero}</strong> por <strong>${_formatCurrency(estimacion.monto)}</strong>?`,
                 async () => {
                     try {
                         // Si es temporal, borrar localmente
@@ -4884,8 +4677,15 @@
             candidates.forEach(c => {
                 const monto = _formatCurrency(c.montoTotal || c.montoAutorizado || c.monto || 0);
                 const date = c.fechaCorte ? new Date(c.fechaCorte).toLocaleDateString() : 'S/F';
-                const icon = c.tipo === 'ANTICIPO' ? 'bi-cash-stack' : c.tipo === 'FINIQUITO' ? 'bi-flag-fill' : 'bi-bricks';
-                const color = c.tipo === 'ANTICIPO' ? 'text-warning' : c.tipo === 'FINIQUITO' ? 'text-success' : 'text-primary';
+
+                // TRADUCCION DE TIPOS (1, 2, 3 -> TEXTO)
+                let tipoNombre = String(c.tipo || '').toUpperCase();
+                const tipoMap = { '1': 'ESTIMACION', '2': 'ANTICIPO', '3': 'FINIQUITO' };
+                if (tipoMap[tipoNombre]) tipoNombre = tipoMap[tipoNombre];
+
+                // Fallback icon/color logic based on resolved name
+                const icon = tipoNombre === 'ANTICIPO' ? 'bi-cash-stack' : tipoNombre === 'FINIQUITO' ? 'bi-flag-fill' : 'bi-bricks';
+                const color = tipoNombre === 'ANTICIPO' ? 'text-warning' : tipoNombre === 'FINIQUITO' ? 'text-success' : 'text-primary';
 
                 listHtml += `
                     <button type="button" class="list-group-item list-group-item-action p-3 mb-2 border rounded shadow-sm d-flex justify-content-between align-items-center"
@@ -4895,7 +4695,7 @@
                                 <i class="bi ${icon} ${color} fs-4"></i>
                             </div>
                             <div>
-                                <h6 class="mb-0 fw-bold text-dark">${c.tipo} No. ${c.numero}</h6>
+                                <h6 class="mb-0 fw-bold text-dark">${tipoNombre} No. ${c.numero}</h6>
                                 <small class="text-muted"><i class="bi bi-calendar3 me-1"></i> ${date} &bull; <span class="badge bg-light text-dark border">${c.estatusInterno || 'N/A'}</span></small>
                             </div>
                         </div>
@@ -5268,8 +5068,51 @@
             calculateTaxForComplemento, // Export helper
             _openModalVinculacion,
             _confirmarVinculacion,
-            _onContratistaFilterChange
+            _confirmarVinculacion,
+            _onContratistaFilterChange,
+            _updateTableTotals // Export helper just in case
         };
+
+        function _updateTableTotals(entidad) {
+            if (!entidad) return;
+            const targetEntidad = entidad.toUpperCase();
+
+            // 1. Filtrar estimaciones activas de esta entidad
+            const items = (state.data.estimaciones || [])
+                .filter(e => (e.entidad || 'CONSTRUCTORA').toUpperCase() === targetEntidad && e.estatusInterno !== 'CANCELADO');
+
+            // 2. Calcular Sumatorias
+            // Neto: monto - amortizacion
+            // IVA: iva
+            // Total: montoTotal
+            let sumNeto = 0;
+            let sumIva = 0;
+            let sumTotal = 0;
+
+            items.forEach(item => {
+                const m = parseFloat(item.monto) || 0;
+                const a = parseFloat(item.amortizacion) || 0;
+                const i = parseFloat(item.iva) || 0;
+                const t = parseFloat(item.montoTotal) || 0;
+
+                sumNeto += (m - a);
+                sumIva += i;
+                sumTotal += t;
+            });
+
+            // 3. Actualizar DOM
+            // IDs esperados: total-neto-constructora, total-neto-supervision (si existiera), etc.
+            const suffix = targetEntidad === 'CONSTRUCTORA' ? 'constructora' : 'supervision';
+
+            const elNeto = document.getElementById(`total-neto-${suffix}`);
+            const elIva = document.getElementById(`total-iva-${suffix}`);
+            const elTotal = document.getElementById(`total-${suffix}`);
+
+            // Usamos _formatCurrency si está disponible
+            if (elNeto) elNeto.textContent = _formatCurrency(sumNeto);
+            if (elIva) elIva.textContent = _formatCurrency(sumIva);
+            if (elTotal) elTotal.textContent = _formatCurrency(sumTotal);
+        }
 
     })();
 

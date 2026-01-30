@@ -747,6 +747,33 @@ function enriquecerComunicado(comunicado) {
         const financieroResponse = readAllRows('estimaciones'); // Nota: Antes llamada financiero, ahora estimaciones
         const itemsFinancieros = financieroResponse.success ? financieroResponse.data.filter(f => String(f.idComunicado) === String(comunicado.id)) : [];
 
+        // --- CÁLCULO DE LO ESTIMADO (CORREGIDO PARA TU BASE DE DATOS) ---
+        const sumaEstimado = itemsFinancieros.reduce((acumulado, item) => {
+            // 1. Normalizar el tipo (convertir a string para comparar fácil)
+            const tipo = String(item.tipo || '').toUpperCase().trim();
+            const estatus = String(item.estatusInterno || '').toUpperCase();
+            const entidad = String(item.entidad || 'CONSTRUCTORA').toUpperCase();
+
+            // 2. Definir qué tipos suman (Tu BD usa '2' para Estimaciones, '3' para Finiquitos)
+            // Aceptamos tanto el código numérico como la palabra por si acaso.
+            const esTipoSumable = ['2', '3', 'ESTIMACION', 'FINIQUITO'].includes(tipo);
+
+            // 3. Filtros: Solo Constructora, No Cancelados, y Tipo Correcto
+            if (entidad === 'CONSTRUCTORA' && estatus !== 'CANCELADO' && esTipoSumable) {
+
+                // 4. LIMPIEZA DE MONTO: Quitamos '$' y ',' para que sea numero real
+                // Prioridad: montoAutorizado > monto > 0
+                let valorTexto = String(item.montoAutorizado || item.monto || "0");
+                let valorLimpio = valorTexto.replace(/[$,]/g, ''); // Quita signo pesos y comas
+                let numero = parseFloat(valorLimpio);
+
+                // Si no es número válido, sumamos 0
+                return acumulado + (isNaN(numero) ? 0 : numero);
+            }
+            return acumulado;
+        }, 0);
+        // -----------------------------------------------------------------
+
         // Cargar Facturas de Estimaciones y anidarlas
         const facturasEstResponse = readAllRows('facturasEstimaciones');
         const todasFacturasEst = facturasEstResponse.success ? facturasEstResponse.data : [];
@@ -880,6 +907,9 @@ function enriquecerComunicado(comunicado) {
             relacionContratistas: relacionContratistas, // Nueva Lista
             financiero: financieroCompleto,
             estimaciones: itemsFinancieros, // Incluye CONSTRUCTORA y SUPERVISION para renderizado
+
+            // DATO PARA EL FRONTEND:
+            sumaEstimado: sumaEstimado, // <--- AQUÍ VA EL DATO QUE PIDES
             facturas: facturasLegacy, // Para compatibilidad
             tickets: tickets,
 
