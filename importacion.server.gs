@@ -32,8 +32,8 @@ function previsualizarImportacion(fileContent) {
             const vB = _parseVersion(b.header.comunicadoId);
             if (vA.base !== vB.base) return vA.base.localeCompare(vB.base);
             if (vA.index !== vB.index) return vA.index - vB.index;
-            const dateA = a.header.fechaDoc ? new Date(a.header.fechaDoc).getTime() : 0;
-            const dateB = b.header.fechaDoc ? new Date(b.header.fechaDoc).getTime() : 0;
+            const dateA = (a.header.fechaDoc && !isNaN(new Date(a.header.fechaDoc).getTime())) ? new Date(a.header.fechaDoc).getTime() : 0;
+            const dateB = (b.header.fechaDoc && !isNaN(new Date(b.header.fechaDoc).getTime())) ? new Date(b.header.fechaDoc).getTime() : 0;
             return dateA - dateB;
         });
 
@@ -570,7 +570,7 @@ function _analizarDocumento(doc, cache, batchDocs = []) {
                     ref: h.refCta,
                     comunicado: h.comunicadoId,
                     tipo: h.tipoRegistro,
-                    fecha: h.fechaDoc ? new Date(h.fechaDoc).toISOString().split('T')[0] : '',
+                    fecha: (h.fechaDoc && !isNaN(new Date(h.fechaDoc).getTime())) ? new Date(h.fechaDoc).toISOString().split('T')[0] : '',
                     monto: h.totalPdf,
                     sumaLineas: v.sumaLineas,
                     status: 'ERROR',
@@ -632,7 +632,7 @@ function _analizarDocumento(doc, cache, batchDocs = []) {
 
                 // Fecha
                 if (h.fechaDoc) {
-                    const dateCSV = new Date(h.fechaDoc).toISOString().split('T')[0];
+                    const dateCSV = (h.fechaDoc && !isNaN(new Date(h.fechaDoc).getTime())) ? new Date(h.fechaDoc).toISOString().split('T')[0] : '';
                     const dateDB = dgActual.fecha ? new Date(dgActual.fecha).toISOString().split('T')[0] : '';
                     if (dateCSV !== dateDB) {
                         hasChanges = true;
@@ -830,7 +830,7 @@ function _analizarDocumento(doc, cache, batchDocs = []) {
         ref: h.refCta,
         comunicado: h.comunicadoId,
         tipo: (String(h.tipoRegistro).toUpperCase() === 'ORIGEN') ? 'ORIGEN' : (h.comunicadoId || h.tipoRegistro),
-        fecha: h.fechaDoc ? new Date(h.fechaDoc).toISOString().split('T')[0] : '',
+        fecha: (h.fechaDoc && !isNaN(new Date(h.fechaDoc).getTime())) ? new Date(h.fechaDoc).toISOString().split('T')[0] : '',
         monto: h.totalPdf,
         sumaLineas: v.sumaLineas,
         status: finalStatus,

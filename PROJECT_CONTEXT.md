@@ -84,13 +84,27 @@ La base de datos es un Google Sheet con múltiples hojas. La definición estrict
     - `idAjustador` -> `ajustadores.id` (Override del ajustador de la cuenta)
     - `idActualizacion` -> `actualizaciones.id` (Apunta a la actualización "vigente")
 
-#### 4. Siniestros
+#### 4. Estimaciones
+- **Hoja**: `Estimaciones`
+- **Rol**: Registro de movimientos financieros (Estimaciones, Anticipos, Finiquitos).
+- **Campos Clave**:
+    - `tipo`: Defines el rol financiero.
+        - `1` o `ANTICIPO`: Movimiento de anticipo.
+        - `2` o `ESTIMACION`: Avance de obra regular.
+        - `3` o `FINIQUITO`: Cierre financiero.
+    - `monto`: Valor base del movimiento.
+    - `amortizacion`: Deducción por devolución de anticipo.
+    - `descuentos`: Deducciones adicionales persistidas.
+    - `neto`: Valor final calculado y persistido (`Monto - Amort - Desc`).
+    - `estatusInterno`: `PENDIENTE`, `PAGADO`, `CANCELADO`.
+
+#### 5. Siniestros
 - **Hoja**: `Siniestros`
 - **Rol**: Catálogo de eventos dañinos.
 - **Relaciones**:
     - `idAseguradora` -> `aseguradoras.id`
 
-#### 5. Actualizaciones (Financiero)
+#### 6. Actualizaciones (Financiero)
 - **Hoja**: `Actualizaciones`
 - **Rol**: Historial de versiones financieras de un comunicado. Un comunicado tiene N actualizaciones.
 - **Lógica**: Representan cambios en el presupuesto (Origen, Rev A, Rev B...).
@@ -101,14 +115,14 @@ La base de datos es un Google Sheet con múltiples hojas. La definición estrict
     - `montoSupervisión`: Monto calculado (5% del base).
     - `idPresupuesto`: Link a desglose detallado.
 
-#### 6. Presupuesto (Lineas)
+#### 7. Presupuesto (Lineas)
 - **Hoja**: `PresupuestoLineas`
 - **Rol**: Desglose línea por línea de una Actualización.
 - **Relación**: `idActualizacion` -> `actualizaciones.id`
 
 ---
 
-## 3. Reglas de Negocio Clave
+## 4. Reglas de Negocio Clave
 
 ### A. Creación de Comunicados (`comunicados.crud.gs`)
 1. **Unicidad**: No puede existir un comunicado con el mismo nombre (`comunicado`) dentro de la misma `idReferencia` (Cuenta).
@@ -122,10 +136,25 @@ La base de datos es un Google Sheet con múltiples hojas. La definición estrict
     - Se crea registro en `comunicados`.
     - Si falla el comunicado, se hace rollback (borrado) de `datosGenerales`.
 
-### B. Cálculo de Montos
-- **Regla del 5%**: La Supervisión se calcula automáticamente como el 5% del monto capturado o monto base.
-- **Presupuesto Vigente**: Se determina buscando la actualización con el `consecutivo` más alto para ese comunicado.
-    - `Vigente = MontoCapturado (o Monto) + MontoSupervisión`
+### B. Cálculo de Montos (Financiero Global)
+
+#### Reglas de Agregación (`_calculateFinanceData`)
+1. **ANTICIPO**:
+   - Suma exclusiva de movimientos Tipo `1` (o string "ANTICIPO").
+   - Se considera el **monto neto**.
+2. **ESTIMADO**:
+   - Suma exclusiva de movimientos Tipo `2` (Estimación) y `3` (Finiquito).
+   - **Excluye explícitamente los Anticipos.**
+   - Valor calculado: Suma de **Monto Base** (Sin restar amortización).
+3. **EJERCIDO**:
+   - Suma de los Montos Netos de las **Facturas Vigentes** vinculadas a cualquier movimiento activo.
+4. **PAGADO**:
+   - Suma de los Montos Netos de los **Complementos de Pago** vinculados.
+5. **AMORTIZADO**:
+   - Suma del campo `amortizacion` exclusivamente de Estimaciones y Finiquitos.
+
+#### Persistencia:
+- El campo `neto` se calcula en frontend como `Monto - Amortizacion - Descuentos` y se guarda explícitamente en base de datos para consistencia.
 
 ### C. Importación Batch (`importacion.server.gs`)
 El sistema soporta carga masiva desde Excel/CSV con lógica compleja:
@@ -149,7 +178,7 @@ El sistema soporta carga masiva desde Excel/CSV con lógica compleja:
 
 ---
 
-## 4. Archivos Clave y Responsabilidades
+## 5. Archivos Clave y Responsabilidades
 
 | Archivo | Responsabilidad |
 | :--- | :--- |
@@ -159,6 +188,7 @@ El sistema soporta carga masiva desde Excel/CSV con lógica compleja:
 | **`importacion.server.gs`** | Parser de CSV y orquestador transaccional para carga masiva. |
 | **`utilidades.gs`** | Tools: Normalización de texto, manejo de fechas, mapeo de objetos. |
 | **`datosGenerales.crud.gs`** | Wrapper ligero para la tabla DatosGenerales. |
+| **`comunicado_detalle.js.html`** | Lógica Frontend: Renderizado de tablas, Cálculos financieros en tiempo real, Dashboard. |
 
 ---
 

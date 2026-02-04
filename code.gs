@@ -277,6 +277,8 @@ const TABLE_DEFINITIONS = {
             montoAvanceFisico: ['montoAvanceFisico', 'Monto Avance Físico', 'Avance Físico', 'Estimación', 'montoEstimado'],
             porcentajeAvanceFisico: ['porcentajeAvanceFisico', 'Porcentaje Avance Físico', 'Avance Físico %', '% Avance'],
             amortizacion: ['amortizacion', 'Amortización', 'Amortizacion'],
+            descuentos: ['descuentos', 'Descuentos', 'Deducciones', 'Retenciones'], // NUEVO
+            neto: ['neto', 'Neto', 'Importe Neto'], // Persisted Net
             iva: ['iva', 'IVA', 'Impuesto'],
             montoTotal: ['montoTotal', 'Monto Total', 'Total'],
             fechaCorte: ['fechaCorte', 'Fecha Corte', 'Fecha'],

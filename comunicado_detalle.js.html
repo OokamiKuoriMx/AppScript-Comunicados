@@ -23,6 +23,216 @@
             }
         };
 
+        // --- DASHBOARD STYLES ---
+        const dashboardStyles = `
+            <style>
+                /* Dashboard Container */
+                .dashboard-panel {
+                    background: #f8f9fa;
+                    border-bottom: 1px solid #dee2e6;
+                    padding: 1.5rem;
+                    margin-bottom: 0rem;
+                }
+                
+                /* KPI Cards */
+                .kpi-grid {
+                    display: grid;
+                    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+                    gap: 1.25rem;
+                    margin-bottom: 2rem;
+                }
+                
+                .kpi-card {
+                    background: white;
+                    border-radius: 12px;
+                    padding: 1.25rem;
+                    box-shadow: 0 2px 4px rgba(0,0,0,0.04);
+                    border: 1px solid rgba(0,0,0,0.05);
+                    transition: transform 0.2s ease, box-shadow 0.2s ease;
+                    position: relative;
+                    overflow: hidden;
+                }
+                
+                .kpi-card:hover {
+                    transform: translateY(-2px);
+                    box-shadow: 0 4px 8px rgba(0,0,0,0.08);
+                }
+
+                .kpi-card::before {
+                    content: '';
+                    position: absolute;
+                    top: 0;
+                    left: 0;
+                    width: 4px;
+                    height: 100%;
+                }
+
+                .kpi-card.blue::before { background: #0d6efd; }
+                .kpi-card.green::before { background: #198754; }
+                .kpi-card.orange::before { background: #fd7e14; }
+                .kpi-card.teal::before { background: #20c997; }
+                .kpi-card.red::before { background: #dc3545; }
+
+                .kpi-label {
+                    font-size: 0.75rem;
+                    text-transform: uppercase;
+                    letter-spacing: 0.5px;
+                    color: #6c757d;
+                    font-weight: 600;
+                    margin-bottom: 0.5rem;
+                }
+
+                .kpi-value {
+                    font-size: 1.5rem;
+                    font-weight: 700;
+                    color: #212529;
+                    font-family: 'Segoe UI', system-ui, sans-serif;
+                }
+                
+                .kpi-subtext {
+                    font-size: 0.8rem;
+                    margin-top: 0.4rem;
+                    color: #adb5bd;
+                }
+
+                /* Charts Container */
+                .charts-grid {
+                    display: grid;
+                    grid-template-columns: 1fr 1fr;
+                    gap: 1.5rem;
+                    align-items: start;
+                }
+                
+                @media (max-width: 992px) {
+                    .charts-grid { grid-template-columns: 1fr; }
+                }
+
+                .chart-card {
+                    background: white;
+                    border-radius: 12px;
+                    padding: 1.5rem;
+                    box-shadow: 0 2px 4px rgba(0,0,0,0.04);
+                    border: 1px solid rgba(0,0,0,0.05);
+                }
+
+                .chart-title {
+                    font-size: 0.95rem;
+                    font-weight: 600;
+                    color: #495057;
+                    margin-bottom: 1.5rem;
+                    display: flex;
+                    align-items: center;
+                    gap: 0.5rem;
+                }
+
+                /* CSS Pure Charts */
+                .bar-chart-container {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 1rem;
+                }
+
+                .bar-group {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 0.25rem;
+                }
+
+                .bar-header {
+                    display: flex;
+                    justify-content: space-between;
+                    font-size: 0.85rem;
+                    color: #495057;
+                }
+
+                .bar-track {
+                    height: 8px;
+                    background: #e9ecef;
+                    border-radius: 4px;
+                    overflow: hidden;
+                }
+
+                .bar-fill {
+                    height: 100%;
+                    border-radius: 4px;
+                    transition: width 0.6s ease-out;
+                }
+
+                /* Donut Chart (CSS Conic Gradient) */
+                .donut-container {
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    gap: 2rem;
+                    padding: 1rem;
+                }
+                
+                .donut-chart {
+                    width: 120px;
+                    height: 120px;
+                    border-radius: 50%;
+                    position: relative;
+                    /* Gradient set dynamically via JS style */
+                    transform: rotate(-90deg); /* Start at top */
+                }
+                
+                .donut-hole {
+                    position: absolute;
+                    top: 50%; left: 50%;
+                    transform: translate(-50%, -50%);
+                    width: 80px;
+                    height: 80px;
+                    background: white;
+                    border-radius: 50%;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    flex-direction: column;
+                }
+                
+                .donut-percent {
+                    font-size: 1.1rem;
+                    font-weight: 700;
+                    color: #212529;
+                    transform: rotate(90deg); /* Counteract parent rotation */
+                }
+                
+                .donut-label {
+                    font-size: 0.65rem;
+                    color: #adb5bd;
+                    text-transform: uppercase;
+                    transform: rotate(90deg);
+                }
+
+                .donut-legend {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 0.75rem;
+                }
+
+                .legend-item {
+                    display: flex;
+                    align-items: center;
+                    gap: 0.5rem;
+                    font-size: 0.85rem;
+                }
+
+                .legend-color { width: 10px; height: 10px; border-radius: 2px; }
+
+                /* NEW DASHBOARD STYLES */
+                .icon-circle {
+                    width: 48px; height: 48px;
+                    display: flex; align-items: center; justify-content: center;
+                }
+                .ls-1 { letter-spacing: 0.05rem; }
+                .z-index-1 { z-index: 1; }
+            </style>
+        `;
+
+        // Inject Styles
+        document.head.insertAdjacentHTML('beforeend', dashboardStyles);
+
+
         // --- REFERENCIAS DOM ---
         let dom = {};
 
@@ -183,6 +393,26 @@
                 list: document.getElementById('lista-tickets'),
                 btnAdd: document.getElementById('btn-add-ticket')
             };
+
+            // Dashboard
+            dom.dashboard = {
+                updateBadge: document.getElementById('dash-last-update'),
+                autorizado: document.getElementById('dash-autorizado'),
+                ejercido: document.getElementById('dash-ejercido'),
+                ejercidoPct: document.getElementById('dash-ejercido-pct'),
+                porEjercer: document.getElementById('dash-por-ejercer'),
+                porEjercerPct: document.getElementById('dash-por-ejercer-pct'),
+                pagado: document.getElementById('dash-pagado'),
+                pagadoPct: document.getElementById('dash-pagado-pct'),
+                // Charts
+                donut: document.getElementById('dash-chart-donut'),
+                donutPercent: document.getElementById('dash-chart-percent'),
+                barObra: document.getElementById('dash-bar-obra'),
+                barObraVal: document.getElementById('dash-bar-obra-val'),
+                barSup: document.getElementById('dash-bar-sup'),
+                barSupVal: document.getElementById('dash-bar-sup-val'),
+                ratioText: document.getElementById('dash-ratio-text')
+            };
         }
 
         // --- HANDLERS (New) ---
@@ -219,6 +449,24 @@
             }
         }
 
+        // --- HELPERS DE FECHA (DD/MM/AAAA) ---
+        function _toUserDate(isoDate) {
+            if (!isoDate) return '';
+            const [y, m, d] = isoDate.split('-');
+            return `${d}/${m}/${y}`;
+        }
+
+        function _fromUserDate(userDate) {
+            if (!userDate) return '';
+            // Regex match DD/MM/YYYY
+            const match = userDate.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+            if (!match) return ''; // Invalid or partial
+            const d = match[1];
+            const m = match[2];
+            const y = match[3];
+            return `${y}-${m}-${d}`;
+        }
+
         function _forceUppercase(input) {
             const start = input.selectionStart;
             const end = input.selectionEnd;
@@ -251,21 +499,24 @@
 
         // --- MANEJO DE NAVEGACIÓN (FIX) ---
         function _initSidebarNavigation() {
-            // Seleccionar todos los links que actúan como tabs (incluyendo anidados)
             const allLinks = document.querySelectorAll('#detalle-nav-tabs a[data-bs-toggle="list"]');
+
+            // Helper styling function
+            const setActiveStyle = (el) => {
+                el.classList.add('active', 'bg-white', 'border-start', 'border-4', 'border-primary', 'shadow-sm', 'fw-bold', 'text-primary');
+                el.classList.remove('text-muted');
+            };
+            const setInactiveStyle = (el) => {
+                el.classList.remove('active', 'bg-white', 'border-start', 'border-4', 'border-primary', 'shadow-sm', 'fw-bold', 'text-primary');
+                el.classList.add('text-muted');
+            };
 
             allLinks.forEach(link => {
                 link.addEventListener('click', function (e) {
-                    // 1. Quitar 'active' de TODOS los links del sidebar (limpieza visual)
-                    allLinks.forEach(l => l.classList.remove('active'));
+                    allLinks.forEach(l => setInactiveStyle(l)); // Clear all
+                    setActiveStyle(this); // Set active
 
-                    // 2. Bootstrap agregará 'active' al clickeado automáticamente, pero aseguramos
-                    // que el resto se limpie correctamente.
-
-                    // 3. Manejar Paneles: Ocultar TODOS los paneles, mostrar SOLO el target
-                    // Esto arregla el bug de solapamiento visual
-                    const targetId = this.getAttribute('href').substring(1); // remove #
-
+                    const targetId = this.getAttribute('href').substring(1);
                     document.querySelectorAll('.tab-pane').forEach(pane => {
                         if (pane.id === targetId) {
                             pane.classList.add('show', 'active');
@@ -274,6 +525,9 @@
                         }
                     });
                 });
+                // Initialize state
+                if (link.classList.contains('active')) setActiveStyle(link);
+                else setInactiveStyle(link);
             });
         }
 
@@ -291,6 +545,16 @@
                 const dataResponse = await serverCall('getComunicadoCompleto', state.id);
                 if (dataResponse) {
                     state.data = _sanitizeData(dataResponse);
+
+                    // AUTO-FIX: Consolidar duplicados al cargar
+                    if (state.data.presupuesto) {
+                        for (let i = 0; i < state.data.presupuesto.length; i++) {
+                            // Asegurar estructura
+                            if (!state.data.presupuesto[i].lineas) state.data.presupuesto[i].lineas = [];
+                            _consolidarDuplicados(i);
+                        }
+                    }
+
                     _renderData();
                 }
             } catch (e) {
@@ -443,6 +707,9 @@
             _renderTickets();
             _renderMatrixActualizaciones();
 
+            // --- NUEVO DASHBOARD ---
+            _renderDashboard();
+
             // Render Contratista Selector (Nuevo)
 
             // Mostrar contenido principal
@@ -450,27 +717,170 @@
             if (content) content.classList.remove('d-none');
         }
 
-        function _renderFinanciero() {
-            // Render Table Constructora
-            if (dom.estimacionesList) {
-                dom.estimacionesList.innerHTML = '';
-                _renderTableConstructora(dom.estimacionesList);
-            }
-            // Render Table Supervision
-            if (dom.estimacionesListSupervision) {
-                dom.estimacionesListSupervision.innerHTML = '';
-                // Prefer NEW renderer if available (handles placeholders)
-                if (typeof _renderTableSupervisionNew === 'function') {
-                    _renderTableSupervisionNew(dom.estimacionesListSupervision);
-                } else if (typeof _renderTableSupervision === 'function') {
-                    _renderTableSupervision(dom.estimacionesListSupervision);
+        /**
+         * Renderiza el Dashboard Financiero con datos calculados
+         */
+        // Helper: Toggle Dashboard View
+        window.toggleDashView = function (view) {
+            const viewC = document.getElementById('view-dash-c');
+            const viewS = document.getElementById('view-dash-s');
+            const btnC = document.getElementById('btn-dash-c');
+            const btnS = document.getElementById('btn-dash-s');
+
+            if (!viewC || !viewS) return;
+
+            if (view === 'c') {
+                // Show Contractor
+                viewS.classList.remove('show', 'active');
+                viewS.classList.add('d-none');
+
+                viewC.classList.remove('d-none');
+                setTimeout(() => viewC.classList.add('show', 'active'), 10);
+
+                // Update Buttons
+                if (btnC) {
+                    btnC.classList.remove('bg-transparent', 'text-muted', 'border-0');
+                    btnC.classList.add('shadow-sm', 'text-primary', 'bg-white');
+                }
+                if (btnS) {
+                    btnS.classList.remove('shadow-sm', 'text-primary', 'bg-white');
+                    btnS.classList.add('bg-transparent', 'text-muted', 'border-0');
+                }
+            } else {
+                // Show Supervision
+                viewC.classList.remove('show', 'active');
+                viewC.classList.add('d-none');
+
+                viewS.classList.remove('d-none');
+                setTimeout(() => viewS.classList.add('show', 'active'), 10);
+
+                // Update Buttons
+                if (btnS) {
+                    btnS.classList.remove('bg-transparent', 'text-muted', 'border-0');
+                    btnS.classList.add('shadow-sm', 'text-primary', 'bg-white');
+                }
+                if (btnC) {
+                    btnC.classList.remove('shadow-sm', 'text-primary', 'bg-white');
+                    btnC.classList.add('bg-transparent', 'text-muted', 'border-0');
                 }
             }
-            // Update Summary Cards
-            if (typeof _updateResumenFinanciero === 'function') {
-                _updateResumenFinanciero();
+        };
+
+        /**
+         * Renderiza el Dashboard Financiero con datos calculados
+         */
+        /**
+         * Renderiza el Dashboard Financiero con datos calculados
+         */
+        function _renderDashboard() {
+            if (!state.data) return;
+            const fmt = (n) => new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }).format(n);
+
+            // Use Shared Logic (Hoisted)
+            const financeData = (typeof _calculateFinanceData === 'function') ? _calculateFinanceData() : null;
+            if (!financeData) return;
+
+            ['c', 's'].forEach(prefix => {
+                const s = financeData[prefix];
+                // s has: estimado, estimadoTotal, ejercido, ejercidoTotal, pagado, pagadoTotal, anticipo, amortizado
+
+                // DOM Helpers
+                const setText = (id, val) => {
+                    const el = document.getElementById(id);
+                    if (el) el.textContent = val;
+                };
+                const setHtml = (id, val) => {
+                    const el = document.getElementById(id);
+                    if (el) el.innerHTML = val;
+                };
+                const setWidth = (id, width) => {
+                    const el = document.getElementById(id);
+                    if (el) el.style.width = width + '%';
+                };
+
+                // Helper for Dual Amount Display
+                // Large Font: Net (Sin IVA)
+                // Small Font: Gross (Con IVA)
+                const renderDual = (id, net, gross, colorClass = '') => {
+                    // colorClass default depends on context, but let's assume parent provides color or use utility classes
+                    // If no color provided, inherit.
+                    const html = `
+                        <div class="d-flex flex-column">
+                            <span class="display-6 fw-bold ${colorClass}">${fmt(net)}</span>
+                            <small class="opacity-75 fs-6" style="margin-top: -5px;">${fmt(gross)} (IVA inc.)</small>
+                        </div>
+                    `;
+                    setHtml(id, html);
+                };
+
+                // Main Metrics
+                // Estimado: Net (Large) / Total (Small)
+                // Note: The template has classes like text-white or text-dark. We need to be careful with colors.
+
+                // 1. ESTIMADO CARD (Gradient BG, text-white)
+                // Note: Added Anticipo to Estimate Sum because typically "Estimate" summary includes it, 
+                // but if strictly "Estimate" type, then s.estimado. 
+                // Review: 'Summary' card combines them? No, Summary has Authorizado vs Estimado.
+                // Dashboard card says "Monto Estimado (Neto)". 
+                // Let's stick to s.estimado (Estimaciones + Finiquitos) as per previous logic, OR include Anticipo if the user considers "Estimated" as "Performed Work + Advance".
+                // Previous logic in _renderDashboard only summed 'ESTIMACION'/'FINIQUITO' for 'estimado'. Anticipo was separate.
+                // Let's keep s.estimado (Net) and s.estimadoTotal (Gross).
+                renderDual(`dash-${prefix}-estimado`, s.estimado, s.estimadoTotal, 'text-white');
+
+
+                // 2. FACTURADO CARD (Light BG, text-dark/info)
+                // Gross is usually the main one for billing, but User requested Net Large.
+                // Assuming we can calculate Net Facturado? 
+                // `_calculateFinanceData` returns `ejercido` (Net) and `ejercidoTotal` (Gross).
+                renderDual(`dash-${prefix}-facturado`, s.ejercido, s.ejercidoTotal, 'text-dark');
+
+                // 3. PAGADO CARD (Light BG, text-success)
+                // `_calculateFinanceData` returns `pagado` (Net) and `pagadoTotal` (Gross).
+                renderDual(`dash-${prefix}-pagado`, s.pagado, s.pagadoTotal, 'text-success');
+
+                // Progress Bars
+                // Facturado vs Estimado (Using Totals/Gross for proper comparison? Or Net?)
+                // User asked for "Sin IVa" prominence. Ratios should technically be same if tax constant. 
+                // Let's use Nets for ratio to match the "Large" numbers visual.
+                const pFacturado = s.estimado > 0 ? (s.ejercido / s.estimado) * 100 : 0;
+                setWidth(`prog-${prefix}-facturado`, Math.min(pFacturado, 100));
+                setText(`pct-${prefix}-facturado`, pFacturado.toFixed(1) + '%');
+
+                // Pagado vs Facturado
+                const pPagado = s.ejercido > 0 ? (s.pagado / s.ejercido) * 100 : 0;
+                setWidth(`prog-${prefix}-pagado`, Math.min(pPagado, 100));
+                setText(`pct-${prefix}-pagado`, pPagado.toFixed(1) + '%');
+
+                // Anticipos vs Amortizado
+                // Anticipo Card mostly static, but strictly speaking it has Net/Gross too.
+                // `_calculateFinanceData` provides `anticipo` (Net). `anticipoTotal`?
+                // I didn't return `anticipoTotal` in `_calculateFinanceData` previously. 
+                // I should probably just show Net for now as Anticipo usually tracking Base.
+                // Or update `_calculateFinanceData` to return `anticipoTotal`.
+                // Let's stick to Net for Anticipo as per previous behavior unless I modify the calc function.
+                setText(`dash-${prefix}-anticipo`, fmt(s.anticipo));
+
+                setText(`dash-${prefix}-amortizado`, fmt(s.amortizado));
+
+                const pAmortizado = s.anticipo > 0 ? (s.amortizado / s.anticipo) * 100 : 0;
+                setText(`pct-${prefix}-amortizado`, pAmortizado.toFixed(1) + '% Recup.');
+
+                const pendiente = Math.max(0, s.anticipo - s.amortizado);
+                setText(`text-${prefix}-pendiente-amortizar`, `Pendiente: ${fmt(pendiente)}`);
+
+                setWidth(`bar-${prefix}-amortizado`, Math.min(pAmortizado, 100));
+                setWidth(`bar-${prefix}-pendiente`, Math.min(100 - pAmortizado, 100));
+            });
+
+            // Update Global Date Badge
+            const badge = document.getElementById('dash-last-update');
+            if (badge) {
+                const now = new Date();
+                badge.textContent = 'Actualizado: ' + now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
             }
         }
+
+
         async function _addEstimacion(entidad, tipoManual = null) {
             const tiposDisponibles = entidad === 'SUPERVISION'
                 ? ['ANTICIPO', 'ESTIMACION', 'FINIQUITO']
@@ -896,6 +1306,23 @@
             const f = state.data.facturasEstimaciones.find(x => x.id === idFactura);
             if (!f) return;
 
+            // VALIDACION CRITICA: Suma de complementos <= Total Factura
+            const complementosExistentes = (state.data.facturasEstimaciones || [])
+                .filter(c => String(c.idFacturaRelacionada) === String(idFactura) && c.estatusSAT !== 'CANCELADO');
+
+            const totalComplementos = complementosExistentes.reduce((sum, c) => sum + (parseFloat(c.total) || 0), 0);
+
+            // Using 0.10 tolerance prevents floating point blocks on exact matches
+            if ((totalComplementos + total) > (parseFloat(f.total) + 0.10)) {
+                const saldoReal = Math.max(0, parseFloat(f.total) - totalComplementos);
+                Swal.fire({
+                    title: 'Monto Excedido',
+                    text: `El monto del complemento ($${_formatCurrency(total)}) supera el saldo pendiente de la factura ($${_formatCurrency(saldoReal)}).`,
+                    icon: 'warning'
+                });
+                return;
+            }
+
             const payload = {
                 idEstimacion: f.idEstimacion, // Misma estimación
                 idFacturaRelacionada: idFactura,
@@ -1256,105 +1683,165 @@
             }
         }
 
+        function _calculateFinanceData() {
+            if (!state.data) return null;
+
+            // Helper de seguridad
+            const safeFloat = (val) => parseFloat(String(val).replace(/[^0-9.-]+/g, '')) || 0;
+            const IVA_R = typeof IVA_RATE !== 'undefined' ? IVA_RATE : 0.16;
+
+            const estAll = state.data.estimaciones || [];
+            const presAll = state.data.presupuesto || [];
+            const ultPres = presAll.length > 0 ? presAll[presAll.length - 1] : null;
+            const allDocs = state.data.facturasEstimaciones || [];
+
+            const calculateFor = (entidad) => {
+                const est = estAll.filter(e => (e.entidad || 'CONSTRUCTORA') === entidad && e.estatusInterno !== 'CANCELADO');
+                const ids = est.map(e => String(e.id));
+
+                // 1. Autorizado
+                let autorizado = 0;
+                if (ultPres) {
+                    if (entidad === 'CONSTRUCTORA') {
+                        autorizado = (ultPres.montoCapturado !== null && !isNaN(parseFloat(ultPres.montoCapturado)))
+                            ? parseFloat(ultPres.montoCapturado)
+                            : safeFloat(ultPres.monto);
+                    } else {
+                        autorizado = safeFloat(ultPres.montoSupervision);
+                    }
+                }
+
+                // 2. Estimado / Anticipo / Amortizado
+                let estimado = 0; // Suma de MONTOS (Sin amort/desc) de EST/FIN
+                let estimadoTotal = 0; // Suma de MONTOS Gross (Calculado)
+                let anticipo = 0; // Suma Importes Netos Anticipos
+                let amortizado = 0; // Suma Importes Amortizados EST/FIN
+                let avFisico = 0; // Suma Avance Fisico
+
+                est.forEach(e => {
+                    const m = parseFloat(e.monto) || 0; // Monto Base
+                    const a = parseFloat(e.amortizacion) || 0;
+                    const af = safeFloat(e.montoAvanceFisico);
+                    const tipo = String(e.tipo).toUpperCase();
+
+                    // Check types based on ID or String
+                    // TIPO 2 or ANTICIPO -> Anticipo Sum
+                    // ERROR FIX: User clarified "estimaciones solo son movimientos tipo 2 y 3". 
+                    // Thus, Type 1 must be 'ANTICIPO'. 
+                    // Previous code was using '2' for Anticipo, causing the overlap.
+
+                    // Logic: 
+                    // Anticipo = Tipo 'ANTICIPO' or 1.
+                    // Estimacion = Rest (2, 3).
+
+                    if (tipo === 'ANTICIPO' || tipo === '1') {
+                        anticipo += m;
+                    } else {
+                        // ESTIMACION (2), FINIQUITO (3)
+                        // REGLA: "ESTIMADO = SUMA DE LOS MONTOS SIN CONSIDERAR LA AMORTIZACION"
+                        estimado += m;
+                        // Gross calc: Monto * (1 + IVA)
+                        estimadoTotal += (m * (1 + IVA_R));
+
+                        // REGLA: "AMORTIZADO = SUMA DE LOS IMPORTES AMORTIZADOS"
+                        amortizado += a;
+
+                        // REGLA: "AV. FISICO"
+                        avFisico += af;
+                    }
+                });
+
+                // 3. Ejercido / Pagado (Facturas)
+                let ejercido = 0; // Net
+                let ejercidoTotal = 0; // Gross
+                let pagado = 0; // Net
+                let pagadoTotal = 0; // Gross
+
+                // REGLA: "EJERCIDO = SUMA DE LOS NETOS FACTURADOS VIGENTES"
+                // Includes invoices linked to Antipicos, Estimaciones, Finiquitos (all in 'ids')
+                // Note: User said "considerando anticipos, estimaciones y finiquitos", so we include all types.
+                const facturasVigentes = allDocs.filter(f =>
+                    ids.includes(String(f.idEstimacion)) &&
+                    f.estatusSAT !== 'CANCELADO' &&
+                    (String(f.tipo).toUpperCase() !== 'COMPLEMENTO' && f.tipo != 2) // Exclude complements
+                );
+
+                facturasVigentes.forEach(f => {
+                    ejercido += (parseFloat(f.monto) || 0); // Net
+                    ejercidoTotal += (parseFloat(f.total) || 0); // Gross
+                });
+
+                // REGLA: "PAGADO = SUMA DE LOS IMPORTES NETOS DE LOS COMPLEMENTOS DE PAGO VIGENTES"
+                // Logic: Sum of Complements.
+                const complementosVigentes = allDocs.filter(f =>
+                    ids.includes(String(f.idEstimacion)) &&
+                    f.estatusSAT !== 'CANCELADO' &&
+                    (String(f.tipo).toUpperCase() === 'COMPLEMENTO' || f.tipo == 2)
+                );
+
+                complementosVigentes.forEach(c => {
+                    pagado += (parseFloat(c.monto) || 0); // Net
+                    pagadoTotal += (parseFloat(c.total) || 0); // Gross
+                });
+
+                // REGLA: Por Ejercer logic remains: Autorizado - Ejercido
+                const porEjercer = autorizado - ejercido;
+                const porEjercerTotal = porEjercer + (porEjercer * IVA_R);
+
+                return { autorizado, estimado, estimadoTotal, ejercido, ejercidoTotal, pagado, pagadoTotal, anticipo, amortizado, avFisico, porEjercer, porEjercerTotal };
+            };
+
+            return {
+                c: calculateFor('CONSTRUCTORA'),
+                s: calculateFor('SUPERVISION')
+            };
+        }
+
+        // Expose to window for _renderDashboard to use
+        window._calculateFinanceData = _calculateFinanceData;
+
         function _updateResumenFinanciero() {
             try {
-                // Helper de seguridad para numeros (quita $ y ,)
-                const safeFloat = (val) => parseFloat(String(val).replace(/[^0-9.-]+/g, '')) || 0;
+                const financeData = _calculateFinanceData();
+                if (!financeData) return;
 
-                // 1. OBTENER DATOS BASE
-                const estAll = state.data.estimaciones || [];
-                const presAll = state.data.presupuesto || [];
-                const ultPres = presAll.length > 0 ? presAll[presAll.length - 1] : null;
-
-                // Debug para verificar datos
-                console.log('FinanceUpdate: Total Estimaciones encontradas:', estAll.length);
-
-                // 2. FUNCIÓN DE CÁLCULO POR ENTIDAD
-                const calculateEntity = (entidad) => {
-                    // Filtrar solo las estimaciones de esta entidad activas
-                    const est = estAll.filter(e => (e.entidad || 'CONSTRUCTORA') === entidad && e.estatusInterno !== 'CANCELADO');
-
-                    // AUTORIZADO (Presupuesto)
-                    let autorizado = 0;
-                    if (ultPres) {
-                        if (entidad === 'CONSTRUCTORA') {
-                            autorizado = (ultPres.montoCapturado !== null && !isNaN(parseFloat(ultPres.montoCapturado)))
-                                ? parseFloat(ultPres.montoCapturado)
-                                : safeFloat(ultPres.monto);
-                        } else {
-                            autorizado = safeFloat(ultPres.montoSupervision);
-                        }
-                    }
-
-                    // ESTIMADO: Suma del MONTO de estimaciones y finiquitos (Excluye Anticipos)
-                    // LOGICA CORREGIDA: Prioridad montoAutorizado > monto
-                    const estimado = est
-                        .filter(e => {
-                            const t = String(e.tipo || '').toUpperCase().trim();
-                            // Sumar si es Estimación (2) o Finiquito (3)
-                            return ['2', 'ESTIMACION', '3', 'FINIQUITO'].includes(t);
-                        })
-                        .reduce((acc, e) => {
-                            // AQUÍ ESTABA EL ERROR EN FRONTEND:
-                            // Debemos checar si existe montoAutorizado primero, igual que el backend
-                            const valor = safeFloat(e.montoAutorizado) || safeFloat(e.monto) || 0;
-                            return acc + valor;
-                        }, 0);
-
-                    // EJERCIDO: Suma de montos de estimaciones/finiquitos con estatus PAGADO
-                    // EJERCIDO: Suma de Facturas VIGENTES (No canceladas, excluye complementos)
-                    // Filtramos facturas que pertenecen a las estimaciones de esta entidad
-                    const idsEstimacionesEntidad = est.map(e => String(e.id));
-                    const facturasVigentes = (state.data.facturasEstimaciones || [])
-                        .filter(f =>
-                            idsEstimacionesEntidad.includes(String(f.idEstimacion)) &&
-                            f.estatusSAT !== 'CANCELADO' &&
-                            (f.tipo != 2 && String(f.tipo).toUpperCase() !== 'COMPLEMENTO')
-                        );
-
-                    // User Req: "Suma de netos (monto - amortizacion)". 
-                    // Asumimos que f.monto ya es el Neto (por la logica de addFactura) o el valor nominal.
-                    const ejercido = facturasVigentes.reduce((acc, f) => acc + (parseFloat(f.monto) || 0), 0);
-
-                    // AVANCE FISICO
-                    const avFisico = est.reduce((acc, e) => acc + safeFloat(e.montoAvanceFisico), 0);
-
-                    // POR EJERCER: Importe (Autorizado) - Ejercido (Pagado)
-                    const porEjercer = autorizado - ejercido;
-
-                    return { autorizado, estimado, ejercido, avFisico, porEjercer };
-                };
-
-                const dataConst = calculateEntity('CONSTRUCTORA');
-                console.log('FinanceUpdate: CONSTRUCTORA Calc:', dataConst); // Log para debug
-
-                const dataSup = calculateEntity('SUPERVISION');
-                console.log('FinanceUpdate: SUPERVISION Calc:', dataSup);   // Log para debug
+                const dataConst = financeData.c;
+                const dataSup = financeData.s;
 
                 // --- ACTUALIZACION DOM CONSTRUCTORA ---
                 const uiC = dom.financiero.resumen;
 
-                // Re-usemos _renderDualAmount si está disponible para mantener estilo
-                if (typeof _renderDualAmount === 'function') {
-                    // Helper Percentage
-                    const getPct = (val, total) => total > 0 ? (val / total) * 100 : 0;
+                // Helper Percentage
+                const getPct = (val, total) => total > 0 ? (val / total) * 100 : 0;
 
-                    // CONSTRUCTORA
-                    if (uiC.autorizado) uiC.autorizado.textContent = typeof _formatCurrency === 'function' ? _formatCurrency(dataConst.autorizado) : dataConst.autorizado;
-                    _renderDualAmount(uiC.estimado, dataConst.estimado, getPct(dataConst.estimado, dataConst.autorizado), 'text-warning', dataConst.autorizado, 'ESTIMADO');
-                    _renderDualAmount(uiC.ejercido, dataConst.ejercido, getPct(dataConst.ejercido, dataConst.autorizado), 'text-success', dataConst.autorizado, 'EJERCIDO');
-                    _renderDualAmount(uiC.avanceFisico, dataConst.avFisico, getPct(dataConst.avFisico, dataConst.autorizado), 'text-secondary', dataConst.autorizado, 'AV. FISICO');
-                    if (uiC.porEjercer) _renderDualAmount(uiC.porEjercer, dataConst.porEjercer, 0, '', dataConst.autorizado, 'POR EJERCER');
+                // CONSTRUCTORA
+                if (uiC.autorizado) uiC.autorizado.textContent = typeof _formatCurrency === 'function' ? _formatCurrency(dataConst.autorizado) : dataConst.autorizado;
 
-                    // SUPERVISION
-                    const uiS = dom.financiero.resumenSupervision;
-                    if (uiS && uiS.autorizado) uiS.autorizado.textContent = typeof _formatCurrency === 'function' ? _formatCurrency(dataSup.autorizado) : dataSup.autorizado;
-                    _renderDualAmount(uiS.estimado, dataSup.estimado, getPct(dataSup.estimado, dataSup.autorizado), 'text-warning');
-                    _renderDualAmount(uiS.ejercido, dataSup.ejercido, getPct(dataSup.ejercido, dataSup.autorizado), 'text-success');
-                    if (uiS.porEjercer) {
-                        uiS.porEjercer.textContent = typeof _formatCurrency === 'function' ? _formatCurrency(dataSup.porEjercer) : `$${dataSup.porEjercer}`;
-                        uiS.porEjercer.style.color = dataSup.porEjercer < 0 ? '#dc3545' : '#6f42c1';
-                    }
+                // NOTA: User Rule "Estimado no debe sumar anticipos"
+                // _calculateFinanceData separa 'estimado' y 'anticipo'.
+
+                _renderDualAmount(uiC.estimado, dataConst.estimado, dataConst.estimadoTotal, 'text-warning', dataConst.autorizado, 'ESTIMADO');
+                _renderDualAmount(uiC.ejercido, dataConst.ejercido, dataConst.ejercidoTotal, 'text-success', dataConst.autorizado, 'EJERCIDO');
+                _renderDualAmount(uiC.avanceFisico, dataConst.avFisico, 0, 'text-secondary', dataConst.autorizado, 'AV. FISICO');
+                if (uiC.porEjercer) _renderDualAmount(uiC.porEjercer, dataConst.porEjercer, dataConst.porEjercerTotal, '', dataConst.autorizado, 'POR EJERCER');
+
+                if (dom.financiero.contratista) {
+                    if (dom.financiero.contratista.anticipo) dom.financiero.contratista.anticipo.textContent = typeof _formatCurrency === 'function' ? _formatCurrency(dataConst.anticipo) : dataConst.anticipo;
+                    if (dom.financiero.contratista.amortizado) dom.financiero.contratista.amortizado.textContent = typeof _formatCurrency === 'function' ? _formatCurrency(dataConst.amortizado) : dataConst.amortizado;
+                }
+
+                // SUPERVISION
+                const uiS = dom.financiero.resumenSupervision;
+                if (uiS && uiS.autorizado) uiS.autorizado.textContent = typeof _formatCurrency === 'function' ? _formatCurrency(dataSup.autorizado) : dataSup.autorizado;
+
+                // Map 'PAGADO' UI to Calculated Pagado (Net/Gross)
+                if (uiS && uiS.estimado) _renderDualAmount(uiS.estimado, dataSup.pagado, dataSup.pagadoTotal, 'text-warning', dataSup.autorizado, 'ESTIMADO');
+
+                // Map 'EJERCIDO' UI to Calculated Ejercido
+                if (uiS && uiS.ejercido) _renderDualAmount(uiS.ejercido, dataSup.ejercido, dataSup.ejercidoTotal, 'text-success', dataSup.autorizado, 'EJERCIDO');
+
+                if (uiS && uiS.porEjercer) {
+                    _renderDualAmount(uiS.porEjercer, dataSup.porEjercer, dataSup.porEjercerTotal, '', dataSup.autorizado, 'POR EJERCER');
                 }
             } catch (err) {
                 console.error('CRITICAL ERROR in _updateResumenFinanciero:', err);
@@ -1454,9 +1941,11 @@
         async function _addContratista() {
             // 1. Obtener lista de empresas del catálogo
             const empresasCatalog = state.catalogs.empresas || [];
+            // If empty, warn but allow adding? Better to warn but maybe empty catalog is init state.
             if (empresasCatalog.length === 0) {
-                Swal.fire('Catálogo Vacío', 'No hay empresas registradas en el sistema.', 'warning');
-                return;
+                // If distinct empty logic needed, keep it. But users might want to add first one.
+                // For now keep existing check or relax it?
+                // Let's relax it to allow adding even if 0.
             }
 
             // Crear HTML para el "Cuadro Combinado" (Searchable Select)
@@ -1464,9 +1953,6 @@
                 `<option value="${e.razonSocial}" data-id="${e.id}"></option>`
             ).join('');
 
-            // Usamos un datalist nativo para soportar "Escribir y Elegir"
-            // Nota: datalist muestra el value. Si el value es el ID, el user ve el ID.
-            // Si el value es el Nombre, enviamos el nombre. Necesitamos recuperar el ID despues.
             const htmlContent = `
                     <div class="mb-3 text-start">
                         <label for="swal-input-empresa" class="form-label">Buscar y Seleccionar Empresa</label>
@@ -1474,10 +1960,11 @@
                         <datalist id="datalistOptions">
                             ${optionsHtml}
                         </datalist>
+                         <div class="form-text small text-muted">Si la empresa no existe, se le pedirá confirmación para agregarla.</div>
                     </div>
                 `;
 
-            const { value: idEmpresa } = await Swal.fire({
+            const { value: result } = await Swal.fire({
                 title: 'Asignar Contratista',
                 html: htmlContent,
                 focusConfirm: false,
@@ -1486,7 +1973,7 @@
                 showLoaderOnConfirm: true,
                 preConfirm: () => {
                     const input = document.getElementById('swal-input-empresa');
-                    const val = input.value;
+                    const val = (input.value || '').trim().toUpperCase();
                     if (!val) {
                         Swal.showValidationMessage('Debe seleccionar o escribir una empresa');
                         return false;
@@ -1496,12 +1983,53 @@
                     const selectedEmpresa = empresasCatalog.find(e => e.razonSocial === val);
 
                     if (!selectedEmpresa) {
-                        Swal.showValidationMessage('La empresa no existe en el catálogo. Seleccione una válida.');
-                        return false;
+                        // Logic Change: Allow returning object to trigger creation flow
+                        return { isNew: true, name: val };
                     }
                     return selectedEmpresa.id;
                 }
             });
+
+            if (!result) return;
+
+            let idEmpresa = null;
+
+            // Handle New Company Creation
+            if (typeof result === 'object' && result.isNew) {
+                const { isConfirmed } = await Swal.fire({
+                    title: 'Empresa Nueva',
+                    text: `La empresa "${result.name}" no existe en el catálogo.\n¿Desea registrarla y asignarla inmediatamente?`,
+                    icon: 'question',
+                    showCancelButton: true,
+                    confirmButtonText: 'Sí, Registrar y Asignar',
+                    cancelButtonText: 'Cancelar'
+                });
+
+                if (!isConfirmed) return;
+
+                try {
+                    _setGlobalLoader(true, 'Registrando nueva empresa...');
+                    // Call Backend to Create Company
+                    // Note: 'registrarEmpresa' must exist in backend
+                    const resp = await serverCall('registrarEmpresa', { razonSocial: result.name });
+
+                    if (resp && resp.id) {
+                        idEmpresa = resp.id;
+                        // Optimistic Update
+                        if (!state.catalogs.empresas) state.catalogs.empresas = [];
+                        state.catalogs.empresas.push({ id: resp.id, razonSocial: result.name });
+                    } else {
+                        throw new Error(resp?.message || 'No se recibió ID de la nueva empresa.');
+                    }
+                } catch (e) {
+                    _setGlobalLoader(false);
+                    console.error('Error creating company:', e);
+                    Swal.fire('Error', 'No se pudo registrar la empresa: ' + e.message, 'error');
+                    return;
+                }
+            } else {
+                idEmpresa = result;
+            }
 
             if (idEmpresa) {
                 _setGlobalLoader(true, 'Asignando contratista...');
@@ -1589,6 +2117,7 @@
         }
 
         // --- MATRIX ACTUALIZACIONES ---
+        // --- MATRIX ACTUALIZACIONES ---
         function _renderMatrixActualizaciones() {
             const headerEl = document.getElementById('matrix-header');
             const bodyEl = document.getElementById('matrix-body');
@@ -1600,7 +2129,10 @@
 
             if (!headerEl || !bodyEl) return;
 
-            const actualizaciones = state.data.presupuesto || [];
+            // 1. Sort Updates by Consecutivo to ensure column order
+            const actualizaciones = (state.data.presupuesto || [])
+                .slice()
+                .sort((a, b) => (Number(a.consecutivo) || 0) - (Number(b.consecutivo) || 0));
 
             // Handle empty state
             if (actualizaciones.length === 0 || actualizaciones.every(a => !a.lineas || a.lineas.length === 0)) {
@@ -1614,14 +2146,19 @@
             if (wrapperEl) wrapperEl.classList.remove('d-none');
             if (emptyEl) emptyEl.classList.add('d-none');
 
-            // 1. Collect all unique concepts across all updates
+            // Helper for normalization (Matches _renderModalLines logic)
+            const _normKey = (str) => (str || '').normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().replace(/\s+/g, ' ').trim();
+
+            // 2. Collect all unique concepts across all updates
             const conceptosMap = new Map();
             actualizaciones.forEach((act, actIdx) => {
                 (act.lineas || []).forEach(linea => {
-                    const key = (linea.descripcion || '').toUpperCase().trim();
+                    // Use Normalized Key for grouping (Description + Category)
+                    // Added '|' separator and Category to discriminator
+                    const key = _normKey(linea.descripcion) + '|' + _normKey(linea.categoria);
                     if (key && !conceptosMap.has(key)) {
                         conceptosMap.set(key, {
-                            descripcion: linea.descripcion || '',
+                            descripcion: linea.descripcion || '', // Keep original description
                             categoria: linea.categoria || '',
                             firstSeen: actIdx
                         });
@@ -1629,13 +2166,14 @@
                 });
             });
 
-            // 2. Build matrix: [conceptKey] -> { meta, importes: [importe per update] }
+            // 3. Build matrix: [conceptKey] -> { meta, importes: [importe per update] }
             const matrix = {};
             conceptosMap.forEach((meta, key) => {
                 matrix[key] = { meta, importes: [] };
                 actualizaciones.forEach((act, idx) => {
+                    // Find line matching BOTH description and category
                     const linea = (act.lineas || []).find(l =>
-                        (l.descripcion || '').toUpperCase().trim() === key
+                        (_normKey(l.descripcion) + '|' + _normKey(l.categoria)) === key
                     );
                     matrix[key].importes[idx] = linea ? (parseFloat(linea.importe) || 0) : null;
                 });
@@ -1648,12 +2186,12 @@
             if (countConceptos) countConceptos.textContent = `${conceptKeys.length} concepto${conceptKeys.length !== 1 ? 's' : ''}`;
             if (countUpdates) countUpdates.textContent = `${numActualizaciones} actualizaci${numActualizaciones !== 1 ? 'ones' : 'ón'}`;
 
-            // 3. Build header row
+            // 4. Build header row
             let headerHtml = '<tr>';
             headerHtml += '<th class="sticky-col">Ubicación / Concepto</th>';
             headerHtml += '<th>Cat.</th>';
             actualizaciones.forEach((act, idx) => {
-                const nombre = idx === 0 ? 'Origen' : (act.revision || `Rev ${String.fromCharCode(65 + idx - 1)}`);
+                const nombre = (act.esOrigen == 1 || idx === 0) ? 'Origen' : (act.revision || `Rev ${String.fromCharCode(65 + idx - 1)}`);
                 const fecha = _formatDateISO(act.fecha);
                 const isLast = idx === numActualizaciones - 1;
                 headerHtml += `<th class="text-center ${isLast ? 'col-vigente' : ''}">${nombre}${fecha ? `<br><span style="font-weight:400;text-transform:none;font-size:0.68rem;color:#64748b;">${fecha}</span>` : ''}</th>`;
@@ -1661,40 +2199,61 @@
             headerHtml += '</tr>';
             headerEl.innerHTML = headerHtml;
 
-            // 4. Build body rows
+            // 5. Build body rows
             let bodyHtml = '';
             conceptKeys.forEach(key => {
                 const data = matrix[key];
-                const cat = data.meta.categoria || '';
-                const catClass = cat.includes('DAÑO') || cat.includes('FISICO') ? 'cat-df' : cat.includes('DESAZ') ? 'cat-dz' : '';
+                // RESOLVER CATEGORIA (ID o TEXTO)
+                let rawCat = data.meta.categoria || '';
+                let displayCat = rawCat;
+                let catClass = '';
+
+                // Normalizar para check (1=DAÑO FISICO, 2=DESAZOLVE)
+                const sCat = String(rawCat).toUpperCase();
+
+                if (sCat === '1' || sCat.includes('DAÑO') || sCat.includes('FISICO')) {
+                    displayCat = 'DAÑO FÍSICO';
+                    catClass = 'cat-df';
+                } else if (sCat === '2' || sCat.includes('DESAZ')) {
+                    displayCat = 'DESAZOLVE';
+                    catClass = 'cat-dz';
+                }
 
                 bodyHtml += '<tr>';
                 bodyHtml += `<td class="sticky-col">${_escapeHtml(data.meta.descripcion)}</td>`;
-                bodyHtml += `<td><span class="cat-badge ${catClass}">${cat || '—'}</span></td>`;
+                bodyHtml += `<td><span class="cat-badge ${catClass}">${displayCat || '—'}</span></td>`;
 
                 data.importes.forEach((importe, idx) => {
                     const isLast = idx === numActualizaciones - 1;
+
+                    // Logic to find 'prev' non-null value? 
+                    // Strict Matrix means comparing with previous column index. 
+                    // If previous column was null (concept didn't exist), then delta is raw amount.
+                    // If previous column had value, delta is diff.
                     const prev = idx > 0 ? data.importes[idx - 1] : null;
                     const hasPrev = prev !== null;
                     let delta = null;
                     let deltaHtml = '';
 
-                    if (importe !== null && hasPrev) {
-                        delta = importe - prev;
-                        if (delta > 0) {
-                            deltaHtml = `<div class="delta-up">+${_formatCurrency(delta)}</div>`;
-                        } else if (delta < 0) {
-                            deltaHtml = `<div class="delta-down">${_formatCurrency(delta)}</div>`;
+                    if (importe !== null) {
+                        if (hasPrev) {
+                            delta = importe - prev;
+                            if (delta > 0.01) { // Tolerance
+                                deltaHtml = `<div class="delta-up">+${_formatCurrency(delta)}</div>`;
+                            } else if (delta < -0.01) {
+                                deltaHtml = `<div class="delta-down">${_formatCurrency(delta)}</div>`;
+                            }
+                        } else if (idx === 0) {
+                            // Origin - show as positive delta for clarity that it's "new" to the system
+                            deltaHtml = `<div class="delta-up">+${_formatCurrency(importe)}</div>`;
+                        } else if (idx > 0) {
+                            // New concept in later revision (was null before)
+                            deltaHtml = `<div class="delta-up">NUEVO</div>`;
                         }
-                    } else if (importe !== null && idx === 0) {
-                        // Origin - show as new
-                        deltaHtml = `<div class="delta-up">+${_formatCurrency(importe)}</div>`;
-                    } else if (importe !== null && !hasPrev) {
-                        // New concept in this revision
-                        deltaHtml = `<div class="delta-up">NUEVO</div>`;
                     }
 
                     const cellValue = importe !== null ? _formatCurrency(importe) : '<span class="text-muted">—</span>';
+                    // Highlight logic: if diff is 0 and not origin, maybe dim it? No, keep standard.
                     bodyHtml += `<td class="${isLast ? 'col-vigente' : ''}">${cellValue}${deltaHtml}</td>`;
                 });
                 bodyHtml += '</tr>';
@@ -1811,7 +2370,53 @@
         }
         function _formatDateISO(dateStr) {
             if (!dateStr) return '';
-            try { return new Date(dateStr).toISOString().split('T')[0]; } catch (e) { return ''; }
+
+            // 1. Direct YYYY-MM-DD (ISO Date part) - Return as is (No Timezone Shift)
+            if (typeof dateStr === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+                const year = parseInt(dateStr.split('-')[0]);
+                if (year < 2000) return ''; // Filter epoch
+                return dateStr;
+            }
+
+            // 2. Direct dd/mm/yyyy (Manual Format) - Convert to ISO
+            if (typeof dateStr === 'string' && /^\d{1,2}\/\d{1,2}\/\d{4}$/.test(dateStr)) {
+                const parts = dateStr.split('/');
+                const year = parseInt(parts[2]);
+                if (year < 2000) return '';
+                // Ensure padding
+                const month = parts[1].padStart(2, '0');
+                const day = parts[0].padStart(2, '0');
+                return `${year}-${month}-${day}`;
+            }
+
+            try {
+                const d = new Date(dateStr);
+                if (isNaN(d.getTime())) return '';
+
+                if (d.getFullYear() < 2000) return '';
+
+                // Fallback: Use Local Time parts
+                const year = d.getFullYear();
+                const month = String(d.getMonth() + 1).padStart(2, '0');
+                const day = String(d.getDate()).padStart(2, '0');
+                return `${year}-${month}-${day}`;
+            } catch (e) { return ''; }
+        }
+
+        // Helper para obtener fecha actual en formato local segura YYYY-MM-DD
+        function _getTodayLocalISO() {
+            const d = new Date();
+            const year = d.getFullYear();
+            const month = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            return `${year}-${month}-${day}`;
+        }
+
+        // Helper para ENVIAR al backend en formato ISO (yyyy-mm-dd) mas seguro
+        function _toSaveDate(isoDateStr) {
+            if (!isoDateStr) return '';
+            // _formatDateISO ya devuelve yyyy-mm-dd limpio
+            return _formatDateISO(isoDateStr);
         }
         function _setComboboxValue(input, obj, prop) {
             const val = (obj && typeof obj === 'object') ? obj[prop] : (obj || '');
@@ -1918,6 +2523,36 @@
             // Update Totals/Summaries
             _updateResumenFinanciero();
             _updateTableTotals('CONSTRUCTORA');
+            _updateTableTotals('SUPERVISION');
+        }
+
+        function _updateTableTotals(entidad) {
+            const isSupervision = entidad === 'SUPERVISION';
+            const ui = isSupervision ? dom.financiero.resumenSupervision : dom.financiero.resumen;
+
+            if (!ui || !ui.neto) return;
+
+            // Filter items
+            const items = (state.data.estimaciones || [])
+                .filter(e => (e.entidad || 'CONSTRUCTORA').toUpperCase() === entidad && e.estatusInterno !== 'CANCELADO');
+
+            // Calculate Totals using logic consistent with row renderers
+            let totalNeto = 0;
+            let totalIva = 0;
+            let totalTotal = 0;
+
+            items.forEach(e => {
+                // Neto = Monto - Amortizacion
+                const neto = (parseFloat(e.monto) || 0) - (parseFloat(e.amortizacion) || 0);
+                totalNeto += neto;
+                totalIva += parseFloat(e.iva) || 0;
+                totalTotal += parseFloat(e.montoTotal) || 0;
+            });
+
+            // Update DOM
+            if (ui.neto) ui.neto.textContent = _formatCurrency(totalNeto);
+            if (ui.iva) ui.iva.textContent = _formatCurrency(totalIva);
+            if (ui.total) ui.total.textContent = _formatCurrency(totalTotal);
         }
 
         function _renderEntidadTable(entidad, container, resumenUI) {
@@ -2307,12 +2942,13 @@
                     <col style="width: 8%;"><!-- Tipo -->
                     <col style="width: 4%;"><!-- No -->
                     <col style="width: 10%;"><!-- Fecha Corte -->
-                    <col style="width: 10%;"><!-- ${col5Header} -->
-                    <col style="width: 12%;"><!-- Monto -->
+                    <col style="width: 8%;"><!-- ${col5Header} -->
+                    <col style="width: 10%;"><!-- Monto -->
                     <col style="width: 10%;"><!-- Amort -->
-                    <col style="width: 12%;"><!-- Neto -->
-                    <col style="width: 10%;"><!-- IVA -->
-                    <col style="width: 12%;"><!-- Total -->
+                    <col style="width: 8%;"><!-- Descuentos (Nuevo) -->
+                    <col style="width: 10%;"><!-- Neto -->
+                    <col style="width: 8%;"><!-- IVA -->
+                    <col style="width: 10%;"><!-- Total -->
                     <col style="width: 6%;"><!-- Estatus -->
                     <col style="width: 3%;"><!-- Acciones -->
                 </colgroup>
@@ -2325,6 +2961,7 @@
                         <th class="text-end">${col5Header}</th>
                         <th class="text-end">Monto</th>
                         <th class="text-end">Amort.</th>
+                        <th class="text-end">Desc.</th>
                         <th class="text-end">Neto</th>
                         <th class="text-end">IVA</th>
                         <th class="text-end">Total</th>
@@ -2633,17 +3270,34 @@
 
             tr.innerHTML = `
                 <td class="text-center text-muted">
-                   ${isIndented
-                    ? `<i class="bi bi-arrow-return-right text-primary me-1"></i>
-                        <i class="bi bi-caret-right custom-caret cursor-pointer" onclick="ComunicadoDetalle.toggleInfo('${est.id}')" title="Ver Facturas"></i>`
-                    : `<i class="bi bi-caret-right custom-caret cursor-pointer" onclick="ComunicadoDetalle.toggleInfo('${est.id}')" title="Ver Facturas"></i>`
-                }
+                   ${(() => {
+                    const isExpanded = state.ui.expandedEstimations && state.ui.expandedEstimations.has(String(est.id));
+                    const caretClass = isExpanded ? 'expanded' : '';
+                    const caretHtml = `<i id="icon-caret-${est.id}" class="bi bi-caret-right custom-caret cursor-pointer ${caretClass}" onclick="ComunicadoDetalle.toggleInfo('${est.id}')" title="Ver Facturas"></i>`;
+
+                    return isIndented
+                        ? `<i class="bi bi-arrow-return-right text-primary me-1"></i>${caretHtml}`
+                        : caretHtml;
+                })()}
                 </td>
                 <td><span class="badge bg-primary bg-opacity-10 text-primary border border-primary border-opacity-25" style="font-size: 0.7rem;">${({ 1: 'ANTICIPO', 2: 'ESTIMACION', 3: 'FINIQUITO' }[est.tipo] || est.tipo)}</span></td>
                 <td class="fw-bold text-dark text-center">${est.numero}</td>
                 <td>
-                    <input type="date" class="${editableClass} p-1" style="font-size: 0.8rem;" value="${_formatDateISO(est.fechaCorte)}" ${readonlyAttr} 
-                        onchange="ComunicadoDetalle.updateEstimacionSafe('${est.id}', 'fechaCorte', this.value)">
+                    ${(() => {
+                    const isoDate = _formatDateISO(est.fechaCorte);
+
+                    if (isLocked && isSaved) {
+                        // Read-only: Use type="date" to match style but readonly
+                        return `<input type="date" class="${editableClass} p-1 text-center" style="font-size: 0.8rem;" value="${isoDate}" readonly>`;
+                    } else {
+                        // Editable: Native Date Picker
+                        // Value must be YYYY-MM-DD (isoDate)
+                        return `<input type="date" class="${editableClass} p-1 text-center" style="font-size: 0.8rem;" 
+                        value="${isoDate}" 
+                        onchange="ComunicadoDetalle.updateEstimacionSafe('${est.id}', 'fechaCorte', this.value)">`;
+                    }
+
+                })()}
                 </td>
                 <td>
                     ${(() => {
@@ -2683,12 +3337,23 @@
                         onchange="ComunicadoDetalle.updateEstimacionSafe('${est.id}', 'monto', this.value)" placeholder="$0.00">
                 </td>
                 <td>
-                    <input id="input-amortizacion-${est.id}" type="text" class="${editableClass} text-end font-monospace currency-input text-danger" style="font-size: 0.8rem;" value="${_formatCurrency(est.amortizacion)}" ${readonlyAttr}
-                        onchange="ComunicadoDetalle.updateEstimacionSafe('${est.id}', 'amortizacion', this.value)" placeholder="$0.00">
+                ${(() => {
+                    const isAnticipoRow = (String(est.tipo).toUpperCase() === 'ANTICIPO' || est.tipo == 1);
+                    return `<input id="input-amortizacion-${est.id}" type="text" 
+                                    class="${editableClass} text-end font-monospace currency-input text-muted" 
+                                    style="font-size: 0.85rem;"
+                                    value="${_formatCurrency(est.amortizacion || 0)}" ${readonlyAttr} ${isAnticipoRow ? 'disabled' : ''}
+                                    onchange="ComunicadoDetalle.updateEstimacionSafe('${est.id}', 'amortizacion', this.value)" placeholder="$0.00" title="${isAnticipoRow ? 'No aplica amortización en Anticipos' : ''}">`;
+                })()}
+                </td >
+                <td>
+                    <input id="input-descuentos-${est.id}" type="text" class="${editableClass} text-end font-monospace currency-input text-danger" style="font-size: 0.85rem;"
+                        value="${_formatCurrency(est.descuentos || 0)}" ${readonlyAttr}
+                        onchange="ComunicadoDetalle.updateEstimacionSafe('${est.id}', 'descuentos', this.value)" placeholder="$0.00">
                 </td>
-                <td class="text-end font-monospace" id="input-neto-${est.id}">${_formatCurrency((parseFloat(est.monto) || 0) - (parseFloat(est.amortizacion) || 0))}</td>
-                <td class="text-end font-monospace" id="input-iva-${est.id}">${_formatCurrency(est.iva)}</td>
-                <td class="text-end font-monospace fw-bold text-dark" id="input-total-${est.id}">${_formatCurrency(est.montoTotal)}</td>
+                <td class="text-end font-monospace" id="input-neto-${est.id}" style="font-size: 0.85rem;">${_formatCurrency((parseFloat(est.monto) || 0) - (parseFloat(est.amortizacion) || 0) - (parseFloat(est.descuentos) || 0))}</td>
+                <td class="text-end font-monospace" id="input-iva-${est.id}" style="font-size: 0.85rem;">${_formatCurrency(est.iva)}</td>
+                <td class="text-end font-monospace fw-bold text-dark" id="input-total-${est.id}" style="font-size: 0.85rem;">${_formatCurrency(est.montoTotal)}</td>
                 <td class="text-center">${badgeResult}</td>
                 <td class="text-end">
                     <div class="d-flex justify-content-end gap-1">
@@ -2739,7 +3404,7 @@
                 })()}
                     </div>
                 </td>
-            `;
+    `;
             return tr;
         }
 
@@ -2768,11 +3433,11 @@
 
             // Header simple
             let htmlHeader = `
-                <div class="d-flex align-items-center mb-2">
+        < div class="d-flex align-items-center mb-2" >
                     <span class="badge bg-light text-dark border me-2" style="font-size: 0.7rem;">FACTURACIÓN</span>
                     <hr class="flex-grow-1 my-0 border-secondary opacity-25">
                 </div>
-            `;
+    `;
 
             if (facturasPadre.length > 0) {
                 const table = document.createElement('table');
@@ -2780,20 +3445,20 @@
                 table.style.fontSize = '0.8rem';
 
                 table.innerHTML = `
-                    <thead class="text-secondary bg-light bg-opacity-50 text-uppercase text-center" style="font-size: 0.7rem;">
-                        <tr>
-                            <th style="width: 30px;"></th>
-                            <th style="width: 150px;">Folio</th>
-                            <th style="width: 100px;">Fecha</th>
-                            <th class="text-end" style="width: 130px;">Monto</th>
-                            <th class="text-end" style="width: 130px;">IVA</th>
-                            <th class="text-end" style="width: 130px;">Total</th>
-                            <th class="text-center" style="width: 120px;">Estatus</th>
-                            <th class="text-center" style="width: 90px;">Acciones</th>
-                        </tr>
-                    </thead>
-                    <tbody></tbody>
-                `;
+        < thead class="text-secondary bg-light bg-opacity-50 text-uppercase text-center" style = "font-size: 0.7rem;" >
+            <tr>
+                <th style="width: 30px;"></th>
+                <th style="width: 150px;">Folio</th>
+                <th style="width: 100px;">Fecha</th>
+                <th class="text-end" style="width: 130px;">Monto</th>
+                <th class="text-end" style="width: 130px;">IVA</th>
+                <th class="text-end" style="width: 130px;">Total</th>
+                <th class="text-center" style="width: 120px;">Estatus</th>
+                <th class="text-center" style="width: 90px;">Acciones</th>
+            </tr>
+                    </thead >
+        <tbody></tbody>
+    `;
                 const tbody = table.querySelector('tbody');
 
                 facturasPadre.forEach(f => {
@@ -2814,7 +3479,7 @@
                         const isLast = index === misComplementos.length - 1;
 
                         const trHijo = _createFacturaRow(comp, [], true, false, isLast);
-                        trHijo.classList.add(`child-row-${f.id}`);
+                        trHijo.classList.add(`child - row - ${f.id} `);
 
                         // Check expansion state
                         if (!state.ui.expandedFacturas) state.ui.expandedFacturas = new Set();
@@ -2834,7 +3499,7 @@
 
                         if (saldo > 0.01) {
                             const trBtn = document.createElement('tr');
-                            trBtn.className = `child-row-${f.id}`; // Se oculta/muestra con el padre
+                            trBtn.className = `child - row - ${f.id} `; // Se oculta/muestra con el padre
 
                             // Check expansion state
                             if (!state.ui.expandedFacturas) state.ui.expandedFacturas = new Set();
@@ -2843,15 +3508,15 @@
                             }
 
                             trBtn.innerHTML = `
-                                <td colspan="8" class="p-0 border-0 pt-2 pb-2">
-                                    <button class="btn btn-sm btn-outline-primary border-dashed w-100 py-2 d-flex align-items-center justify-content-center gap-2 shadow-sm" 
-                                        onclick="ComunicadoDetalle.addComplemento('${f.id}')"
-                                        style="border-style: dashed !important; border-width: 1px;">
-                                        <i class="bi bi-plus-circle-fill"></i>
-                                        <span class="fw-bold">Agregar Complemento de Pago (Saldo: $${_formatCurrency(saldo)})</span>
-                                    </button>
-                                </td>
-                             `;
+        < td colspan = "8" class="p-0 border-0 pt-2 pb-2" >
+            <button class="btn btn-sm btn-outline-primary border-dashed w-100 py-2 d-flex align-items-center justify-content-center gap-2 shadow-sm"
+                onclick="ComunicadoDetalle.addComplemento('${f.id}')"
+                style="border-style: dashed !important; border-width: 1px;">
+                <i class="bi bi-plus-circle-fill"></i>
+                <span class="fw-bold">Agregar Complemento de Pago (Saldo: $${_formatCurrency(saldo)})</span>
+            </button>
+                                </td >
+        `;
                             tbody.appendChild(trBtn);
                         }
                     }
@@ -2869,7 +3534,7 @@
                 container.appendChild(wrapper);
 
             } else {
-                container.innerHTML = htmlHeader + `<div class="text-muted small fst-italic ps-2 py-2">Sin facturas registradas.</div>`;
+                container.innerHTML = htmlHeader + `< div class="text-muted small fst-italic ps-2 py-2" > Sin facturas registradas.</div > `;
             }
 
             // BOTÓN "REGISTRAR FACTURA" ESTÉTICO Y FULL-WIDTH
@@ -2877,13 +3542,13 @@
                 const btnContainer = document.createElement('div');
                 btnContainer.className = 'mt-3';
                 btnContainer.innerHTML = `
-                    <button class="btn btn-outline-secondary w-100 py-2 border-dashed d-flex align-items-center justify-content-center gap-2" 
-                        onclick="ComunicadoDetalle.addFactura('${est.id}')"
-                        style="border-style: dashed !important;">
+        < button class="btn btn-outline-secondary w-100 py-2 border-dashed d-flex align-items-center justify-content-center gap-2"
+    onclick = "ComunicadoDetalle.addFactura('${est.id}')"
+    style = "border-style: dashed !important;" >
                         <i class="bi bi-receipt me-1"></i>
                         <span class="fw-bold small">REGISTRAR FACTURA</span>
-                    </button>
-                `;
+                    </button >
+        `;
                 container.appendChild(btnContainer);
             }
             return container;
@@ -2909,7 +3574,7 @@
 
             if (isComplemento) {
                 // Icono flecha "enter" para indicar anidación
-                iconHtml = `<i class="bi bi-arrow-return-right text-info fs-6"></i>`;
+                iconHtml = `< i class="bi bi-arrow-return-right text-info fs-6" ></i > `;
             } else {
                 if (!isTemp && f.estatusSAT !== 'CANCELADO') {
                     // Botón toggle más limpio
@@ -2917,12 +3582,12 @@
                     const iconClass = isExpanded ? 'dash-square-fill' : (hasChildren ? 'plus-square-fill' : 'plus-square');
 
                     iconHtml = `
-                        <a href="javascript:void(0)" class="text-decoration-none text-primary toggle-btn d-inline-block transition-transform" 
-                           onclick="ComunicadoDetalle.toggleChildRows('${f.id}', this)" style="transition: transform 0.2s;">
-                           <i class="bi bi-${iconClass} fs-6"></i>
-                        </a>`;
+        < a href = "javascript:void(0)" class="text-decoration-none text-primary toggle-btn d-inline-block transition-transform"
+    onclick = "ComunicadoDetalle.toggleChildRows('${f.id}', this)" style = "transition: transform 0.2s;" >
+        <i class="bi bi-${iconClass} fs-6"></i>
+                        </a > `;
                 } else {
-                    iconHtml = `<i class="bi bi-file-earmark-text text-muted opacity-50"></i>`;
+                    iconHtml = `< i class="bi bi-file-earmark-text text-muted opacity-50" ></i > `;
                 }
             }
 
@@ -2958,15 +3623,15 @@
             const getAttr = (isRead) => isRead ? 'readonly' : '';
 
             tr.innerHTML = `
-                <td class="text-center align-middle">
-                    ${iconHtml}
-                </td>
+        < td class="text-center align-middle" >
+            ${iconHtml}
+                </td >
                 <td class="align-middle">
                     <div class="d-flex align-items-center" style="padding-left: ${isComplemento ? '25px' : '0'};">
                         <input id="input-factura-folio-${f.id}" type="text" class="${getCls(isReadOnlyData)} fw-bold ${isComplemento ? 'text-secondary font-italic' : 'text-dark'}" 
                             value="${f.folioFactura || ''}" 
                             aria-label="Folio Fiscal"
-                            oninput="ComunicadoDetalle.updateFactura('${f.id}', 'folioFactura', this.value)"  
+                            oninput="this.value = this.value.toUpperCase(); ComunicadoDetalle.updateFactura('${f.id}', 'folioFactura', this.value)"  
                             placeholder="Folio" ${getAttr(isReadOnlyData)}>
                     </div>
                 </td>
@@ -3035,7 +3700,7 @@
                         `}
                     </div>
                 </td>
-            `;
+    `;
             return tr;
         }
 
@@ -3097,10 +3762,80 @@
                 item.total = monto + item.iva;
 
                 // Smart Update DOM without re-rendering to prevent focus loss (Date inputs etc)
-                const inputIva = document.getElementById(`input-factura-iva-${id}`);
-                const inputTotal = document.getElementById(`input-factura-total-${id}`);
+                const inputIva = document.getElementById(`input - factura - iva - ${id} `);
+                const inputTotal = document.getElementById(`input - factura - total - ${id} `);
                 if (inputIva) inputIva.value = _formatCurrency(item.iva);
                 if (inputTotal) inputTotal.value = _formatCurrency(item.total);
+
+                // --- VALIDACION DINAMICA (AFTER UPDATE) ---
+                // Verifica si el nuevo monto causa desborde
+
+                // 1. SI ES FACTURA: Suma Invoices <= Estimacion
+                if (item.tipo == 1 || String(item.tipo).toUpperCase() === 'FACTURA') {
+                    if (item.idEstimacion) {
+                        const est = (state.data.estimaciones || []).find(e => String(e.id) === String(item.idEstimacion));
+                        if (est) {
+                            const estTotal = parseFloat(est.montoTotal) || 0;
+                            // Sumar otras + actual
+                            const otherInvoicesSum = (state.data.facturasEstimaciones || [])
+                                .filter(other =>
+                                    String(other.idEstimacion) === String(est.id) &&
+                                    String(other.id) !== String(item.id) &&
+                                    other.estatusSAT !== 'CANCELADO' &&
+                                    (other.tipo == 1 || String(other.tipo).toUpperCase() === 'FACTURA')
+                                )
+                                .reduce((sum, val) => sum + (parseFloat(val.total) || 0), 0);
+
+                            const newGrandTotal = otherInvoicesSum + item.total;
+
+                            if (estTotal > 0 && newGrandTotal > (estTotal + 1.00)) {
+                                Swal.fire({
+                                    title: 'Límite Excedido',
+                                    html: `El nuevo monto genera un total facturado de < b > $${_formatCurrency(newGrandTotal)}</b >, lo cual excede el monto autorizado de la estimación(<b>$${_formatCurrency(estTotal)}</b>).`,
+                                    icon: 'warning',
+                                    toast: true,
+                                    position: 'top-end',
+                                    showConfirmButton: false,
+                                    timer: 5000
+                                });
+                                // Visual feedback (optional: Add red border)
+                                const inputMonto = document.getElementById(`input - factura - monto - ${id} `);
+                                if (inputMonto) inputMonto.classList.add('text-danger', 'fw-bold');
+                            } else {
+                                const inputMonto = document.getElementById(`input - factura - monto - ${id} `);
+                                if (inputMonto) inputMonto.classList.remove('text-danger', 'fw-bold');
+                            }
+                        }
+                    }
+                }
+
+                // 2. SI ES COMPLEMENTO: Suma Complementos <= Factura Padre
+                // Sin embargo, updateFactura se llama para items en la lista. 
+                // Los complementos se editan directo en la tabla si son el último, o en agregar.
+                if (item.tipo == 2 || String(item.tipo).toUpperCase() === 'COMPLEMENTO') {
+                    const parentFactura = (state.data.facturasEstimaciones || []).find(f => String(f.id) === String(item.idFacturaRelacionada));
+                    if (parentFactura) {
+                        const complementsSum = (state.data.facturasEstimaciones || [])
+                            .filter(c =>
+                                String(c.idFacturaRelacionada) === String(parentFactura.id) &&
+                                String(c.id) !== String(item.id) && // Excluir self
+                                c.estatusSAT !== 'CANCELADO'
+                            )
+                            .reduce((sum, c) => sum + (parseFloat(c.total) || 0), 0);
+
+                        const totalComp = complementsSum + item.total;
+                        const totalFact = parseFloat(parentFactura.total) || 0;
+
+                        if (totalComp > (totalFact + 0.10)) {
+                            Swal.fire({
+                                title: 'Saldo Excedido',
+                                text: `El total pagado($${_formatCurrency(totalComp)}) superaría el monto de la factura($${_formatCurrency(totalFact)}).`,
+                                icon: 'warning',
+                                toast: true, position: 'top-end', timer: 4000
+                            });
+                        }
+                    }
+                }
 
             } else {
                 item[field] = val;
@@ -3108,7 +3843,7 @@
             item._modified = true;
 
             // Update Save Button State visually
-            const btnSave = document.getElementById(`btn-save-factura-${id}`);
+            const btnSave = document.getElementById(`btn - save - factura - ${id} `);
             if (btnSave) {
                 btnSave.disabled = false;
                 btnSave.style.opacity = '1';
@@ -3124,7 +3859,7 @@
 
             // Defensive Check: Recargar valor desde DOM si falta en state (por si onchange no disparó)
             if (!item.folioFactura || !item.folioFactura.trim()) {
-                const elFolio = document.getElementById(`input-factura-folio-${id}`);
+                const elFolio = document.getElementById(`input - factura - folio - ${id} `);
                 if (elFolio && elFolio.value) {
                     item.folioFactura = elFolio.value;
                     console.log('Recuperado folio desde DOM:', item.folioFactura);
@@ -3141,6 +3876,9 @@
                 return;
             }
 
+            // (VALIDACION ESTATICA ELIMINADA - AHORA ES DINAMICA EN updateFactura)
+
+
             // Prepare Payload
             const isTemp = String(item.id).startsWith('temp-');
 
@@ -3152,6 +3890,11 @@
             const payload = { ...item };
             delete payload._modified;
             delete payload._isNew;
+
+            // --- DATE FORMATTING FOR SAVE (dd/mm/yyyy) ---
+            if (payload.fecha) payload.fecha = _toSaveDate(payload.fecha);
+            if (payload.fechaPago) payload.fechaPago = _toSaveDate(payload.fechaPago);
+            // ---------------------------------------------
 
             // Clean ID for server new creation
             if (isTemp) {
@@ -3200,7 +3943,7 @@
                             const totalFactura = parseFloat(parentFactura.total) || 0;
 
                             // Debug log
-                            console.log(`AutoStatus Check: Factura ${parentFactura.folioFactura} Total: ${totalFactura}, Pagado: ${totalPagado}`);
+                            console.log(`AutoStatus Check: Factura ${parentFactura.folioFactura} Total: ${totalFactura}, Pagado: ${totalPagado} `);
 
                             // Tolerance for floating point
                             if (totalPagado >= (totalFactura - 0.10)) {
@@ -3348,7 +4091,7 @@
             if (!state.ui.expandedFacturas) state.ui.expandedFacturas = new Set();
 
             const isExpanded = state.ui.expandedFacturas.has(String(id));
-            const rows = document.querySelectorAll(`.child-row-${id}`);
+            const rows = document.querySelectorAll(`.child - row - ${id} `);
 
             if (!isExpanded) {
                 // Expand
@@ -3364,7 +4107,7 @@
                 // but for immediate UI feedback 'plus-square' is safe or check row existence
                 const hasChildren = rows.length > 0;
                 const icon = hasChildren ? 'plus-square-fill' : 'plus-square';
-                if (btn) btn.innerHTML = `<i class="bi bi-${icon} fs-6"></i>`;
+                if (btn) btn.innerHTML = `< i class="bi bi-${icon} fs-6" ></i > `;
             }
         }
 
@@ -3424,7 +4167,7 @@
             const newStatus = allPaid ? 'PAGADO' : 'PENDIENTE';
 
             if (est.estatusInterno !== newStatus) {
-                console.log(`AutoStatus: Reverting Estimacion ${est.numero} to ${newStatus}`);
+                console.log(`AutoStatus: Reverting Estimacion ${est.numero} to ${newStatus} `);
                 est.estatusInterno = newStatus;
                 est.estatus = newStatus;
                 try {
@@ -3455,7 +4198,7 @@
             // Use Generic Modal with Spinner
             _showDeleteModal(
                 'Eliminar Factura',
-                `¿Desea eliminar la factura <strong>${item ? (item.folioFactura || 'S/N') : ''}</strong>?`,
+                `¿Desea eliminar la factura < strong > ${item ? (item.folioFactura || 'S/N') : ''}</strong >? `,
                 async () => {
                     const idEstimacion = item.idEstimacion;
 
@@ -3490,15 +4233,18 @@
         function toggleInfo(id) {
             if (!state.ui.expandedEstimations) state.ui.expandedEstimations = new Set();
 
-            const row = document.getElementById(`detail-row-${id}`);
+            const row = document.getElementById(`detail - row - ${id} `);
+            const icon = document.getElementById(`icon - caret - ${id} `);
             const shouldExpand = row ? row.classList.contains('d-none') : !state.ui.expandedEstimations.has(String(id));
 
             if (shouldExpand) {
                 if (row) row.classList.remove('d-none');
                 state.ui.expandedEstimations.add(String(id));
+                if (icon) icon.classList.add('expanded');
             } else {
                 if (row) row.classList.add('d-none');
                 state.ui.expandedEstimations.delete(String(id));
+                if (icon) icon.classList.remove('expanded');
             }
         }
 
@@ -3511,7 +4257,7 @@
                     confirmButtonColor: '#0d6efd'
                 });
             } else {
-                alert(`${title}\n${text}`);
+                alert(`${title} \n${text} `);
             }
         }
 
@@ -3678,7 +4424,7 @@
 
                     // Estilos dinámicos
                     const revisionLabel = idx === 0 ? '<span class="badge badge-soft-dark">ORIGEN</span>' :
-                        `<input class="form-control-ghost fw-bold text-center" style="width:60px" value="${item.revision || ''}" placeholder="Rev" onchange="ComunicadoDetalle.updatePresupuesto(${idx},'revision',this.value)">`;
+                        `< input class="form-control-ghost fw-bold text-center" style = "width:60px" value = "${item.revision || ''}" placeholder = "Rev" onchange = "ComunicadoDetalle.updatePresupuesto(${idx},'revision',this.value)" > `;
 
                     // Lógica del input Obra (Manual vs Calc)
                     const valObra = hasCapturado ? mCapturado : mCalculado;
@@ -3686,7 +4432,7 @@
                     const iconToggle = hasCapturado ? 'bi-arrow-counterclockwise' : 'bi-pencil';
 
                     tr.innerHTML = `
-                            <td class="ps-3">${revisionLabel}</td>
+        < td class="ps-3" > ${revisionLabel}</td >
                             <td>
                                 <input type="date" class="form-control-ghost text-muted small" 
                                     value="${_formatDateISO(item.fecha)}" 
@@ -3727,7 +4473,7 @@
                         }
                                 </div>
                             </td>
-                        `;
+    `;
                     tbody.appendChild(tr);
                 });
             }
@@ -3774,7 +4520,7 @@
                 // Hack para foco: renderizamos y luego buscamos el input
                 _renderPresupuesto();
                 setTimeout(() => {
-                    const input = document.getElementById(`input-obra-${idx}`);
+                    const input = document.getElementById(`input - obra - ${idx} `);
                     if (input) input.focus();
                 }, 50);
 
@@ -3816,6 +4562,10 @@
                     state.data.presupuesto[i].lineas = [];
                 }
                 _sincronizarLineasFaltantes(i);
+
+                // NUEVO: Consolidar duplicados inmediatamente después de sincronizar
+                // Esto limpia el "Desastre" si el usuario re-ingresó datos manualmente
+                _consolidarDuplicados(i);
             }
 
             _renderModalLines();
@@ -3835,27 +4585,42 @@
             const currentLines = currentItem.lineas || [];
             let addedCount = 0;
 
+            const _norm = (s) => String(s || '').toUpperCase().trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, ' ');
+
             prevItem.lineas.forEach(pLine => {
                 // Buscar si existe en la actual
                 let match = null;
 
-                // 1. Por ID directo (lo ideal)
+                // 1. Por ID directo (SAFEGUARD: Verificar Categoria para evitar cruces de ID)
                 if (pLine.idLinea) {
-                    match = currentLines.find(c => String(c.idLinea) === String(pLine.idLinea));
+                    const idCandidates = currentLines.filter(c => String(c.idLinea) === String(pLine.idLinea));
+                    // Priorizamos coincidencia de Categoría (Normalizada)
+                    match = idCandidates.find(c => _norm(c.categoria) === _norm(pLine.categoria));
+
+                    // Si hay ID pero la categoría es distinta, ¿Asumimos ID incorrecto o Renombramiento?
+                    // Dado el bug reportado, asumimos ID incorrecto y buscamos por Texto.
                 }
 
-                // 2. Por coincidencia de texto (fallback robusto)
+                // 2. Por coincidencia de texto (Normalizada)
+                // MEJORA CRÍTICA: Si encontramos match por texto, DEBEMOS ASIGNAR EL ID de la línea anterior
+                // para "vincular" la nueva entrada manual con la histórica.
                 if (!match) {
-                    const pDesc = (pLine.descripcion || '').toUpperCase().trim();
-                    const pCat = (pLine.categoria || '').toUpperCase().trim();
+                    const pDesc = _norm(pLine.descripcion);
+                    const pCat = _norm(pLine.categoria);
+
                     match = currentLines.find(c => {
-                        const cDesc = (c.descripcion || '').toUpperCase().trim();
-                        const cCat = (c.categoria || '').toUpperCase().trim();
-                        return cDesc === pDesc && cCat === pCat;
+                        return _norm(c.descripcion) === pDesc && _norm(c.categoria) === pCat;
                     });
+
+                    // Si encontramos match por texto y no tiene ID (o es diferente), vincularlo.
+                    if (match) {
+                        if (!match.idLinea) {
+                            match.idLinea = pLine.idLinea; // VINCULACIÓN: Ahora son la misma línea histórica
+                        }
+                    }
                 }
 
-                // Si no existe, la traemos (Arrastrar)
+                // Si no existe, la traemos (Arrastrar para mantener historia)
                 if (!match) {
                     // Clonar objeto para romper referencia
                     const newLine = {
@@ -3872,8 +4637,79 @@
             // Si agregamos líneas, reordenamos para mantener consistencia visual (ej. por consecutivo)
             if (addedCount > 0) {
                 currentLines.sort((a, b) => (Number(a.consecutivo) || 9999) - (Number(b.consecutivo) || 9999));
-                // console.log(`[Sync] Se arrastraron ${addedCount} líneas de la revisión anterior.`);
             }
+        }
+
+        // NUEVO: Función para limpiar duplicados en una revisión
+        function _consolidarDuplicados(idx) {
+            const lines = state.data.presupuesto[idx].lineas;
+            if (!lines || lines.length < 2) return;
+
+            const _norm = (s) => String(s || '').toUpperCase().trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, ' ');
+
+            // Agrupar por llave única (Desc + Cat)
+            const map = new Map();
+            const toRemoveIndices = [];
+
+            lines.forEach((line, i) => {
+                const key = _norm(line.descripcion) + '|' + _norm(line.categoria);
+                if (!map.has(key)) {
+                    map.set(key, { index: i, line: line });
+                } else {
+                    // DUPLICADO DETECTADO
+                    const existing = map.get(key);
+
+                    // Decidir cuál conservar y cómo fusionar
+                    // Prioridad: 
+                    // 1. Conservar el que tenga idLinea (vinculación histórica)
+                    // 2. Usar el importe del que tenga el valor "Más nuevo" (o diferente de 0, o modificado)
+
+                    // Supuesto: El usuario ingresó una línea manual (sin ID) con el nuevo monto.
+                    // El sistema trajo la línea vieja (con ID) con el monto viejo.
+                    // Queremos: Línea con ID, pero con Monto Nuevo.
+
+                    let master = existing.line;
+                    let victim = line;
+                    let masterIdx = existing.index;
+                    let victimIdx = i;
+
+                    /* ESCENARIOS:
+                       A) Master tiene ID, Victim no -> Master es la base, toma importe de Victim.
+                       B) Master no tiene ID, Victim si -> Victim es la base, toma importe de Master (raro).
+                       C) Ambos tiene ID -> Error de duplicación real, conservar primero.
+                    */
+
+                    // Si Victim tiene ID y Master no, intercambiar roles para que Master sea siempre el que tiene ID (si existe)
+                    if (!master.idLinea && victim.idLinea) {
+                        master = line;
+                        victim = existing.line;
+                        masterIdx = i;
+                        victimIdx = existing.index;
+                        // Actualizar mapa para apuntar al nuevo master
+                        map.set(key, { index: i, line: line });
+                    }
+
+                    // FUSIONAR DATOS
+                    // Si el "Victim" (el duplicado que vamos a borrar) tiene un importe distinto al master,
+                    // y parece ser una entrada válida (no 0, o diferente), asumimos que es el valor correcto (User Input)
+                    const vImporte = parseFloat(victim.importe) || 0;
+                    const mImporte = parseFloat(master.importe) || 0;
+
+                    // Lógica heurística: Si victim tiene un monto diferente, úsalo.
+                    // (Asume que el duplicado es la entrada manual del usuario con el dato fresco)
+                    if (vImporte !== mImporte) {
+                        master.importe = vImporte;
+                    }
+
+                    // Marcar el índice de la víctima para eliminar
+                    toRemoveIndices.push(victimIdx);
+                }
+            });
+
+            // Eliminar duplicados (en orden inverso para no afectar índices)
+            toRemoveIndices.sort((a, b) => b - a).forEach(i => {
+                lines.splice(i, 1);
+            });
         }
 
         function _renderModalLines() {
@@ -3905,37 +4741,45 @@
 
             // Helper to find matching line from previous revision
             const findPrevLine = (currentLine, currentIdx) => {
-                // 1. Try matching by unique 'idLinea' if available (Most Robust)
+                const _norm = (s) => String(s || '').toUpperCase().trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, ' ');
+
+                // 1. Try matching by unique 'idLinea' WITH SAFEGUARD (Most Robust)
                 if (currentLine.idLinea) {
-                    const match = prevLines.find(pl => String(pl.idLinea) === String(currentLine.idLinea));
-                    if (match) return match;
+                    const idCandidates = prevLines.filter(pl => String(pl.idLinea) === String(currentLine.idLinea));
+
+                    // Prioritize Category Match (Avoid bad cross-links)
+                    const catMatch = idCandidates.find(pl => _norm(pl.categoria) === _norm(currentLine.categoria));
+                    if (catMatch) return catMatch;
+
+                    // Fallback to Description Match if Category differs (maybe renamed?)
+                    const descMatch = idCandidates.find(pl => _norm(pl.descripcion) === _norm(currentLine.descripcion));
+                    if (descMatch) return descMatch;
+
+                    // IF ID matches but everything else is different, IGNORE IT.
+                    // This fixes the "Reading Database Wrong" issue where IDs are crossed.
                 }
 
-                // 2. Try matching by Description + Category (Content Matching)
-                const descNorm = (currentLine.descripcion || '').toUpperCase().trim();
-                const catNorm = (currentLine.categoria || '').toUpperCase().trim();
+                // 2. Try matching by Description + Category (Content Matching Normalized)
+                const descNorm = _norm(currentLine.descripcion);
+                const catNorm = _norm(currentLine.categoria);
 
                 if (descNorm) {
-                    // STRICT MATCH: Description AND Category must match
                     const exactMatch = prevLines.find(pl => {
-                        const prevDesc = (pl.descripcion || '').toUpperCase().trim();
-                        const prevCat = (pl.categoria || '').toUpperCase().trim();
-                        return prevDesc === descNorm && prevCat === catNorm;
+                        return _norm(pl.descripcion) === descNorm && _norm(pl.categoria) === catNorm;
                     });
-
                     if (exactMatch) return exactMatch;
-
-                    // Fallback: If Description matches exactly but Category is empty/undefined in one of them?
-                    // No, safe to strictly require category if it exists.
                 }
 
-                // 3. Fallback: Positional Matching (if descriptions are empty or missing)
-                // Assuming rows align if no content changes
-                if (!descNorm) {
+                // 3. Fallback: Positional Matching NO DESCRIPTIONS
+                // Only if both have empty/short descriptions
+                if (!descNorm || descNorm.length < 3) {
                     const candidateByIndex = prevLines[currentIdx];
-                    // Verify candidate also has empty description to be safe
-                    if (candidateByIndex && !(candidateByIndex.descripcion || '').trim()) {
-                        return candidateByIndex;
+                    // Verify candidate also has empty descriptions to be safe
+                    if (candidateByIndex) {
+                        const prevDesc = _norm(candidateByIndex.descripcion);
+                        if (!prevDesc || prevDesc.length < 3) {
+                            return candidateByIndex;
+                        }
                     }
                 }
 
@@ -3968,12 +4812,12 @@
                 if (diferencia > 0) {
                     difClass = 'delta-up';
                     difPrefix = '+';
-                    difHtml = `<div class="delta-up">${difPrefix}${_formatCurrency(diferencia)}</div>`;
+                    difHtml = `< div class="delta-up" > ${difPrefix}${_formatCurrency(diferencia)}</div > `;
                 } else if (diferencia < 0) {
                     difClass = 'delta-down';
-                    difHtml = `<div class="delta-down">${_formatCurrency(diferencia)}</div>`;
+                    difHtml = `< div class="delta-down" > ${_formatCurrency(diferencia)}</div > `;
                 } else {
-                    difHtml = `<span class="text-muted">—</span>`;
+                    difHtml = `< span class="text-muted" >—</span > `;
                 }
 
                 // Row class - subtle styling without Bootstrap colored backgrounds
@@ -3983,13 +4827,13 @@
                 const currentCat = (l.categoria || '').trim();
                 const catExists = (val) => categoriasCatalog.some(c => String(c.id).toUpperCase() === String(val).toUpperCase());
 
-                let catOptions = `<option value="">Seleccione...</option>`;
+                let catOptions = `< option value = "" > Seleccione...</option > `;
                 if (currentCat && !catExists(currentCat)) {
-                    catOptions += `<option value="${currentCat}" selected>${currentCat}</option>`;
+                    catOptions += `< option value = "${currentCat}" selected > ${currentCat}</option > `;
                 }
                 categoriasCatalog.forEach(c => {
                     const isSelected = String(c.id).toUpperCase() === String(currentCat).toUpperCase();
-                    catOptions += `<option value="${c.id}" ${isSelected ? 'selected' : ''}>${c.nombre}</option>`;
+                    catOptions += `< option value = "${c.id}" ${isSelected ? 'selected' : ''}> ${c.nombre}</option > `;
                 });
 
                 // Determinar si esta línea puede eliminarse
@@ -4024,12 +4868,12 @@
                 const impReadonly = puedeEditarImporte ? '' : 'readonly';
 
                 tr.innerHTML = `
-                        <td class="sticky-col">
-                            <div class="d-flex align-items-center gap-2">
-                                <input type="text" class="form-control form-control-sm border-0" value="${l.descripcion || ''}" placeholder="Ubicación / Concepto" ${descReadonly} onchange="ComunicadoDetalle.updateLineaPresupuesto(${i}, 'descripcion', this.value)">
-                                ${statusBadge}
-                            </div>
-                        </td>
+        < td class="sticky-col" >
+            <div class="d-flex align-items-center gap-2">
+                <input type="text" class="form-control form-control-sm border-0" value="${l.descripcion || ''}" placeholder="Ubicación / Concepto" ${descReadonly} onchange="ComunicadoDetalle.updateLineaPresupuesto(${i}, 'descripcion', this.value)">
+                    ${statusBadge}
+            </div>
+                        </td >
                         <td>
                             <select class="form-select form-select-sm border-0" style="min-width:100px;" ${catDisabled} onchange="ComunicadoDetalle.updateLineaPresupuesto(${i}, 'categoria', this.value)">
                                 ${catOptions}
@@ -4050,7 +4894,7 @@
                         : `<span class="text-muted" title="${tieneRevisionesPosteriores ? 'Revisión bloqueada' : 'Línea vinculada'}"><i class="bi bi-lock-fill"></i></span>`
                     }
                         </td>
-                    `;
+    `;
                 tbody.appendChild(tr);
             });
             _attachCurrencyFormatters();
@@ -4068,7 +4912,11 @@
             }
 
             state.data.presupuesto[idx].lineas.push({ descripcion: '', categoria: '', importe: 0 });
+            // INTENTAR CONSOLIDAR DUPLICADOS AQUÍ TAMBIÉN POR SI LAS DUDAS
+            _consolidarDuplicados(idx);
+
             _renderModalLines();
+            _renderMatrixActualizaciones(); // Trigger real-time update
         }
 
         function removeLineaPresupuesto(lineIdx) {
@@ -4126,6 +4974,10 @@
                 _recalcularTotalModal();
             } else {
                 line[field] = val;
+                // If description/category changed, we must re-render matrix to update grouping
+                if (field === 'descripcion' || field === 'categoria') {
+                    _renderMatrixActualizaciones();
+                }
             }
         }
 
@@ -4162,11 +5014,11 @@
             if (elDif) {
                 let difHtml = '';
                 if (totalDiferencia > 0) {
-                    difHtml = `<div class="delta-up">+${_formatCurrency(totalDiferencia)}</div>`;
+                    difHtml = `< div class="delta-up" > +${_formatCurrency(totalDiferencia)}</div > `;
                 } else if (totalDiferencia < 0) {
-                    difHtml = `<div class="delta-down">${_formatCurrency(totalDiferencia)}</div>`;
+                    difHtml = `< div class="delta-down" > ${_formatCurrency(totalDiferencia)}</div > `;
                 } else {
-                    difHtml = `<span class="text-muted">—</span>`;
+                    difHtml = `< span class="text-muted" >—</span > `;
                 }
                 elDif.innerHTML = difHtml;
             }
@@ -4174,6 +5026,7 @@
             // Actualizar modelo del padre y tabla principal
             state.data.presupuesto[state.editingPresupuestoIdx].monto = totalActual;
             _renderPresupuesto();
+            _renderMatrixActualizaciones();
         }
 
         async function _guardarTodo() {
@@ -4181,6 +5034,22 @@
             state.saving = true;
             dom.btnGuardar.disabled = true;
             dom.btnGuardar.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Guardando...';
+            // NORMALIZACIÓN DE CATEGORÍAS (Texto -> ID) antes de guardar
+            // Para asegurar consistencia en la BD (1=Daño Físico, 2=Desazolve)
+            if (state.data.presupuesto && Array.isArray(state.data.presupuesto)) {
+                state.data.presupuesto.forEach(rev => {
+                    if (rev.lineas && Array.isArray(rev.lineas)) {
+                        rev.lineas.forEach(l => {
+                            if (l.categoria) {
+                                const s = String(l.categoria).toUpperCase();
+                                if (s.includes('DAÑO') || s.includes('FISICO')) l.categoria = 1;
+                                else if (s.includes('DESAZ')) l.categoria = 2;
+                            }
+                        });
+                    }
+                });
+            }
+
             try {
                 const payload = {
                     comunicado: dom.genComunicado.value,
@@ -4363,7 +5232,7 @@
                 .filter(f => String(f.idEstimacion) === String(id) && f.estatusSAT !== 'CANCELADO');
 
             if (facturasAsociadas.length > 0) {
-                _showAlert('Acción Bloqueada', `Esta estimación tiene ${facturasAsociadas.length} facturas/complementos activos. Debe eliminarlos primero.`, 'warning');
+                _showAlert('Acción Bloqueada', `Esta estimación tiene ${facturasAsociadas.length} facturas / complementos activos.Debe eliminarlos primero.`, 'warning');
                 return;
             }
 
@@ -4375,7 +5244,7 @@
             // Confirmación con Modal Genérico (Doble confirmación + Spin)
             _showDeleteModal(
                 'Eliminar Estimación',
-                `¿Está seguro de eliminar <strong>${({ '1': 'ANTICIPO', '2': 'ESTIMACION', '3': 'FINIQUITO' }[String(estimacion.tipo)] || estimacion.tipo)} ${estimacion.numero}</strong> por <strong>${_formatCurrency(estimacion.monto)}</strong>?`,
+                `¿Está seguro de eliminar < strong > ${({ '1': 'ANTICIPO', '2': 'ESTIMACION', '3': 'FINIQUITO' }[String(estimacion.tipo)] || estimacion.tipo)} ${estimacion.numero}</strong > por < strong > ${_formatCurrency(estimacion.monto)}</strong >? `,
                 async () => {
                     try {
                         // Si es temporal, borrar localmente
@@ -4426,7 +5295,7 @@
             const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
 
             // Set Content
-            document.getElementById('modalDeleteGenericTitle').innerHTML = `<i class="bi bi-exclamation-triangle-fill me-2"></i>${title}`;
+            document.getElementById('modalDeleteGenericTitle').innerHTML = `< i class="bi bi-exclamation-triangle-fill me-2" ></i > ${title} `;
             document.getElementById('modalDeleteGenericMessage').innerHTML = htmlMessage;
             document.getElementById('modalDeleteGenericExtraWarning').classList.add('d-none');
 
@@ -4470,12 +5339,12 @@
 
         async function registrarComplemento(idFactura) {
             const btn = event?.currentTarget || document.activeElement; // Capture button if safely possible
-            const folioInput = document.getElementById(`input-comp-folio-${idFactura}`);
-            const fechaInput = document.getElementById(`input-comp-fecha-${idFactura}`);
-            const uuidInput = document.getElementById(`input-comp-uuid-${idFactura}`);
-            const montoInput = document.getElementById(`input-comp-monto-${idFactura}`);
-            const ivaInput = document.getElementById(`input-comp-iva-${idFactura}`);
-            const totalInput = document.getElementById(`input-comp-total-${idFactura}`);
+            const folioInput = document.getElementById(`input - comp - folio - ${idFactura} `);
+            const fechaInput = document.getElementById(`input - comp - fecha - ${idFactura} `);
+            const uuidInput = document.getElementById(`input - comp - uuid - ${idFactura} `);
+            const montoInput = document.getElementById(`input - comp - monto - ${idFactura} `);
+            const ivaInput = document.getElementById(`input - comp - iva - ${idFactura} `);
+            const totalInput = document.getElementById(`input - comp - total - ${idFactura} `);
 
             if (!folioInput || !fechaInput) return;
 
@@ -4561,8 +5430,8 @@
             const row = inputMonto.closest('tr');
             if (!row) return;
 
-            const inputIva = row.querySelector(`#input-comp-iva-${idFactura}`);
-            const inputTotal = row.querySelector(`#input-comp-total-${idFactura}`);
+            const inputIva = row.querySelector(`#input - comp - iva - ${idFactura} `);
+            const inputTotal = row.querySelector(`#input - comp - total - ${idFactura} `);
 
             const montoStr = inputMonto.value.replace(/[^0-9.-]+/g, '');
             const monto = parseFloat(montoStr) || 0;
@@ -4635,19 +5504,20 @@
                 hasContent = true;
                 const trSep = document.createElement('tr');
                 trSep.className = 'table-warning';
-                trSep.innerHTML = `<td colspan="12" class="text-center small fw-bold text-dark">ESTIMACIONES DE SUPERVISIÓN SIN VINCULAR</td>`;
+                trSep.innerHTML = `< td colspan = "12" class="text-center small fw-bold text-dark" > ESTIMACIONES DE SUPERVISIÓN SIN VINCULAR</td > `;
                 tbody.appendChild(trSep);
                 orphans.forEach(child => _appendEstimacionRowPair(tbody, child, false));
             }
 
             if (!hasContent) {
-                container.innerHTML = `<div class="text-center text-muted py-5 border rounded bg-light mb-3">
-                    <i class="bi bi-link-45deg fs-2 d-block mb-2 opacity-50"></i>
-                    Sin estimaciones de supervisión vinculadas.<br>
-                    <small>Utilice el botón inferior para vincular una referencia.</small>
-                </div>`;
+                container.innerHTML = `< div class="text-center text-muted py-5 border rounded bg-light mb-3" >
+        <i class="bi bi-link-45deg fs-2 d-block mb-2 opacity-50"></i>
+                    Sin estimaciones de supervisión vinculadas.< br >
+        <small>Utilice el botón inferior para vincular una referencia.</small>
+                </div > `;
             } else {
                 container.appendChild(table);
+                _updateTableTotals('SUPERVISION');
             }
         }
 
@@ -4680,7 +5550,7 @@
 
                 // TRADUCCION DE TIPOS (1, 2, 3 -> TEXTO)
                 let tipoNombre = String(c.tipo || '').toUpperCase();
-                const tipoMap = { '1': 'ESTIMACION', '2': 'ANTICIPO', '3': 'FINIQUITO' };
+                const tipoMap = { '1': 'ANTICIPO', '2': 'ESTIMACION', '3': 'FINIQUITO' };
                 if (tipoMap[tipoNombre]) tipoNombre = tipoMap[tipoNombre];
 
                 // Fallback icon/color logic based on resolved name
@@ -4688,8 +5558,8 @@
                 const color = tipoNombre === 'ANTICIPO' ? 'text-warning' : tipoNombre === 'FINIQUITO' ? 'text-success' : 'text-primary';
 
                 listHtml += `
-                    <button type="button" class="list-group-item list-group-item-action p-3 mb-2 border rounded shadow-sm d-flex justify-content-between align-items-center"
-                        onclick="ComunicadoDetalle._confirmarVinculacion('${c.id}')">
+        < button type = "button" class="list-group-item list-group-item-action p-3 mb-2 border rounded shadow-sm d-flex justify-content-between align-items-center"
+    onclick = "ComunicadoDetalle._confirmarVinculacion('${c.id}')" >
                         <div class="d-flex align-items-center gap-3">
                             <div class="rounded-circle bg-light p-2 d-flex align-items-center justify-content-center" style="width: 45px; height: 45px;">
                                 <i class="bi ${icon} ${color} fs-4"></i>
@@ -4703,17 +5573,17 @@
                             <div class="fw-bold text-dark fs-6">${monto}</div>
                             <small class="text-primary fw-bold" style="font-size: 0.75rem;">Seleccionar <i class="bi bi-chevron-right"></i></small>
                         </div>
-                    </button>
-                 `;
+                    </button >
+        `;
             });
             listHtml += '</div>';
 
             Swal.fire({
                 title: 'Vincular Referencia',
                 html: `
-                    <p class="text-muted mb-4">Seleccione la estimación del Contratista a la que desea vincular el nuevo movimiento de Supervisión:</p>
-                    ${listHtml}
-                `,
+        < p class="text-muted mb-4" > Seleccione la estimación del Contratista a la que desea vincular el nuevo movimiento de Supervisión:</p >
+            ${listHtml}
+    `,
                 showConfirmButton: false,
                 showCloseButton: true,
                 width: '650px',
@@ -4723,8 +5593,72 @@
 
         function _confirmarVinculacion(parentId) {
             Swal.close();
-            // Small delay to allow modal to close smoothly
-            setTimeout(() => _addPlaceholderSupervision(parentId), 200);
+            setTimeout(() => {
+                const parent = state.data.estimaciones.find(e => String(e.id) === String(parentId));
+                if (!parent) return;
+
+                // AUTOMATION LOGIC
+                const tipo = String(parent.tipo || '').toUpperCase();
+                // Map numeric types if needed (though usually stored as 1, 2, 3)
+                // 1=ESTIMACION, 2=ANTICIPO, 3=FINIQUITO ?? CHECK MAPPING
+                // In other parts: 'ANTICIPO': 1, 'ESTIMACION': 2, 'FINIQUITO': 3
+
+                // Let's normalize to string names for logic
+                let tipoNombre = tipo;
+                if (tipo == '1') tipoNombre = 'ANTICIPO';
+                if (tipo == '2') tipoNombre = 'ESTIMACION';
+                // 3 is FINIQUITO, usually correct
+                if (tipo == '3') tipoNombre = 'FINIQUITO';
+
+                if (tipoNombre === 'ANTICIPO') {
+                    // Direct Create Anticipo
+                    _confirmarCreacionSupervision(parent.id, 'ANTICIPO', null); // null placeholder
+                } else if (tipoNombre === 'FINIQUITO') {
+                    // Direct Create Finiquito
+                    _confirmarCreacionSupervision(parent.id, 'FINIQUITO', null);
+                } else {
+                    // Estimacion (or others) -> Ask Type
+                    _showSupervisionTypeModal(parent.id);
+                }
+            }, 200);
+        }
+
+        function _showSupervisionTypeModal(parentId) {
+            const html = `
+        < div class="row g-3" >
+                    <div class="col-4">
+                        <button class="btn btn-outline-warning w-100 h-100 py-3 d-flex flex-column align-items-center gap-2 shadow-sm"
+                            onclick="ComunicadoDetalle._confirmarCreacionSupervision('${parentId}', 'ANTICIPO', null)">
+                            <i class="bi bi-percent fs-1"></i>
+                            <span class="fw-bold">Anticipo</span>
+                        </button>
+                    </div>
+                    <div class="col-4">
+                        <button class="btn btn-outline-primary w-100 h-100 py-3 d-flex flex-column align-items-center gap-2 shadow-sm"
+                            onclick="ComunicadoDetalle._confirmarCreacionSupervision('${parentId}', 'ESTIMACION', null)">
+                            <i class="bi bi-bricks fs-1"></i>
+                            <span class="fw-bold">Estimación</span>
+                        </button>
+                    </div>
+                    <div class="col-4">
+                        <button class="btn btn-outline-success w-100 h-100 py-3 d-flex flex-column align-items-center gap-2 shadow-sm"
+                            onclick="ComunicadoDetalle._confirmarCreacionSupervision('${parentId}', 'FINIQUITO', null)">
+                            <i class="bi bi-flag-fill fs-1"></i>
+                            <span class="fw-bold">Finiquito</span>
+                        </button>
+                    </div>
+                </div >
+        <div class="mt-3 text-muted small text-center">Seleccione el tipo de movimiento de supervisión a crear.</div>
+    `;
+
+            Swal.fire({
+                title: 'Crear Movimiento Supervisión',
+                html: html,
+                showConfirmButton: false,
+                showCloseButton: true,
+                width: '600px',
+                padding: '2em'
+            });
         }
 
         function _addPlaceholderSupervision(parentId) {
@@ -4759,67 +5693,66 @@
             tr.className = 'bg-light';
             tr.style.backgroundColor = '#f8fbfc';
             tr.innerHTML = `
-                <td colspan="12" class="py-2 border-0">
-                    <div class="d-flex align-items-center" style="margin-left: 40px; border-left: 3px solid #dee2e6; padding-left: 15px;">
-                        <i class="bi bi-arrow-return-right text-muted me-3"></i>
-                        <button class="btn btn-sm btn-outline-primary border-dashed fw-bold shadow-sm d-flex align-items-center gap-2 px-3 py-2" 
-                            onclick="ComunicadoDetalle._createSupervisionFromPlaceholder('${placeholder.id}')">
-                            <i class="bi bi-plus-lg"></i> + Agregar movimiento de Supervisión
-                        </button>
-                    </div>
-                </td>
-            `;
+        < td colspan = "12" class="py-2 border-0" >
+            <div class="d-flex align-items-center" style="margin-left: 40px; border-left: 3px solid #dee2e6; padding-left: 15px;">
+                <i class="bi bi-arrow-return-right text-muted me-3"></i>
+                <button class="btn btn-sm btn-outline-primary border-dashed fw-bold shadow-sm d-flex align-items-center gap-2 px-3 py-2"
+                    onclick="ComunicadoDetalle._createSupervisionFromPlaceholder('${placeholder.id}')">
+                    <i class="bi bi-plus-lg"></i> + Agregar movimiento de Supervisión
+                </button>
+            </div>
+                </td >
+        `;
             tbody.appendChild(tr);
         }
 
         function _createSupervisionFromPlaceholder(placeholderId) {
+            // Extract logic to find parent from placeholder
+            const placeholder = state.data.estimaciones.find(e => e.id === placeholderId);
+            if (!placeholder) return;
+            _showSupervisionTypeModalPlaceholder(placeholder.idRelacionada, placeholderId);
+        }
+
+        function _showSupervisionTypeModalPlaceholder(parentId, placeholderId) {
+            // Same UI but calling with placeholderId
             const html = `
-                <div class="row g-3">
+        < div class="row g-3" >
                     <div class="col-4">
                         <button class="btn btn-outline-warning w-100 h-100 py-3 d-flex flex-column align-items-center gap-2 shadow-sm"
-                            onclick="ComunicadoDetalle._confirmarCreacionSupervision('${placeholderId}', 'ANTICIPO')">
+                            onclick="ComunicadoDetalle._confirmarCreacionSupervision('${parentId}', 'ANTICIPO', '${placeholderId}')">
                             <i class="bi bi-percent fs-1"></i>
                             <span class="fw-bold">Anticipo</span>
                         </button>
                     </div>
                     <div class="col-4">
                         <button class="btn btn-outline-primary w-100 h-100 py-3 d-flex flex-column align-items-center gap-2 shadow-sm"
-                            onclick="ComunicadoDetalle._confirmarCreacionSupervision('${placeholderId}', 'ESTIMACION')">
+                            onclick="ComunicadoDetalle._confirmarCreacionSupervision('${parentId}', 'ESTIMACION', '${placeholderId}')">
                             <i class="bi bi-bricks fs-1"></i>
                             <span class="fw-bold">Estimación</span>
                         </button>
                     </div>
                     <div class="col-4">
                         <button class="btn btn-outline-success w-100 h-100 py-3 d-flex flex-column align-items-center gap-2 shadow-sm"
-                            onclick="ComunicadoDetalle._confirmarCreacionSupervision('${placeholderId}', 'FINIQUITO')">
+                            onclick="ComunicadoDetalle._confirmarCreacionSupervision('${parentId}', 'FINIQUITO', '${placeholderId}')">
                             <i class="bi bi-flag-fill fs-1"></i>
                             <span class="fw-bold">Finiquito</span>
                         </button>
                     </div>
-                </div>
-                <div class="mt-3 text-muted small text-center">Seleccione el tipo de movimiento de supervisión a crear.</div>
-             `;
-
-            Swal.fire({
-                title: 'Crear Movimiento',
-                html: html,
-                showConfirmButton: false,
-                showCloseButton: true,
-                width: '600px',
-                padding: '2em'
-            });
+                </div >
+        `;
+            Swal.fire({ title: 'Crear Movimiento', html: html, showConfirmButton: false, showCloseButton: true, width: '600px', padding: '2em' });
         }
 
-        // MOVEMENT: _confirmarCreacionSupervision (Modified for GHOST/LOCAL creation)
-        async function _confirmarCreacionSupervision(placeholderId, tipo) {
+        // MOVEMENT: _confirmarCreacionSupervision (Refactored for Direct & Placeholder)
+        async function _confirmarCreacionSupervision(idVinculada, tipo, placeholderId = null) {
             Swal.close(); // Close selection modal
-
-            // Wait a tick
             await new Promise(r => setTimeout(r, 100));
 
-            const placeholder = state.data.estimaciones.find(e => e.id === placeholderId);
-            if (!placeholder) return;
+            // Validate Parent Existence
+            const parent = state.data.estimaciones.find(e => String(e.id) === String(idVinculada));
+            // We proceed even if parent not found? Preferably yes if idVinculada is passed, but calculation uses it.
 
+            // Check duplicates logic...?
             const existentes = (state.data.estimaciones || [])
                 .filter(e => (e.entidad || 'CONSTRUCTORA') === 'SUPERVISION' && e.tipo === tipo && !e._isPlaceholder);
 
@@ -4831,7 +5764,6 @@
             let montoCalculado = 0;
 
             // 1. Buscar la estimación CONSTRUCTORA vinculada
-            const idVinculada = placeholder.idRelacionada;
             if (idVinculada) {
                 const estimacionContratista = (state.data.estimaciones || [])
                     .find(e => String(e.id).trim() === String(idVinculada).trim() &&
@@ -4841,7 +5773,7 @@
                     // Opción 1: 5% del monto del contratista
                     const montoContratista = parseFloat(estimacionContratista.monto) || 0;
                     montoCalculado = Math.round(montoContratista * 0.05 * 100) / 100;
-                    console.log(`[Supervisión] Monto calculado: 5% de $${montoContratista} = $${montoCalculado}`);
+                    console.log(`[Supervisión] Monto calculado: 5 % de $${montoContratista} = $${montoCalculado} `);
                 }
             }
 
@@ -4864,7 +5796,7 @@
                 if (montoSupervisionPresupuesto > 0) {
                     // 50% del presupuesto de supervisión
                     montoCalculado = Math.round(montoSupervisionPresupuesto * 0.50 * 100) / 100;
-                    console.log(`[Supervisión] Monto calculado: 50% de presupuesto supervisión $${montoSupervisionPresupuesto} = $${montoCalculado}`);
+                    console.log(`[Supervisión] Monto calculado: 50 % de presupuesto supervisión $${montoSupervisionPresupuesto} = $${montoCalculado} `);
                 }
             }
 
@@ -4886,7 +5818,7 @@
                 idEmpresa: state.data.contrato?.idEmpresa || '',
                 tipo: ({ 'ANTICIPO': 1, 'ESTIMACION': 2, 'FINIQUITO': 3 }[tipo] || tipo),
                 numero: numero,
-                idRelacionada: placeholder.idRelacionada,
+                idRelacionada: idVinculada,
                 monto: montoCalculado,
                 iva: ivaCalculado,
                 montoTotal: totalCalculado,
@@ -4894,16 +5826,18 @@
                 porcentajeAvanceFisico: 0,
                 amortizacion: 0,
                 estatusInterno: 'PENDIENTE',
-                fechaCorte: new Date().toISOString().split('T')[0],
+                fechaCorte: _getTodayLocalISO(),
                 // Local UI Props
                 _isNew: true,
                 _modified: true,
                 facturas: []
             };
 
-            // Remove placeholder
-            state.data.estimaciones = state.data.estimaciones.filter(e => e.id !== placeholderId);
-
+            // REMOVE PLACEHOLDER IF EXISTS
+            if (placeholderId && placeholderId !== 'null') {
+                const idx = state.data.estimaciones.findIndex(e => e.id === placeholderId);
+                if (idx !== -1) state.data.estimaciones.splice(idx, 1);
+            }
             // Push New
             state.data.estimaciones.push(payload);
 
@@ -4921,54 +5855,110 @@
         }
 
         // --- SAFE UPDATE FOR ESTIMACIONES ---
+        // --- SAFE UPDATE FOR ESTIMACIONES ---
         function updateEstimacionSafe(id, field, val) {
             const item = (state.data.estimaciones || []).find(e => String(e.id) === String(id));
             if (!item) return;
 
-            // Clean Number
-            const cleanVal = parseFloat(String(val).replace(/[^0-9.-]+/g, '')) || 0;
-            item[field] = cleanVal;
+            // CRITICAL FIX: Only parse numbers for numeric fields!
+            const numericFields = ['monto', 'amortizacion', 'descuentos', 'iva', 'montoTotal', 'montoAvanceFisico', 'porcentajeAvanceFisico'];
+
+            if (numericFields.includes(field)) {
+                // Clean Number
+                const cleanVal = parseFloat(String(val).replace(/[^0-9.-]+/g, '')) || 0;
+                item[field] = cleanVal;
+            } else {
+                // Text/Date Fields
+                item[field] = val;
+            }
+
             item._modified = true; // Mark modified
 
             // 1. Update Input Field formatting immediately (Formatter)
-            //    Locate input by ID since we added them
             let inputId = '';
-            if (field === 'monto') inputId = `input-monto-${id}`;
-            else if (field === 'amortizacion') inputId = `input-amortizacion-${id}`;
-            else if (field === 'montoAvanceFisico') inputId = `input-avfisico-${id}`;
+            if (field === 'monto') inputId = `input - monto - ${id} `;
+            else if (field === 'amortizacion') inputId = `input - amortizacion - ${id} `;
+            else if (field === 'descuentos') inputId = `input - descuentos - ${id} `;
+            else if (field === 'montoAvanceFisico') inputId = `input - avfisico - ${id} `;
 
             if (inputId) {
                 const inputEl = document.getElementById(inputId);
                 if (inputEl) {
-                    inputEl.value = _formatCurrency(cleanVal);
+                    const valueToFormat = item[field];
+                    inputEl.value = _formatCurrency(valueToFormat);
                 }
             }
 
-            // 2. Auto-calc Financials if monto/amortizacion changed
-            if (field === 'monto' || field === 'amortizacion') {
+            // 2. Auto-calc Financials if monto/amortizacion/descuentos changed
+            if (field === 'monto' || field === 'amortizacion' || field === 'descuentos') {
                 const m = parseFloat(item.monto) || 0;
-                const a = parseFloat(item.amortizacion) || 0;
+                let a = parseFloat(item.amortizacion) || 0;
+                let d = parseFloat(item.descuentos) || 0;
 
-                // Calc IVA using Net Base (Monto - Amortizacion)
-                // This accounts for the fact that Anticipo amortization already had tax paid/deducted.
-                const base = Math.max(0, m - a);
+                // VALIDATION: Amort + Desc <= Monto (Net never negative)
+                // We perform the check. If negative, we clamp the modified field.
+                if (a + d > m) {
+                    if (field === 'descuentos') {
+                        d = Math.max(0, m - a);
+                        item.descuentos = d;
+                        const el = document.getElementById(`input - descuentos - ${id} `);
+                        if (el) el.value = _formatCurrency(d);
+                    } else if (field === 'amortizacion') {
+                        a = Math.max(0, m - d);
+                        item.amortizacion = a;
+                        const el = document.getElementById(`input - amortizacion - ${id} `);
+                        if (el) el.value = _formatCurrency(a);
+                    } else if (field === 'monto') {
+                        // Reducing Amount might cause negative net. 
+                        // Strategy: reduce D then A.
+                        const excess = (a + d) - m;
+                        if (excess > 0) {
+                            if (d >= excess) {
+                                d -= excess;
+                                item.descuentos = d;
+                            } else {
+                                const rem = excess - d;
+                                d = 0;
+                                item.descuentos = 0;
+                                a = Math.max(0, a - rem);
+                                item.amortizacion = a;
+                            }
+                            // Update inputs
+                            const elD = document.getElementById(`input - descuentos - ${id} `);
+                            if (elD) elD.value = _formatCurrency(d);
+                            const elA = document.getElementById(`input - amortizacion - ${id} `);
+                            if (elA) elA.value = _formatCurrency(a);
+                        }
+                    }
+                }
+
+                // Calc Net Base (Monto - Amortizacion - Descuentos)
+                // Assuming IVA is calculated on (Base - Descuentos)? 
+                // Or is Descuentos just a deduction from total payable?
+                // User said "logica para calcular el neto... : monto - amortizacion - descuento".
+                // I will recalculate IVA based on this new Net Base (m - a - d).
+
+                const base = Math.max(0, m - a - d);
+                // Assign to item.neto so it gets persisted
+                item.neto = base;
+
                 const ivaRaw = base * IVA_RATE;
 
                 item.iva = Math.round(ivaRaw * 100) / 100;
                 item.montoTotal = base + item.iva;
 
                 // Update UI text content
-                const elNeto = document.getElementById(`input-neto-${id}`);
-                const elIva = document.getElementById(`input-iva-${id}`);
-                const elTotal = document.getElementById(`input-total-${id}`);
+                const elNeto = document.getElementById(`input - neto - ${id} `);
+                const elIva = document.getElementById(`input - iva - ${id} `);
+                const elTotal = document.getElementById(`input - total - ${id} `);
 
-                if (elNeto) elNeto.textContent = _formatCurrency(m - a);
+                if (elNeto) elNeto.textContent = _formatCurrency(base);
                 if (elIva) elIva.textContent = _formatCurrency(item.iva);
                 if (elTotal) elTotal.textContent = _formatCurrency(item.montoTotal);
             }
 
             // Update Save Button State
-            const btn = document.querySelector(`button[onclick="ComunicadoDetalle.saveEstimacion('${id}')"]`);
+            const btn = document.querySelector(`button[onclick = "ComunicadoDetalle.saveEstimacion('${id}')"]`);
             if (btn) {
                 btn.disabled = false;
                 btn.style.opacity = '1';
@@ -4990,6 +5980,21 @@
                     delete payload._isNew;
                     delete payload._modified;
 
+                    // --- DATE FORMATTING FOR SAVE (dd/mm/yyyy) ---
+                    // --- DATE HANDLING: Revert to Strings (ISO) ---
+                    // "Illegal value" error confirms Date objects are rejected by serverCall/google.script.run here.
+                    // Sending clean YYYY-MM-DD strings.
+                    if (payload.fechaCorte) {
+                        // Ensure we have a string YYYY-MM-DD
+                        const iso = _formatDateISO(payload.fechaCorte);
+                        payload.fechaCorte = iso || null; // Send null if invalid to avoid empty string issues
+                    }
+                    if (payload.fechaPago) {
+                        const iso = _formatDateISO(payload.fechaPago);
+                        payload.fechaPago = iso || null;
+                    }
+
+                    console.log('Saving New Estimacion Payload (ISO Strings):', payload);
                     const result = await serverCall('crearEstimacion', payload);
 
                     if (result && (result.id || result.success)) {
@@ -5008,7 +6013,18 @@
                 } else {
                     // Update Existing
                     // Ensure we send the FULL item with updated numeric values
-                    await serverCall('actualizarEstimacion', id, item);
+                    // CLONE to avoid modifying local state which needs YYYY-MM-DD for inputs
+                    const payload = { ...item };
+                    if (payload.fechaCorte) {
+                        const iso = _formatDateISO(payload.fechaCorte);
+                        payload.fechaCorte = iso || null;
+                    }
+                    if (payload.fechaPago) {
+                        const iso = _formatDateISO(payload.fechaPago);
+                        payload.fechaPago = iso || null;
+                    }
+
+                    await serverCall('actualizarEstimacion', id, payload);
                     item._modified = false;
                     globalThis.showToast?.('Estimación guardada', 'success');
                 }
@@ -5104,14 +6120,19 @@
             // IDs esperados: total-neto-constructora, total-neto-supervision (si existiera), etc.
             const suffix = targetEntidad === 'CONSTRUCTORA' ? 'constructora' : 'supervision';
 
-            const elNeto = document.getElementById(`total-neto-${suffix}`);
-            const elIva = document.getElementById(`total-iva-${suffix}`);
-            const elTotal = document.getElementById(`total-${suffix}`);
+            const elNeto = document.getElementById(`total - neto - ${suffix} `);
+            const elIva = document.getElementById(`total - iva - ${suffix} `);
+            const elTotal = document.getElementById(`total - ${suffix} `);
 
             // Usamos _formatCurrency si está disponible
             if (elNeto) elNeto.textContent = _formatCurrency(sumNeto);
             if (elIva) elIva.textContent = _formatCurrency(sumIva);
-            if (elTotal) elTotal.textContent = _formatCurrency(sumTotal);
+            if (elTotal) {
+                elTotal.textContent = _formatCurrency(sumTotal);
+                // Surgical Aesthetic Change: Darker color (Remove Cyan/Info, Add Primary/Dark)
+                elTotal.classList.remove('text-info');
+                elTotal.classList.add('text-primary');
+            }
         }
 
     })();
@@ -5124,7 +6145,7 @@
     // Función global para manejar el acordeón de facturas
     function toggleChildRows(parentId, btnElement) {
         const icon = btnElement.querySelector('i');
-        const rows = document.querySelectorAll(`.child-row-${parentId}`);
+        const rows = document.querySelectorAll(`.child - row - ${parentId}`);
 
         // Determinar estado actual basado en si la primera fila está visible
         const isHidden = rows.length > 0 && rows[0].style.display === 'none';

@@ -140,6 +140,16 @@ function getComunicadoCatalogs() {
 }
 
 /**
+ * === REGISTRAR EMPRESA ===
+ * Endpoint para crear nuevas empresas desde el frontend (Modal Asignar Contratista)
+ * Utiliza ensureCatalogRecord para evitar duplicados.
+ * @param {Object} data - { razonSocial: "Nombre Empresa" }
+ */
+function registrarEmpresa(data) {
+    return ensureCatalogRecord('empresas', data);
+}
+
+/**
  * === CREAR COMUNICADO ===
  * Realiza validaciones y genera registros relacionados para un nuevo comunicado
  */
@@ -967,7 +977,7 @@ function asignarContratista(idComunicado, idEmpresa) {
             updateRow('datosGenerales', dgRes.data.id, { idEmpresa: idEmpresa });
         }
 
-        return { success: true, message: 'Contratista asignado correctamente' };
+        return { success: true, data: true, message: 'Contratista asignado correctamente' };
     } catch (e) {
         return crearRespuestaError(e.message, { source: contexto });
     }
@@ -1770,13 +1780,18 @@ function procesarAltaExpress(payload) {
 }
 
 /**
- * === ELIMINAR COMUNICADO (EN CASCADA) ===
- * Elimina un comunicado y todos sus registros dependientes.
+ * === ELIMINAR COMUNICADO (EN CASCADA ABSOLUTA) ===
+ * Elimina un comunicado y ABSOLUTAMENTE TODOS sus registros dependientes.
  * Orden de eliminación:
- * 1. Hijos directos simples: Tickets, Equipo, Financiero.
- * 2. Hijos complejos: Actualizaciones (y sus líneas de presupuesto).
- * 3. Relación 1:1: Datos Generales.
- * 4. Padre: Comunicado.
+ * 1. Bitácoras (Estimaciones y Facturas)
+ * 2. Facturas de Estimaciones
+ * 3. Estimaciones
+ * 4. Facturas (Legacy)
+ * 5. Relación Contratistas
+ * 6. Tickets y Equipo
+ * 7. Actualizaciones (y sus líneas de presupuesto)
+ * 8. Datos Generales
+ * 9. Comunicado (Padre)
  */
 function deleteComunicado(id) {
     const contexto = 'deleteComunicado';
@@ -1786,6 +1801,8 @@ function deleteComunicado(id) {
             return crearRespuestaError('Se requiere el ID del comunicado', { source: contexto });
         }
 
+        console.log(`[${contexto}] Iniciando borrado TOTAL para comunicado ID: ${comunicadoId}`);
+
         // 1. Validar existencia del comunicado
         const comunicadoResult = buscarPorId('comunicados', comunicadoId);
         if (!comunicadoResult.success) {
@@ -1793,7 +1810,73 @@ function deleteComunicado(id) {
         }
         const comunicado = comunicadoResult.data;
 
-        // 2. ELIMINAR HIJOS DIRECTOS SIMPLES
+        // --- FASE 1: BORRADO PROFUNDO DE ESTIMACIONES Y FACTURAS ---
+
+        // Leer Estimaciones del Comunicado
+        const estimacionesResp = readAllRows('estimaciones');
+        let estimaciones = [];
+        if (estimacionesResp.success && estimacionesResp.data) {
+            estimaciones = estimacionesResp.data.filter(e => String(e.idComunicado) === comunicadoId);
+        }
+
+        if (estimaciones.length > 0) {
+            console.log(`[${contexto}] Eliminando ${estimaciones.length} estimaciones y sus dependencias...`);
+
+            // Cargar tablas hijas una sola vez para filtrar en memoria (más eficiente)
+            const facturasEstResp = readAllRows('facturasEstimaciones');
+            const bitacoraEstResp = readAllRows('bitacoraEstimaciones');
+            const bitacoraFactResp = readAllRows('bitacoraFacturas');
+
+            const allFacturasEst = (facturasEstResp.success && facturasEstResp.data) ? facturasEstResp.data : [];
+            const allBitacoraEst = (bitacoraEstResp.success && bitacoraEstResp.data) ? bitacoraEstResp.data : [];
+            const allBitacoraFact = (bitacoraFactResp.success && bitacoraFactResp.data) ? bitacoraFactResp.data : [];
+
+            estimaciones.forEach(est => {
+                const idEst = String(est.id);
+
+                // A. Eliminar Bitácora de esta Estimación
+                const logsEst = allBitacoraEst.filter(b => String(b.idEstimacion) === idEst);
+                logsEst.forEach(log => eliminarRegistro('bitacoraEstimaciones', log.id));
+
+                // B. Eliminar Facturas asociadas a esta Estimación
+                const facturasDeEst = allFacturasEst.filter(f => String(f.idEstimacion) === idEst);
+
+                facturasDeEst.forEach(fact => {
+                    const idFact = String(fact.id);
+                    // B.1 Eliminar Bitácora de la Factura
+                    const logsFact = allBitacoraFact.filter(l => String(l.idFactura) === idFact);
+                    logsFact.forEach(l => eliminarRegistro('bitacoraFacturas', l.id));
+
+                    // B.2 Eliminar la Factura de Estimación
+                    eliminarRegistro('facturasEstimaciones', idFact);
+                });
+
+                // C. Eliminar la Estimación misma
+                eliminarRegistro('estimaciones', idEst);
+            });
+        }
+
+        // --- FASE 2: BORRADO DE FACTURAS LEGACY ---
+        const facturasResp = readAllRows('facturas');
+        if (facturasResp.success && facturasResp.data) {
+            const facturasLegacy = facturasResp.data.filter(f => String(f.idComunicado) === comunicadoId);
+            if (facturasLegacy.length > 0) {
+                console.log(`[${contexto}] Eliminando ${facturasLegacy.length} facturas legacy...`);
+                facturasLegacy.forEach(f => eliminarRegistro('facturas', f.id));
+            }
+        }
+
+        // --- FASE 3: BORRADO DE RELACIÓN CONTRATISTAS ---
+        const relContratistasResp = readAllRows('relacionContratistas');
+        if (relContratistasResp.success && relContratistasResp.data) {
+            const relaciones = relContratistasResp.data.filter(r => String(r.idComunicado) === comunicadoId);
+            if (relaciones.length > 0) {
+                console.log(`[${contexto}] Eliminando ${relaciones.length} relaciones de contratistas...`);
+                relaciones.forEach(r => eliminarRegistro('relacionContratistas', r.id));
+            }
+        }
+
+        // --- FASE 4: ELEMINAR HIJOS SIMPLES (Tickets, Equipo) ---
         // Tickets
         const ticketsResp = readAllRows('tickets');
         if (ticketsResp.success && ticketsResp.data) {
@@ -1808,14 +1891,7 @@ function deleteComunicado(id) {
             equipo.forEach(e => eliminarRegistro('equipo', e.id));
         }
 
-        // Financiero
-        const financieroResp = readAllRows('financiero');
-        if (financieroResp.success && financieroResp.data) {
-            const items = financieroResp.data.filter(f => String(f.idComunicado) === comunicadoId);
-            items.forEach(f => eliminarRegistro('financiero', f.id));
-        }
-
-        // 3. ELIMINAR ACTUALIZACIONES (Y SUS LÍNEAS DE PRESUPUESTO)
+        // --- FASE 5: ELIMINAR ACTUALIZACIONES (Y SUS LÍNEAS DE PRESUPUESTO) ---
         const actualizacionesResp = readAllRows('actualizaciones');
         let idsLineaEliminadas = []; // IDs de descripcionLineas que fueron referenciadas
 
@@ -1841,8 +1917,8 @@ function deleteComunicado(id) {
             }
         }
 
-        // 3.5 ELIMINAR DESCRIPCIONLINEAS HUÉRFANAS
-        // Solo eliminar las descripciones que ya no están referenciadas por ninguna otra línea
+        // --- FASE 6: ELIMINAR DESCRIPCIONLINEAS HUÉRFANAS ---
+        // Solo eliminar las descripciones que ya no están referenciadas por ninguna otra línea de ningun comunicado
         if (idsLineaEliminadas.length > 0) {
             const presupuestoRestante = readAllRows('presupuestoLineas');
             const idsEnUso = new Set(
@@ -1862,21 +1938,31 @@ function deleteComunicado(id) {
             }
         }
 
-        // 4. ELIMINAR DATOS GENERALES
+        // --- FASE 7: ELIMINAR DATOS GENERALES ---
         const datosGeneralesResult = buscarPorCampo('datosGenerales', 'idComunicado', comunicadoId);
         if (datosGeneralesResult.success && datosGeneralesResult.data) {
             eliminarRegistro('datosGenerales', datosGeneralesResult.data.id);
         }
 
-        // 5. ELIMINAR COMUNICADO (PADRE)
+        // --- FASE 8: ELIMINAR COMUNICADO (PADRE) ---
         const deleteResp = eliminarRegistro('comunicados', comunicadoId);
         if (!deleteResp.success) {
             return propagarRespuestaError(contexto, deleteResp);
         }
 
+        // LIMPIEZA FINAL: Asegurar que no queden huérfanos residuales
+        try {
+            if (typeof limpiarBaseDatosCompleta === 'function') {
+                console.log(`[${contexto}] Ejecutando limpieza profunda post-eliminación...`);
+                limpiarBaseDatosCompleta({ dryRun: false, silent: true });
+            }
+        } catch (cleanupError) {
+            console.warn(`[${contexto}] Advertencia: Falló limpieza automática: ${cleanupError.message}`);
+        }
+
         return {
             success: true,
-            message: `Comunicado "${comunicado.comunicado}" eliminado correctamente junto con todos sus datos asociados.`
+            message: `Comunicado "${comunicado.comunicado}" ELIMINADO TOTALMENTE (Cascade Complete).`
         };
 
     } catch (error) {

@@ -1712,23 +1712,23 @@
         };
 
         const _updateRowStatus = (index, type, msg) => {
-            const el = document.getElementById(`row - status - ${index} `);
+            const el = document.getElementById(`row-status-${index}`);
             if (!el) return;
 
             if (type === 'loading') {
-                el.innerHTML = `< div class="spinner-border spinner-border-sm text-primary" role = "status" ></div > `;
+                el.innerHTML = `<div class="spinner-border spinner-border-sm text-primary" role="status"></div>`;
             } else if (type === 'success') {
-                el.innerHTML = `< i class="bi bi-check-circle-fill text-success fs-5" title = "${msg || 'Éxito'}" ></i > `;
+                el.innerHTML = `<i class="bi bi-check-circle-fill text-success fs-5" title="${msg || 'Éxito'}"></i>`;
             } else if (type === 'error') {
-                el.innerHTML = `< i class="bi bi-x-circle-fill text-danger fs-5" title = "${msg || 'Error'}" ></i >
+                el.innerHTML = `<i class="bi bi-x-circle-fill text-danger fs-5" title="${msg || 'Error'}"></i>
         <div class="text-danger small mt-1" style="font-size: 0.7em; line-height: 1.1;">${msg || 'Error'}</div>`;
             }
         };
 
         // Función global para expandir/contraer filas de detalle
         globalThis._toggleRowDetail = (rowIndex) => {
-            const detailRow = document.getElementById(`row - ${rowIndex} -detail`);
-            const chevron = document.getElementById(`row - ${rowIndex} -chevron`);
+            const detailRow = document.getElementById(`row-${rowIndex}-detail`);
+            const chevron = document.getElementById(`row-${rowIndex}-chevron`);
 
             if (detailRow) {
                 const isHidden = detailRow.classList.contains('d-none');
@@ -1768,7 +1768,7 @@
             const resumen = data.resumen || {};
 
             dom.previewSummary.innerHTML = `
-        < strong > Total Filas:</strong > ${resumen.total || 0} <span class="mx-2">|</span>
+        <strong>Total Filas:</strong> ${resumen.total || 0} <span class="mx-2">|</span>
                 <strong class="text-success">A Importar:</strong> ${resumen.validos || 0} <span class="mx-2">|</span>
                 <strong class="text-secondary">Omitidos:</strong> ${resumen.omitidos || 0} <span class="mx-2">|</span>
                 <strong class="text-danger">Errores:</strong> ${resumen.errores || 0}
@@ -1779,7 +1779,7 @@
                 dom.btnConfirmar.classList.remove('d-none');
                 dom.btnConfirmar.disabled = false;
                 dom.btnConfirmar.onclick = confirmar;
-                dom.btnConfirmar.innerHTML = `< i class="bi bi-cloud-upload me-2" ></i > Confirmar Importación(${resumen.validos})`;
+                dom.btnConfirmar.innerHTML = `<i class="bi bi-cloud-upload me-2"></i> Confirmar Importación(${resumen.validos})`;
             } else {
                 dom.btnConfirmar.classList.add('d-none');
             }
@@ -1787,7 +1787,7 @@
             // Reporte de errores
             if (resumen.errores > 0) {
                 dom.errorReportContainer.classList.remove('d-none');
-                dom.errorReportMsg.innerHTML = `< i class="bi bi-exclamation-triangle-fill me-2" ></i > Atención: <strong>${resumen.errores}</strong> registros tienen errores y NO se procesarán.`;
+                dom.errorReportMsg.innerHTML = `<i class="bi bi-exclamation-triangle-fill me-2"></i> Atención: <strong>${resumen.errores}</strong> registros tienen errores y NO se procesarán.`;
                 dom.btnDownloadErrors.classList.add('d-none');
             } else {
                 dom.errorReportContainer.classList.add('d-none');
@@ -1808,7 +1808,7 @@
                     badgeText = '<i class="bi bi-check-circle me-1"></i>VÁLIDO';
                 }
 
-                const badgeEstado = `< span class="badge ${badgeClass}" > ${badgeText}</span > `;
+                const badgeEstado = `<span class="badge ${badgeClass}">${badgeText}</span>`;
 
                 // Analisis de entidades nuevas
                 const analisisBadges = [];
@@ -1875,7 +1875,7 @@
                     const lineasHtml = lineas.map((l, li) => {
                         const style = getRowStyle(l);
                         return `
-        < tr class="${style.rowClass}" >
+        <tr class="${style.rowClass}">
                             <td class="ps-4 text-muted small">${li + 1}</td>
                             <td class="small"><span class="badge ${style.badgeClass}" style="font-size: 0.6rem;">${style.label}</span></td>
                             <td class="small">${l.concepto || l.descripcion || 'Sin descripción'}</td>
@@ -1886,7 +1886,7 @@
         `}).join('');
 
                     expandedRowHtml = `
-        < tr id = "row-${i}-detail" class="d-none" >
+        <tr id="row-${i}-detail" class="d-none">
             <td colspan="10" class="p-0">
                 <div class="bg-light border-top border-bottom">
                     <table class="table table-sm mb-0 ms-4" style="width: calc(100% - 2rem);">
@@ -1911,12 +1911,12 @@
                     </table>
                 </div>
             </td>
-                        </tr >
+                        </tr>
         `;
                 }
 
                 return `
-        < tr id = "row-${i}" class="${hasLineas ? 'cursor-pointer' : ''}" ${hasLineas ? `onclick="_toggleRowDetail(${i})"` : ''}>
+        <tr id="row-${i}" class="${hasLineas ? 'cursor-pointer' : ''}" ${hasLineas ? `onclick="_toggleRowDetail(${i})"` : ''}>
                         <td class="text-center">
                             ${hasLineas ? `<i class="bi bi-chevron-right text-muted" id="row-${i}-chevron"></i>` : ''}
                         </td>
@@ -1956,7 +1956,7 @@
                                 </button>
                             </div>
                         </td>
-                    </tr >
+                    </tr>
         ${expandedRowHtml}
     `;
             }).join('');

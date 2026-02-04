@@ -800,3 +800,166 @@ function crearTablaRelacionContratistas() {
         console.log(`[SETUP] Hoja "${nombreHoja}" ya existe. No se requieren cambios.`);
     }
 }
+
+/**
+ * ===================================================================
+ * SCRIPT DE LIMPIEZA PROFUNDA: Limpiar TODA la Base de Datos de Huérfanos
+ * ===================================================================
+ * 
+ * Elimina registros huérfanos en cascada segura:
+ * 1. Actualizaciones sin Comunicado padre
+ * 2. DatosGenerales sin Comunicado padre
+ * 3. PresupuestoLineas sin Actualización padre
+ * 4. Descripciones sin uso en PresupuestoLineas
+ * 
+ * INSTRUCCIONES:
+ * 1. Ejecutar en MODO SIMULACIÓN (DRY_RUN = true)
+ * 2. Verificar logs
+ * 3. Ejecutar con DRY_RUN = false para limpiar
+ * ===================================================================
+ */
+function limpiarBaseDatosCompleta(config) {
+    // Configuración por defecto: Simulación y Verbose
+    // Si se llama desde código sin argumentos, es segura (Dry Run)
+    const defaultConfig = { dryRun: true, silent: false };
+    const finalConfig = { ...defaultConfig, ...(config || {}) };
+
+    const DRY_RUN = finalConfig.dryRun;
+    const SILENT = finalConfig.silent;
+
+    const log = (msg) => { if (!SILENT) console.log(msg); };
+    const err = (msg) => { console.error(msg); };
+
+    log('='.repeat(60));
+    log(`[LIMPIEZA PROFUNDA] INICIO`);
+    log(`[MODO] ${DRY_RUN ? 'SIMULACIÓN (Seguro)' : '⚠️ EJECUCIÓN REAL (Destructivo)'}`);
+    log('='.repeat(60));
+
+    // 1. CARGA DE DATOS MAESTROS (Comunicados)
+    // ============================================
+    const respCom = readAllRows('comunicados');
+    if (!respCom.success) { err('Error leyendo comunicados'); return; }
+    const comunicados = respCom.data;
+    const idsComunicados = new Set(comunicados.map(c => String(c.id)));
+    log(`[MAESTRO] Comunicados Activos: ${idsComunicados.size}`);
+
+    // 2. LIMPIEZA DE ACTUALIZACIONES HUÉRFANAS
+    // ============================================
+    const respAct = readAllRows('actualizaciones');
+    let actualizaciones = respAct.success ? respAct.data : [];
+    const actHuerfanas = actualizaciones.filter(a => !idsComunicados.has(String(a.idComunicado)));
+
+    console.log(`\n[ANÁLISIS] Actualizaciones:`);
+    console.log(`  - Total: ${actualizaciones.length}`);
+    console.log(`  - Huérfanos (sin comunicado): ${actHuerfanas.length}`);
+
+    // Construir lista de IDs de actualizaciones VÁLIDAS (excluyendo las que vamos a borrar)
+    // Esto es necesario para el siguiente paso (limpiar líneas)
+    let idsActualizacionesValidas = new Set(
+        actualizaciones
+            .filter(a => idsComunicados.has(String(a.idComunicado)))
+            .map(a => String(a.id))
+    );
+    console.log(`  - Actualizaciones Válidas (Padres para líneas): ${idsActualizacionesValidas.size}`);
+
+
+    // 3. LIMPIEZA DE DATOS GENERALES HUÉRFANOS
+    // ============================================
+    const respDG = readAllRows('datosGenerales');
+    let datosGenerales = respDG.success ? respDG.data : [];
+    const dgHuerfanos = datosGenerales.filter(d => !idsComunicados.has(String(d.idComunicado)));
+
+    console.log(`\n[ANÁLISIS] Datos Generales:`);
+    console.log(`  - Total: ${datosGenerales.length}`);
+    console.log(`  - Huérfanos: ${dgHuerfanos.length}`);
+
+
+    // 4. LIMPIEZA DE LÍNEAS DE PRESUPUESTO HUÉRFANAS
+    // ============================================
+    const respLin = readAllRows('presupuestoLineas');
+    let lineas = respLin.success ? respLin.data : [];
+    // Una línea es huérfana si su actualización padre NO existe O si su actualización padre es huérfana (ya excluida de validas)
+    const linHuerfanas = lineas.filter(l => !idsActualizacionesValidas.has(String(l.idActualizacion)));
+
+    console.log(`\n[ANÁLISIS] PresupuestoLineas:`);
+    console.log(`  - Total: ${lineas.length}`);
+    console.log(`  - Huérfanas (sin actualización válida): ${linHuerfanas.length}`);
+
+    // Construir lista de IDs de descripciones EN USO por líneas válidas
+    let idsDescripcionesEnUso = new Set(
+        lineas
+            .filter(l => idsActualizacionesValidas.has(String(l.idActualizacion))) // Solo líneas que quedarán vivas
+            .map(l => String(l.idLinea))
+    );
+
+
+    // 5. LIMPIEZA DE DESCRIPCIONES HUÉRFANAS (Sin uso)
+    // ============================================
+    const respDesc = readAllRows('descripcionLineas');
+    let descripciones = respDesc.success ? respDesc.data : [];
+    const descHuerfanas = descripciones.filter(d => !idsDescripcionesEnUso.has(String(d.id)));
+
+    console.log(`\n[ANÁLISIS] DescripcionLineas:`);
+    console.log(`  - Total: ${descripciones.length}`);
+    console.log(`  - Huérfanas (sin uso en presupuesto activo): ${descHuerfanas.length}`);
+
+
+    // 6. RESUMEN DE ACCIÓN
+    // ============================================
+    const totalBorrar = actHuerfanas.length + dgHuerfanos.length + linHuerfanas.length + descHuerfanas.length;
+
+    console.log(`\n[RESUMEN] Se eliminarán ${totalBorrar} registros en total.`);
+
+    if (totalBorrar === 0) {
+        console.log('✅ Base de datos íntegra. No se requiere limpieza.');
+        return;
+    }
+
+    if (DRY_RUN) {
+        console.log('\n[SIMULACIÓN] No se realizaron cambios. Cambia DRY_RUN = false para ejecutar.');
+        // Muestra samples
+        if (actHuerfanas.length > 0) console.log(`Sample Act Huérfana: ID ${actHuerfanas[0].id}, ComPadre ${actHuerfanas[0].idComunicado}`);
+        return;
+    }
+
+    // 7. EJECUCIÓN REAL (Batch o Loop)
+    // ============================================
+    console.log('\n[EJECUTANDO ELIMINACIÓN]...');
+
+    // A) Borrar Actualizaciones
+    _batchDelete('actualizaciones', actHuerfanas);
+
+    // B) Borrar Datos Generales
+    _batchDelete('datosGenerales', dgHuerfanos);
+
+    // C) Borrar PresupuestoLineas
+    _batchDelete('presupuestoLineas', linHuerfanas);
+
+    // D) Borrar Descripciones
+    _batchDelete('descripcionLineas', descHuerfanas);
+
+    console.log('\n✅ LIMPIEZA COMPLETA FINALIZADA.');
+}
+
+/**
+ * Helper para borrar en lote (o iterando si no hay batch delete)
+ */
+function _batchDelete(tabla, registros) {
+    if (registros.length === 0) return;
+
+    console.log(`> Eliminando ${registros.length} registros de ${tabla}...`);
+    let hits = 0;
+
+    // Usamos deleteRow iterativo x simplicidad y seguridad (aunque más lento)
+    // Si tienes una API de batch, úsala aquí.
+    registros.forEach((r, i) => {
+        try {
+            const res = deleteRow(tabla, r.id);
+            if (res.success) hits++;
+            if ((i + 1) % 50 === 0) console.log(`  Progres: ${i + 1}/${registros.length}`);
+        } catch (e) {
+            console.error(`  Error eliminando ID ${r.id}: ${e.message}`);
+        }
+    });
+    console.log(`  Terminado ${tabla}: ${hits} eliminados exitosamente.`);
+}
