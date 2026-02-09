@@ -376,7 +376,7 @@
                     loadedScripts.add(config.script);
 
                     // POLLING MECHANISM: Wait for Global Variable to appear
-                    const maxAttempts = 20; // 20 * 100ms = 2 seconds max wait
+                    const maxAttempts = 50; // 50 * 100ms = 5 seconds max wait
                     let attempts = 0;
 
                     while (!globalThis[config.global] && !window[config.global] && attempts < maxAttempts) {

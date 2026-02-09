@@ -1299,7 +1299,295 @@
     </div>
 </div>
 
-<!-- Modal Selección Tipo Movimiento -->
+<!-- Modal Orgánico Movimiento (Unified) -->
+<div class="modal fade" id="modalMovimientoOrganico" tabindex="-1" aria-hidden="true" data-bs-backdrop="static">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content border-0 shadow-lg" style="border-radius: 1rem;">
+            <div class="modal-header bg-white border-bottom-0 pb-0">
+                <div class="d-flex align-items-center gap-3">
+                    <div class="bg-primary bg-opacity-10 p-2 rounded-circle text-primary">
+                        <i class="bi bi-layers-fill fs-4"></i>
+                    </div>
+                    <div>
+                        <h5 class="modal-title fw-bold text-dark" id="modalMovimientoOrganicoTitle">Nuevo Movimiento
+                        </h5>
+                        <small class="text-muted">Complete los detalles del movimiento financiero</small>
+                    </div>
+                </div>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body p-4">
+                <form id="form-movimiento-organico" onsubmit="return false">
+                    <input type="hidden" id="mov-org-id">
+
+                    <div class="row g-0">
+                        <!-- LEFT COLUMN: Datos Generales -->
+                        <div class="col-lg-7 p-4">
+                            <h6 class="text-uppercase text-secondary fw-bold small mb-3 border-bottom pb-2">
+                                <i class="bi bi-info-circle me-1"></i>Datos Generales
+                            </h6>
+
+                            <!-- TYPE SELECTOR -->
+                            <div class="mb-4">
+                                <label class="form-label small text-uppercase fw-bold text-muted mb-2">Tipo de
+                                    Movimiento</label>
+                                <div class="row g-2" id="mov-org-type-selector">
+                                    <div class="col-4">
+                                        <label class="card h-100 border-2 cursor-pointer type-card"
+                                            id="type-card-anticipo">
+                                            <input type="radio" name="movType" value="ANTICIPO" class="d-none"
+                                                onchange="ComunicadoDetalle.onMovTypeChange(this.value)">
+                                            <div class="card-body text-center p-2">
+                                                <i class="bi bi-cash-coin fs-4 mb-1 d-block text-muted icon"></i>
+                                                <span class="fw-bold small" style="font-size: 0.7rem;">ANTICIPO</span>
+                                            </div>
+                                        </label>
+                                    </div>
+                                    <div class="col-4">
+                                        <label class="card h-100 border-2 cursor-pointer type-card active-type-est"
+                                            id="type-card-estimacion">
+                                            <input type="radio" name="movType" value="ESTIMACION" class="d-none" checked
+                                                onchange="ComunicadoDetalle.onMovTypeChange(this.value)">
+                                            <div class="card-body text-center p-2">
+                                                <i
+                                                    class="bi bi-file-earmark-text fs-4 mb-1 d-block text-primary icon"></i>
+                                                <span class="fw-bold small" style="font-size: 0.7rem;">ESTIMACIÓN</span>
+                                            </div>
+                                        </label>
+                                    </div>
+                                    <div class="col-4">
+                                        <label class="card h-100 border-2 cursor-pointer type-card"
+                                            id="type-card-finiquito">
+                                            <input type="radio" name="movType" value="FINIQUITO" class="d-none"
+                                                onchange="ComunicadoDetalle.onMovTypeChange(this.value)">
+                                            <div class="card-body text-center p-2">
+                                                <i class="bi bi-flag-fill fs-4 mb-1 d-block text-muted icon"></i>
+                                                <span class="fw-bold small" style="font-size: 0.7rem;">FINIQUITO</span>
+                                            </div>
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="row g-3">
+                                <div class="col-md-6">
+                                    <label class="form-label small fw-bold text-muted">Fecha de Corte</label>
+                                    <input type="date" class="form-control form-control-sm border-2" id="mov-org-fecha">
+                                </div>
+                                <div class="col-md-6">
+                                    <label class="form-label small fw-bold text-muted">No. Movimiento /
+                                        Referencia</label>
+                                    <input type="text" class="form-control form-control-sm border-2" id="mov-org-numero"
+                                        placeholder="Auto">
+                                </div>
+
+                                <!-- Avance Fisico (Informativo) -->
+                                <div class="col-12" id="col-avfisico">
+                                    <hr class="text-muted opacity-25 my-3">
+                                    <label class="form-label small fw-bold text-muted">Monto Avance Físico
+                                        (Informativo)</label>
+                                    <div class="input-group input-group-sm">
+                                        <span class="input-group-text bg-light border-end-0 text-muted">$</span>
+                                        <input type="text"
+                                            class="form-control form-control-sm text-end fw-bold border-start-0"
+                                            id="mov-org-avfisico" placeholder="0.00"
+                                            onblur="ComunicadoDetalle.formatInputCurrency(this)"
+                                            onfocus="ComunicadoDetalle.unformatInputCurrency(this)">
+                                    </div>
+                                    <div class="form-text small m-0 text-muted fst-italic">
+                                        * Solo informativo, no afecta el cálculo financiero.
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- RIGHT COLUMN: Desglose Financiero -->
+                        <div class="col-lg-5 bg-light border-start p-4">
+                            <h6
+                                class="text-uppercase text-secondary fw-bold small mb-3 border-bottom pb-2 d-flex justify-content-between">
+                                <span>Desglose Financiero</span>
+                                <span class="badge bg-white text-muted border font-monospace fw-normal"
+                                    style="font-size: 0.7em;">AUTO-CALCULADO</span>
+                            </h6>
+
+                            <div class="d-flex flex-column gap-2 mb-4">
+                                <!-- Monto Estimado -->
+                                <div class="row align-items-center">
+                                    <div class="col-5 text-end">
+                                        <label for="mov-org-monto" class="mb-0 text-primary fw-bold small">Monto (Sin
+                                            IVA)</label>
+                                    </div>
+                                    <div class="col-7">
+                                        <div class="input-group input-group-sm">
+                                            <span class="input-group-text border-0 bg-transparent ps-0">$</span>
+                                            <input type="text"
+                                                class="form-control form-control-sm text-end border-bottom border-0 rounded-0 bg-light text-primary fw-bold"
+                                                id="mov-org-monto" placeholder="0.00"
+                                                oninput="ComunicadoDetalle.calcMovOrganico()"
+                                                onblur="ComunicadoDetalle.formatInputCurrency(this, false)"
+                                                onfocus="ComunicadoDetalle.unformatInputCurrency(this)">
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Amortización -->
+                                <div class="row align-items-center" id="col-amortizacion">
+                                    <div class="col-5 text-end">
+                                        <label for="mov-org-amortizacion" class="mb-0 text-muted fw-bold small">(-)
+                                            Amortización</label>
+                                    </div>
+                                    <div class="col-7">
+                                        <div class="input-group input-group-sm">
+                                            <span
+                                                class="input-group-text border-0 bg-transparent ps-0 text-danger">$</span>
+                                            <input type="text"
+                                                class="form-control form-control-sm text-end border-bottom border-0 rounded-0 bg-light text-danger"
+                                                id="mov-org-amortizacion" placeholder="0.00"
+                                                oninput="ComunicadoDetalle.calcMovOrganico()"
+                                                onblur="ComunicadoDetalle.formatInputCurrency(this, false)"
+                                                onfocus="ComunicadoDetalle.unformatInputCurrency(this)">
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Otros Descuentos -->
+                                <div class="row align-items-center">
+                                    <div class="col-5 text-end">
+                                        <label for="mov-org-descuentos" class="mb-0 text-muted fw-bold small">(-) Otros
+                                            Descuentos</label>
+                                    </div>
+                                    <div class="col-7">
+                                        <div class="input-group input-group-sm">
+                                            <span
+                                                class="input-group-text border-0 bg-transparent ps-0 text-danger">$</span>
+                                            <input type="text"
+                                                class="form-control form-control-sm text-end border-bottom border-0 rounded-0 bg-light text-danger"
+                                                id="mov-org-descuentos" placeholder="0.00"
+                                                oninput="ComunicadoDetalle.calcMovOrganico()"
+                                                onblur="ComunicadoDetalle.formatInputCurrency(this, false)"
+                                                onfocus="ComunicadoDetalle.unformatInputCurrency(this)">
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="row">
+                                    <div class="col-12">
+                                        <hr class="my-1 border-muted opacity-25">
+                                    </div>
+                                </div>
+
+                                <!-- Subtotal Neto -->
+                                <div class="row align-items-center">
+                                    <div class="col-5 text-end">
+                                        <label class="mb-0 text-muted small">Subtotal Neto</label>
+                                    </div>
+                                    <div class="col-7">
+                                        <div class="input-group input-group-sm">
+                                            <input type="text"
+                                                class="form-control form-control-sm text-end fw-bold font-monospace bg-transparent border-0 shadow-none p-0"
+                                                id="mov-org-subtotal" value="$0.00" readonly tabindex="-1">
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- IVA -->
+                                <div class="row align-items-center">
+                                    <div class="col-5 text-end">
+                                        <label class="mb-0 text-muted small">(+) IVA (16%)</label>
+                                    </div>
+                                    <div class="col-7">
+                                        <div class="input-group input-group-sm">
+                                            <input type="text"
+                                                class="form-control form-control-sm text-end fw-bold font-monospace bg-transparent border-0 shadow-none p-0"
+                                                id="mov-org-iva" value="$0.00" readonly tabindex="-1">
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Total -->
+                                <div class="row align-items-center mt-2">
+                                    <div class="col-5 text-end">
+                                        <label class="mb-0 fw-bold text-success small">TOTAL A PAGAR</label>
+                                    </div>
+                                    <div class="col-7">
+                                        <div class="input-group input-group-sm">
+                                            <input type="text"
+                                                class="form-control form-control-sm text-end fw-bold font-monospace bg-transparent border-0 shadow-none p-0 fs-6 text-success"
+                                                id="mov-org-total" value="$0.00" readonly tabindex="-1">
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- SUMMARY & ACTIONS -->
+                    <div class="d-flex justify-content-between align-items-center mt-0 pt-3 border-top px-4">
+                        <div class="text-muted small">
+                            Status: <span id="mov-org-status-text" class="fw-bold">Borrador</span>
+                        </div>
+                        <div class="d-flex gap-2">
+                            <button type="button" class="btn btn-light border" data-bs-dismiss="modal">Cancelar</button>
+                            <button type="button" class="btn btn-outline-secondary px-3"
+                                id="btn-save-mov-organico-draft"
+                                onclick="ComunicadoDetalle.saveMovimientoOrganico('BORRADOR')">
+                                <i class="bi bi-save me-2"></i>Guardar Borrador
+                            </button>
+                            <button type="button" class="btn btn-primary px-4 fw-bold" id="btn-save-mov-organico"
+                                onclick="ComunicadoDetalle.saveMovimientoOrganico('PENDIENTE')">
+                                <i class="bi bi-check2-circle me-2"></i>Guardar y Finalizar
+                            </button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    /* Styling for Type Cards */
+    .type-card {
+        transition: all 0.2s;
+    }
+
+    .type-card:hover {
+        border-color: #0d6efd;
+        background-color: rgba(13, 110, 253, 0.05);
+    }
+
+    /* Active States */
+    .type-card.active-type-est {
+        border-color: #0d6efd;
+        background-color: rgba(13, 110, 253, 0.1);
+        color: #0d6efd;
+    }
+
+    .type-card.active-type-est .icon {
+        color: #0d6efd !important;
+    }
+
+    .type-card.active-type-ant {
+        border-color: #ffc107;
+        background-color: rgba(255, 193, 7, 0.1);
+        color: #856404;
+    }
+
+    .type-card.active-type-ant .icon {
+        color: #856404 !important;
+    }
+
+    .type-card.active-type-fin {
+        border-color: #198754;
+        background-color: rgba(25, 135, 84, 0.1);
+        color: #155724;
+    }
+
+    .type-card.active-type-fin .icon {
+        color: #155724 !important;
+    }
+</style>
+
 <div class="modal fade" id="modalSeleccionMovimiento" tabindex="-1" aria-hidden="true" data-bs-backdrop="static">
     <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content border-0 shadow-lg" style="border-radius: 1rem;">
@@ -1438,3 +1726,250 @@
         transform: rotate(90deg);
     }
 </style>
+
+<!-- MODAL FACTURA -->
+<div class="modal fade" id="modalFacturaNew" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content border-0 shadow-lg">
+            <div class="modal-header bg-light border-bottom-0 py-3">
+                <h5 class="modal-title fw-bold text-primary" id="modalFacturaTitle">Registrar Factura</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body p-4 bg-white">
+                <form id="form-factura" class="needs-validation" onsubmit="return false">
+                    <input type="hidden" id="factura-id-estimacion">
+                    <input type="hidden" id="factura-id-padre">
+
+                    <div class="row g-0">
+                        <!-- LEFT COLUMN: Metadatos y Evidencia -->
+                        <div class="col-lg-7 p-4">
+                            <!-- DATOS FISCALES HEADER -->
+                            <h6 class="text-uppercase text-secondary fw-bold small mb-3 border-bottom pb-2">
+                                <i class="bi bi-info-circle me-1"></i>Datos Generales
+                            </h6>
+
+                            <div class="row g-3 mb-4">
+                                <div class="col-md-6">
+                                    <label for="factura-folio" class="form-label small fw-bold text-muted">Folio Fiscal
+                                        / UUID</label>
+                                    <input type="text" class="form-control form-control-sm fw-bold border-2"
+                                        id="factura-folio" placeholder="Ej. F-2023001"
+                                        oninput="this.value = this.value.toUpperCase()" required>
+                                </div>
+                                <div class="col-md-6">
+                                    <label for="factura-fecha" class="form-label small fw-bold text-muted">Fecha
+                                        Emisión</label>
+                                    <input type="date" class="form-control form-control-sm border-2" id="factura-fecha"
+                                        required>
+                                </div>
+                            </div>
+
+                            <!-- DOCUMENTOS SOPORTE -->
+                            <h6 class="text-uppercase text-secondary fw-bold small mb-3 border-bottom pb-2 mt-5">
+                                <i class="bi bi-paperclip me-1"></i>Documentos Soporte
+                            </h6>
+
+                            <ul class="nav nav-tabs nav-fill small mb-3 border-bottom-0" role="tablist">
+                                <li class="nav-item" role="presentation">
+                                    <button class="nav-link active rounded-pill py-1 me-2 border" id="btn-tab-link"
+                                        type="button" onclick="ComunicadoDetalle._switchFileTab('link')">
+                                        <i class="bi bi-link-45deg"></i> Enlace (URL)
+                                    </button>
+                                </li>
+                                <li class="nav-item" role="presentation">
+                                    <button class="nav-link rounded-pill py-1 border" id="btn-tab-upload" type="button"
+                                        onclick="ComunicadoDetalle._switchFileTab('upload')">
+                                        <i class="bi bi-cloud-upload"></i> Subir Archivo
+                                    </button>
+                                </li>
+                            </ul>
+
+                            <div class="tab-content border rounded-3 p-3 bg-light">
+                                <!-- TAB: LINK -->
+                                <div id="tab-link-content">
+                                    <div class="mb-3">
+                                        <label for="factura-xml-link"
+                                            class="form-label small fw-bold text-muted d-flex align-items-center gap-2">
+                                            <i class="bi bi-filetype-xml text-success"></i> Enlace XML
+                                        </label>
+                                        <input type="url" class="form-control form-control-sm" id="factura-xml-link"
+                                            placeholder="https://...">
+                                    </div>
+                                    <div class="mb-0">
+                                        <label for="factura-pdf-link"
+                                            class="form-label small fw-bold text-muted d-flex align-items-center gap-2">
+                                            <i class="bi bi-filetype-pdf text-danger"></i> Enlace PDF
+                                        </label>
+                                        <input type="url" class="form-control form-control-sm" id="factura-pdf-link"
+                                            placeholder="https://...">
+                                    </div>
+                                </div>
+                                <!-- TAB: UPLOAD -->
+                                <div id="tab-upload-content" style="display:none;">
+                                    <div class="alert alert-info py-2 small mb-3">
+                                        <i class="bi bi-info-circle me-1"></i> Los archivos se guardarán en Drive y se
+                                        generará enlace automáticamente.
+                                    </div>
+                                    <div class="mb-3">
+                                        <label for="factura-xml-file"
+                                            class="form-label small fw-bold text-muted">Archivo XML</label>
+                                        <input type="file" class="form-control form-control-sm" id="factura-xml-file"
+                                            accept=".xml">
+                                    </div>
+                                    <div class="mb-0">
+                                        <label for="factura-pdf-file"
+                                            class="form-label small fw-bold text-muted">Archivo PDF</label>
+                                        <input type="file" class="form-control form-control-sm" id="factura-pdf-file"
+                                            accept=".pdf">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- RIGHT COLUMN: Resumen Financiero -->
+                        <div class="col-lg-5 bg-light border-start p-4">
+                            <h6
+                                class="text-uppercase text-secondary fw-bold small mb-3 border-bottom pb-2 d-flex justify-content-between">
+                                <span>Desglose Financiero</span>
+                                <span class="badge bg-white text-muted border font-monospace fw-normal"
+                                    style="font-size: 0.7em;">AUTO-CALCULADO</span>
+                            </h6>
+
+                            <!-- SIMPLE AMOUNT (Moved here) -->
+                            <div id="container-simple-amount" class="d-none mb-4">
+                                <label for="factura-monto-simple" class="form-label small fw-bold text-muted">Monto
+                                    Pagado</label>
+                                <div class="input-group input-group-lg">
+                                    <span class="input-group-text bg-white border-end-0">$</span>
+                                    <input type="text"
+                                        class="form-control form-control-lg text-end fw-bold font-monospace border-start-0"
+                                        id="factura-monto-simple" placeholder="0.00"
+                                        oninput="formatInputCurrency(this, false)">
+                                </div>
+                                <div class="form-text small text-end mt-1">Ingrese el monto total pagado en este
+                                    complemento.</div>
+                            </div>
+
+                            <!-- EXTENDED FINANCIALS -->
+                            <div id="row-financials-extended">
+                                <div class="d-flex flex-column gap-2 mb-4">
+                                    <!-- LINE 1: Importe Obra -->
+                                    <div class="row align-items-center">
+                                        <div class="col-5 text-end">
+                                            <label for="factura-monto-obra"
+                                                class="mb-0 text-muted fw-bold small">Importe Obra</label>
+                                        </div>
+                                        <div class="col-7">
+                                            <div class="input-group input-group-sm">
+                                                <span class="input-group-text border-0 bg-transparent ps-0">$</span>
+                                                <input type="text"
+                                                    class="form-control form-control-sm text-end border-bottom border-0 rounded-0 bg-light"
+                                                    id="factura-monto-obra" placeholder="0.00"
+                                                    oninput="ComunicadoDetalle.formatInputCurrency(this, false); ComunicadoDetalle._updateCalculosFactura()">
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- LINE 2: Amortización -->
+                                    <div class="row align-items-center">
+                                        <div class="col-5 text-end">
+                                            <label for="factura-amortizacion" class="mb-0 text-muted fw-bold small">(-)
+                                                Amortización</label>
+                                        </div>
+                                        <div class="col-7">
+                                            <div class="input-group input-group-sm">
+                                                <span
+                                                    class="input-group-text border-0 bg-transparent ps-0 text-danger">$</span>
+                                                <input type="text"
+                                                    class="form-control form-control-sm text-end border-bottom border-0 rounded-0 bg-light text-danger"
+                                                    id="factura-amortizacion" placeholder="0.00"
+                                                    oninput="ComunicadoDetalle.formatInputCurrency(this, false); ComunicadoDetalle._updateCalculosFactura()">
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- LINE 3: Otros Descuentos -->
+                                    <div class="row align-items-center">
+                                        <div class="col-5 text-end">
+                                            <label for="factura-descuentos" class="mb-0 text-muted fw-bold small">(-)
+                                                Otros Descuentos</label>
+                                        </div>
+                                        <div class="col-7">
+                                            <div class="input-group input-group-sm">
+                                                <span
+                                                    class="input-group-text border-0 bg-transparent ps-0 text-danger">$</span>
+                                                <input type="text"
+                                                    class="form-control form-control-sm text-end border-bottom border-0 rounded-0 bg-light text-danger"
+                                                    id="factura-descuentos" placeholder="0.00"
+                                                    oninput="ComunicadoDetalle.formatInputCurrency(this, false); ComunicadoDetalle._updateCalculosFactura()">
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- DIVIDER -->
+                                    <div class="row">
+                                        <div class="col-12">
+                                            <hr class="my-1 border-muted opacity-25">
+                                        </div>
+                                    </div>
+
+                                    <!-- LINE 4: Subtotal Neto -->
+                                    <div class="row align-items-center">
+                                        <div class="col-5 text-end">
+                                            <label class="mb-0 text-muted small">Subtotal Neto</label>
+                                        </div>
+                                        <div class="col-7">
+                                            <div class="input-group input-group-sm">
+                                                <input type="text"
+                                                    class="form-control form-control-sm text-end fw-bold font-monospace bg-transparent border-0 shadow-none p-0"
+                                                    id="factura-subtotal-neto" value="$0.00" readonly tabindex="-1">
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- LINE 5: IVA -->
+                                    <div class="row align-items-center">
+                                        <div class="col-5 text-end">
+                                            <label class="mb-0 text-muted small">(+) IVA (16%)</label>
+                                        </div>
+                                        <div class="col-7">
+                                            <div class="input-group input-group-sm">
+                                                <input type="text"
+                                                    class="form-control form-control-sm text-end fw-bold font-monospace bg-transparent border-0 shadow-none p-0"
+                                                    id="factura-iva" value="$0.00" readonly tabindex="-1">
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- LINE 6: Total -->
+                                    <div class="row align-items-center mt-2">
+                                        <div class="col-5 text-end">
+                                            <label class="mb-0 fw-bold text-dark small">TOTAL</label>
+                                        </div>
+                                        <div class="col-7">
+                                            <div class="input-group input-group-sm">
+                                                <input type="text"
+                                                    class="form-control form-control-sm text-end fw-bold font-monospace bg-transparent border-0 shadow-none p-0 fs-6 text-primary"
+                                                    id="factura-total" value="$0.00" readonly tabindex="-1">
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                </form>
+            </div>
+            <div class="modal-footer bg-light border-top-0 py-3">
+                <button type="button" class="btn btn-outline-secondary btn-sm px-4 rounded-pill"
+                    data-bs-dismiss="modal">Cancelar</button>
+                <button type="button" id="btn-save-factura"
+                    class="btn btn-primary btn-sm px-4 rounded-pill shadow-sm fw-bold"
+                    onclick="ComunicadoDetalle.saveFactura()">
+                    <i class="bi bi-check-circle-fill me-2"></i>Guardar Factura
+                </button>
+            </div>
+        </div>
+    </div>
+</div>

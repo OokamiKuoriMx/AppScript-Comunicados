@@ -963,3 +963,88 @@ function _batchDelete(tabla, registros) {
     });
     console.log(`  Terminado ${tabla}: ${hits} eliminados exitosamente.`);
 }
+
+/**
+ * ===================================================================
+ * SCRIPT DE PERFILADO DE RENDIMIENTO
+ * ===================================================================
+ * 
+ * Mide el tiempo de respuesta de las operaciones críticas del sistema.
+ * Ayuda a identificar cuellos de botella en la lectura de base de datos
+ * o en el procesamiento de datos.
+ * 
+ * INSTRUCCIONES:
+ * 1. Ejecutar desde el editor: Ejecutar > profileSystemPerformance
+ * 2. O llamar desde cliente: serverCall('profileSystemPerformance')
+ * ===================================================================
+ */
+function profileSystemPerformance() {
+    console.log('BENCHMARK: Iniciando pruebas de rendimiento...');
+    const results = [];
+    
+    // Helper para medir tiempo
+    const measure = (label, fn) => {
+        const start = new Date().getTime();
+        let result = null;
+        let diff = 0;
+        let count = 0;
+        try {
+            result = fn();
+            diff = new Date().getTime() - start;
+            
+            if (result && result.success && Array.isArray(result.data)) {
+                count = result.data.length;
+            } else if (Array.isArray(result)) {
+                count = result.length;
+            }
+            
+            console.log(`⏱️ [${diff}ms] ${label} (${count} registros)`);
+            results.push({ label, timeMs: diff, count, success: true });
+        } catch (e) {
+            diff = new Date().getTime() - start;
+            console.error(`❌ [${diff}ms] ${label} FALLÓ: ${e.message}`);
+            results.push({ label, timeMs: diff, count: 0, success: false, error: e.message });
+        }
+        return result;
+    };
+
+    console.log('--- LECTURA DE TABLAS INDIVIDUALES ---');
+
+    // 1. Tablas Maestras Pequeñas
+    measure('Read Cuentas', () => readAllRows('cuentas'));
+    measure('Read Empresas', () => readAllRows('empresas'));
+
+    // 2. Tablas Medias
+    measure('Read Comunicados (Maestro)', () => readAllRows('comunicados'));
+    measure('Read Datos Generales', () => readAllRows('datosGenerales'));
+    
+    // 3. Tablas Grandes / Transaccionales
+    measure('Read Actualizaciones', () => readAllRows('actualizaciones'));
+    measure('Read Presupuesto Lineas', () => readAllRows('presupuestoLineas'));
+    measure('Read Descripcion Lineas', () => readAllRows('descripcionLineas'));
+    measure('Read Estimaciones', () => readAllRows('estimaciones'));
+    measure('Read Bitacoras', () => readAllRows('bitacoraEstimaciones'));
+
+    console.log('--- OPERACIONES COMPLEJAS (AGREGACIÓN) ---');
+
+    // 4. Operación Pesada: Poblar todos los comunicados
+    // Esta función hace múltiples lecturas y cruces de datos en memoria
+    measure('POBLAR TODOS (readAllComunicados)', () => readAllComunicados());
+
+    // 5. Simulación de carga de detalle (un comunicado pesado)
+    // Buscamos un ID real para probar
+    const coms = readAllRows('comunicados');
+    if (coms.success && coms.data.length > 0) {
+        // Tomar el último (suele tener más datos acumulados)
+        const sampleId = coms.data[coms.data.length - 1].id; 
+        measure(`POBLAR DETALLE ID ${sampleId} (getMatrizPresupuesto)`, () => getMatrizPresupuesto(sampleId));
+    }
+
+    console.log('BENCHMARK: Finalizado.');
+    
+    return {
+        success: true,
+        data: results,
+        message: 'Prueba de rendimiento completada'
+    };
+}
