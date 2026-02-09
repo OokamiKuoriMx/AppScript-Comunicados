@@ -176,6 +176,19 @@ El sistema soporta carga masiva desde Excel/CSV con lógica compleja:
 - **IDs**: Los IDs son numéricos autoincrementales (`obtenerSiguienteId`).
 - **Batch Create**: `createBatch` optimiza la inserción escribiendo bloques de filas de una sola vez para evitar timeouts de Google Apps Script.
 
+### E. Interfaz de Captura Financiera (Frontend Standard)
+Reglas para modales de registro financiero (Estimaciones, Facturas, Mov. Orgánicos):
+1.  **Layout**:
+    - Diseño vertical de 2 columnas:
+        - **Izquierda**: Metadatos (Fechas, Referencias, Adjuntos).
+        - **Derecha**: Desglose Financiero (Monto, Amortización, Cálculos).
+    - **Inputs Financieros**:
+        - Etiquetas `col-5`, Inputs `col-7` (para soportar millones).
+        - **Moneda**: El símbolo `$` debe ser estático en el HTML (`input-group-text`). El `input` solo contiene números formateados, sin símbolo duplicado.
+2.  **Flujo de Guardado**:
+    - **Borrador**: Guarda sin validar todos los campos, estatus `BORRADOR`.
+    - **Finalizar**: Valida y cambia estatus a `PENDIENTE`.
+
 ---
 
 ## 5. Archivos Clave y Responsabilidades
