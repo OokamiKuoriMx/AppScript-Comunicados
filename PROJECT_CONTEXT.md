@@ -189,6 +189,17 @@ Reglas para modales de registro financiero (Estimaciones, Facturas, Mov. Orgáni
     - **Borrador**: Guarda sin validar todos los campos, estatus `BORRADOR`.
     - **Finalizar**: Valida y cambia estatus a `PENDIENTE`.
 
+### F. Protocolo de Comunicación Cliente-Servidor (`serverCall`)
+El frontend utiliza una utilidad global `serverCall(funcName, ...args)` que envuelve `google.script.run` en una Promesa.
+**Contrato Estricto:**
+1.  **Backend**: Debe retornar siempre un objeto `{ success: true, data: ... }` o `{ success: false, message: ... }`.
+2.  **Frontend (Resolución)**:
+    - Si `success: true`, la promesa se **RESUELVE** retornando **directamente** `response.data`.
+    - **IMPORTANTE**: No recibirás el objeto envelope `{success: true}`. Recibirás solo la `data`. **No verifiques `if (res.success)`**.
+3.  **Frontend (Rechazo)**:
+    - Si `success: false` o hay error de red, la promesa se **RECHAZA** (catch).
+    - El error será `response.message` o el error nativo de GAS.
+
 ---
 
 ## 5. Archivos Clave y Responsabilidades
